@@ -119,6 +119,19 @@ export interface FeedChartPreview {
 
 export type FeedTab = "latest" | "hot-alpha" | "early-runners" | "high-conviction" | "following";
 
+export interface FeedMarketValue {
+  label: string;
+  value: number | null;
+  unit: "usd" | "pct";
+  valueType: "historical" | "live" | "stale" | "unavailable";
+  source: string;
+  fetchedAt: string | null;
+  maxAgeMs: number | null;
+  coverage: FeedCoverage;
+  cacheStatus: "hit" | "miss" | "inflight" | "stored" | null;
+  fallbackReason: string | null;
+}
+
 export interface FeedItemPayload {
   call: {
     title: string;
@@ -126,6 +139,12 @@ export interface FeedItemPayload {
     direction: "LONG" | "SHORT" | null;
     token: Post["tokenContext"] | null;
     metrics: Array<{ label: string; value: number; unit: "usd" | "pct" | "score" }>;
+    market?: {
+      entry: FeedMarketValue | null;
+      current: FeedMarketValue | null;
+      liveMove: FeedMarketValue | null;
+      peakMove: FeedMarketValue | null;
+    };
     signalScore: number | null;
     signalLabel: string | null;
     chartPreview: FeedChartPreview | null;

@@ -383,6 +383,19 @@ type FeedChartPreview = {
   }> | null;
 };
 
+type FeedMarketValue = {
+  label: string;
+  value: number | null;
+  unit: "usd" | "pct";
+  valueType: "historical" | "live" | "stale" | "unavailable";
+  source: string;
+  fetchedAt: string | null;
+  maxAgeMs: number | null;
+  coverage: FeedSignalCoverage;
+  cacheStatus: "hit" | "miss" | "inflight" | "stored" | null;
+  fallbackReason: string | null;
+};
+
 type FeedItemPayload = {
   call: {
     title: string;
@@ -390,6 +403,12 @@ type FeedItemPayload = {
     direction: "LONG" | "SHORT" | null;
     token: FeedTokenContext | null;
     metrics: Array<{ label: string; value: number; unit: "usd" | "pct" | "score" }>;
+    market: {
+      entry: FeedMarketValue | null;
+      current: FeedMarketValue | null;
+      liveMove: FeedMarketValue | null;
+      peakMove: FeedMarketValue | null;
+    };
     signalScore: number | null;
     signalLabel: string | null;
     chartPreview: FeedChartPreview | null;
@@ -1724,6 +1743,13 @@ function applyNewsMetadata(payload: FeedItemPayload, news: NonNullable<FeedItemP
   return { ...payload, news };
 }
 
+function applyMarketToPayload(payload: FeedItemPayload, market: NonNullable<NonNullable<FeedItemPayload["call"]>["market"]>): FeedItemPayload {
+  if (payload.call) {
+    return { ...payload, call: { ...payload.call, market } };
+  }
+  return payload;
+}
+
 function readJsonRecord(value: Prisma.JsonValue | null | undefined): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
@@ -1746,8 +1772,11 @@ async function enrichSelectedFeedPayloads(items: EnrichedCall[]): Promise<Enrich
     .filter((item) => item.postType === "news" && item.tokenId)
     .map((item) => item.tokenId!)
   ));
+  const marketCandidates = items
+    .filter((item) => item.payload.call && (item.token?.address ?? item.contractAddress))
+    .slice(0, 10);
 
-  const [chartResults, raids, newsEvents] = await Promise.all([
+  const [chartResults, raids, newsEvents, marketResults] = await Promise.all([
     withSoftTimeout(
       Promise.allSettled(
         chartCandidates.map(async (item) => {
@@ -1779,6 +1808,18 @@ async function enrichSelectedFeedPayloads(items: EnrichedCall[]): Promise<Enrich
           take: Math.max(20, newsTokenIds.length * 3),
         }).catch(() => [])
       : Promise.resolve([]),
+    withSoftTimeout(
+      Promise.allSettled(
+        marketCandidates.map(async (item) => {
+          const result = await getCachedMarketCapSnapshot(
+            item.token?.address ?? item.contractAddress ?? "",
+            item.token?.chainType ?? item.chainType
+          );
+          return [item.id, result] as const;
+        })
+      ),
+      2_800
+    ),
   ]);
 
   const chartByPostId = new Map<string, FeedChartPreview>();
@@ -1796,6 +1837,11 @@ async function enrichSelectedFeedPayloads(items: EnrichedCall[]): Promise<Enrich
   const newsByTokenId = new Map<string, (typeof newsEvents)[number]>();
   for (const event of newsEvents) {
     if (!newsByTokenId.has(event.tokenId)) newsByTokenId.set(event.tokenId, event);
+  }
+
+  const marketByPostId = new Map<string, MarketCapResult>();
+  for (const result of marketResults ?? []) {
+    if (result.status === "fulfilled") marketByPostId.set(result.value[0], result.value[1]);
   }
 
   return items.map((item) => {
@@ -1841,8 +1887,175 @@ async function enrichSelectedFeedPayloads(items: EnrichedCall[]): Promise<Enrich
       });
     }
 
+    const marketResult = marketByPostId.get(item.id);
+    if (marketResult && item.payload.call) {
+      payload = applyMarketToPayload(payload, buildCallMarketValues(item, marketResult));
+    }
+
     return payload === item.payload ? item : { ...item, payload };
   });
+}
+
+const FEED_CURRENT_MARKET_MAX_AGE_MS = 90_000;
+const FEED_STORED_MARKET_MAX_AGE_MS = 5 * 60_000;
+
+function isFreshTimestamp(value: string | Date | null | undefined, maxAgeMs: number): boolean {
+  if (!value) return false;
+  const time = value instanceof Date ? value.getTime() : new Date(value).getTime();
+  return Number.isFinite(time) && Date.now() - time <= maxAgeMs;
+}
+
+function marketCoverage(state: FeedSignalCoverageState, source: string, reason: string | null = null): FeedSignalCoverage {
+  return feedCoverage(state, source, reason);
+}
+
+function buildMarketValue(args: {
+  label: string;
+  value: number | null | undefined;
+  unit: "usd" | "pct";
+  valueType: FeedMarketValue["valueType"];
+  source: string;
+  fetchedAt: string | null;
+  maxAgeMs: number | null;
+  cacheStatus?: FeedMarketValue["cacheStatus"];
+  fallbackReason?: string | null;
+}): FeedMarketValue {
+  const hasValue = typeof args.value === "number" && Number.isFinite(args.value);
+  const state: FeedSignalCoverageState =
+    hasValue && args.valueType === "live"
+      ? "live"
+      : hasValue && args.valueType === "historical"
+        ? "live"
+        : hasValue && args.valueType === "stale"
+          ? "partial"
+          : "unavailable";
+  return {
+    label: args.label,
+    value: hasValue ? args.value! : null,
+    unit: args.unit,
+    valueType: hasValue ? args.valueType : "unavailable",
+    source: args.source,
+    fetchedAt: args.fetchedAt,
+    maxAgeMs: args.maxAgeMs,
+    coverage: marketCoverage(state, args.source, args.fallbackReason ?? null),
+    cacheStatus: args.cacheStatus ?? null,
+    fallbackReason: args.fallbackReason ?? null,
+  };
+}
+
+function buildStoredCallMarketValues(args: {
+  record: CallRecord;
+  roiCurrentPct: number | null;
+  roiPeakPct: number | null;
+}): NonNullable<NonNullable<FeedItemPayload["call"]>["market"]> {
+  const entry = buildMarketValue({
+    label: "Entry",
+    value: args.record.entryMcap,
+    unit: "usd",
+    valueType: "historical",
+    source: "call-entry-snapshot",
+    fetchedAt: args.record.createdAt.toISOString(),
+    maxAgeMs: null,
+    cacheStatus: "stored",
+  });
+  const currentFresh = isFreshTimestamp(args.record.lastMcapUpdate, FEED_STORED_MARKET_MAX_AGE_MS);
+  const current = buildMarketValue({
+    label: "Current",
+    value: currentFresh ? args.record.currentMcap : null,
+    unit: "usd",
+    valueType: currentFresh ? "live" : "stale",
+    source: "post-market-tracker",
+    fetchedAt: args.record.lastMcapUpdate?.toISOString() ?? null,
+    maxAgeMs: FEED_STORED_MARKET_MAX_AGE_MS,
+    cacheStatus: "stored",
+    fallbackReason: currentFresh ? null : "Stored market snapshot is stale.",
+  });
+  const liveMove =
+    current.value !== null && entry.value !== null && entry.value > 0
+      ? ((current.value - entry.value) / entry.value) * 100
+      : null;
+  return {
+    entry,
+    current,
+    liveMove: buildMarketValue({
+      label: "Live Move",
+      value: liveMove,
+      unit: "pct",
+      valueType: liveMove === null ? "unavailable" : "live",
+      source: current.source,
+      fetchedAt: current.fetchedAt,
+      maxAgeMs: current.maxAgeMs,
+      cacheStatus: current.cacheStatus,
+      fallbackReason: liveMove === null ? "Live move requires fresh current market cap and entry." : null,
+    }),
+    peakMove: buildMarketValue({
+      label: "Peak",
+      value: args.roiPeakPct,
+      unit: "pct",
+      valueType: args.roiPeakPct === null ? "unavailable" : "historical",
+      source: "post-settlement-snapshots",
+      fetchedAt: args.record.lastMcapUpdate?.toISOString() ?? args.record.settledAt?.toISOString() ?? null,
+      maxAgeMs: null,
+      cacheStatus: "stored",
+      fallbackReason: args.roiPeakPct === null ? "No peak snapshot is available yet." : null,
+    }),
+  };
+}
+
+function buildCallMarketValues(item: EnrichedCall, result: MarketCapResult): NonNullable<NonNullable<FeedItemPayload["call"]>["market"]> {
+  const entry = item.payload.call?.market.entry ?? buildMarketValue({
+    label: "Entry",
+    value: item.entryMcap,
+    unit: "usd",
+    valueType: "historical",
+    source: "call-entry-snapshot",
+    fetchedAt: item.createdAt.toISOString(),
+    maxAgeMs: null,
+    cacheStatus: "stored",
+  });
+  const fetchedAt = result.fetchedAt ?? new Date().toISOString();
+  const fresh = result.mcap !== null && isFreshTimestamp(fetchedAt, FEED_CURRENT_MARKET_MAX_AGE_MS);
+  const current = buildMarketValue({
+    label: "Current",
+    value: fresh ? result.mcap : null,
+    unit: "usd",
+    valueType: fresh ? "live" : "stale",
+    source: result.source ?? "dexscreener",
+    fetchedAt,
+    maxAgeMs: FEED_CURRENT_MARKET_MAX_AGE_MS,
+    cacheStatus: result.cacheStatus ?? null,
+    fallbackReason: fresh ? null : result.error ?? "Fresh provider market cap is unavailable.",
+  });
+  const liveMove =
+    current.value !== null && entry.value !== null && entry.value > 0
+      ? ((current.value - entry.value) / entry.value) * 100
+      : null;
+  return {
+    entry,
+    current,
+    liveMove: buildMarketValue({
+      label: "Live Move",
+      value: liveMove,
+      unit: "pct",
+      valueType: liveMove === null ? "unavailable" : "live",
+      source: current.source,
+      fetchedAt: current.fetchedAt,
+      maxAgeMs: current.maxAgeMs,
+      cacheStatus: current.cacheStatus,
+      fallbackReason: liveMove === null ? "Live move requires fresh provider market cap and entry." : null,
+    }),
+    peakMove: item.payload.call?.market.peakMove ?? buildMarketValue({
+      label: "Peak",
+      value: item.roiPeakPct,
+      unit: "pct",
+      valueType: item.roiPeakPct === null ? "unavailable" : "historical",
+      source: "post-settlement-snapshots",
+      fetchedAt: item.lastMcapUpdate?.toISOString() ?? item.settledAt?.toISOString() ?? null,
+      maxAgeMs: null,
+      cacheStatus: "stored",
+      fallbackReason: item.roiPeakPct === null ? "No peak snapshot is available yet." : null,
+    }),
+  };
 }
 
 function feedMetric(
@@ -1872,11 +2085,16 @@ function buildFeedItemPayload(args: {
   const direction = inferBackendSignalDirection(args.record.content);
   const chartPreview = buildUnavailableChartPreview(args.coverage.candles);
   const liveSignal = args.coverage.signal.state === "live";
+  const market = buildStoredCallMarketValues({
+    record: args.record,
+    roiCurrentPct: args.roiCurrentPct,
+    roiPeakPct: args.roiPeakPct,
+  });
   const metrics = [
-    feedMetric("Entry MCap", args.record.entryMcap, "usd"),
-    feedMetric("Current MCap", args.record.currentMcap, "usd"),
-    feedMetric("Live Move", args.roiCurrentPct, "pct", { minAbs: 0.01 }),
-    feedMetric("Peak Move", args.roiPeakPct, "pct", { minAbs: 0.01 }),
+    feedMetric("Entry MCap", market.entry?.value, "usd"),
+    market.current?.valueType === "live" ? feedMetric("Current MCap", market.current.value, "usd") : null,
+    market.liveMove?.valueType === "live" ? feedMetric("Live Move", market.liveMove.value, "pct", { minAbs: 0.01 }) : null,
+    market.peakMove?.valueType === "historical" ? feedMetric("Peak Move", market.peakMove.value, "pct", { minAbs: 0.01 }) : null,
     feedMetric("Signal", args.signal?.aiScore, "score", {
       requiresLiveSignal: true,
       signalCoverage: args.signal?.aiScoreCoverage ?? null,
@@ -1893,6 +2111,7 @@ function buildFeedItemPayload(args: {
     direction,
     token: args.tokenContext,
     metrics: metrics.slice(0, 4),
+    market,
     signalScore: liveSignal && typeof args.signal?.aiScore === "number" ? args.signal.aiScore : null,
     signalLabel: liveSignal ? args.signal?.convictionLabel ?? null : null,
     chartPreview,

@@ -4,6 +4,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { isValidCandleSeries } from "@/lib/data-validators";
 import { cn } from "@/lib/utils";
 import { getAvatarUrl, type FeedCoverage, type Post } from "@/types";
+import type { FeedMarketValue } from "@/types";
 
 type FeedV2PostCardProps = {
   post: Post;
@@ -32,6 +33,11 @@ function formatMetric(value: number, unit: "usd" | "pct" | "score"): string {
 
 function formatTradingMetric(value: number, unit: "usd" | "pct" | "score"): string {
   return formatMetric(value, unit);
+}
+
+function formatMarketValue(metric: FeedMarketValue): string | null {
+  if (metric.value === null || metric.valueType === "stale" || metric.valueType === "unavailable") return null;
+  return formatMetric(metric.value, metric.unit);
 }
 
 function riskMeaning(label: string | null | undefined): string | null {
@@ -406,16 +412,16 @@ function FeedPostCallCard(props: FeedV2PostCardProps) {
   const terminalAddress = payload.token?.address;
   const liveSignal = post.coverage?.signal.state === "live";
   const chartIsLive = payload.chartPreview?.state === "live" && isValidCandleSeries(payload.chartPreview.candles);
-  const entryMetric = payload.metrics.find((metric) => /entry/i.test(metric.label));
-  const currentMetric = payload.metrics.find((metric) => /current/i.test(metric.label));
-  const moveMetric = payload.metrics.find((metric) => /move/i.test(metric.label));
   const convictionLabel = payload.signalLabel ?? payload.metrics.find((metric) => metric.unit === "score")?.value;
+  const market = payload.market;
   const setupMetrics = [
-    entryMetric ? { label: "Entry", value: formatTradingMetric(entryMetric.value, entryMetric.unit), emphasis: true } : null,
-    currentMetric ? { label: "Current", value: formatTradingMetric(currentMetric.value, currentMetric.unit), emphasis: false } : null,
-    moveMetric ? { label: moveMetric.label, value: formatTradingMetric(moveMetric.value, moveMetric.unit), emphasis: moveMetric.value > 0 } : null,
+    market?.entry && formatMarketValue(market.entry) ? { label: "Entry", value: formatMarketValue(market.entry)!, emphasis: true } : null,
+    market?.current && formatMarketValue(market.current) ? { label: "Current", value: formatMarketValue(market.current)!, emphasis: false } : null,
+    market?.liveMove && formatMarketValue(market.liveMove) ? { label: "Live Move", value: formatMarketValue(market.liveMove)!, emphasis: (market.liveMove.value ?? 0) > 0 } : null,
+    market?.peakMove && formatMarketValue(market.peakMove) ? { label: "Peak", value: formatMarketValue(market.peakMove)!, emphasis: (market.peakMove.value ?? 0) > 0 } : null,
     post.timingTier ? { label: "Timeframe", value: post.timingTier, emphasis: false } : null,
   ].filter((item): item is { label: string; value: string; emphasis: boolean } => Boolean(item));
+  const staleMarketReason = market?.current?.valueType === "stale" ? market.current.fallbackReason ?? "Current market data is stale." : null;
   return (
     <article className={cn(cardClass("call", post.coverage?.signal), !liveSignal && "p-3")}>
       {liveSignal ? <div className="pointer-events-none absolute inset-x-6 top-0 h-px bg-[linear-gradient(90deg,transparent,#a9ff34,transparent)]" /> : null}
@@ -443,6 +449,9 @@ function FeedPostCallCard(props: FeedV2PostCardProps) {
       {chartIsLive ? <ChartPreviewState post={post} reason={payload.chartPreview?.unavailableReason ?? "No valid chart preview."} dominant /> : null}
       {!liveSignal ? (
         <CompactNotice title="Signal compressed" reason={post.coverage?.signal.unavailableReason ?? "More market confirmation is needed before expanding this call."} />
+      ) : null}
+      {staleMarketReason ? (
+        <CompactNotice title="Stale market data" reason={staleMarketReason} />
       ) : null}
       {!chartIsLive && payload.chartPreview?.state === "unavailable" ? (
         <CompactNotice title="Market chart unavailable" reason={payload.chartPreview.unavailableReason ?? "Candles are not available for this call."} />

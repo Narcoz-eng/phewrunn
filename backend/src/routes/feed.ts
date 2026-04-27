@@ -79,6 +79,7 @@ feedRouter.get("/:kind/debug-ranking", zValidator("query", FeedDebugQuerySchema)
           velocity: 0,
         },
         coverage: item.coverage,
+        marketProvenance: item.payload.call?.market ?? null,
         contexts: {
           community: item.community
             ? item.community.xCashtag ?? item.community.token?.symbol ?? item.community.token?.name ?? item.communityId

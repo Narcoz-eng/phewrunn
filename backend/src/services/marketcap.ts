@@ -40,10 +40,10 @@ const MIN_REQUEST_INTERVAL_MS = 200; // Min 200ms between requests
 const MARKET_SNAPSHOT_CACHE_MAX_ENTRIES = 500;
 const marketSnapshotCache = new Map<
   string,
-  { result: MarketCapResult; expiresAtMs: number }
+  { result: MarketCapResult; expiresAtMs: number; fetchedAtMs: number }
 >();
 
-function setMarketSnapshotCacheEntry(key: string, value: { result: MarketCapResult; expiresAtMs: number }): void {
+function setMarketSnapshotCacheEntry(key: string, value: { result: MarketCapResult; expiresAtMs: number; fetchedAtMs: number }): void {
   // Delete-then-set moves the key to the end (most-recently-used position)
   marketSnapshotCache.delete(key);
   marketSnapshotCache.set(key, value);
@@ -125,6 +125,9 @@ interface DexscreenerSelectedPair {
  */
 export interface MarketCapResult {
   mcap: number | null;
+  source?: string;
+  fetchedAt?: string;
+  cacheStatus?: "hit" | "miss" | "inflight";
   tokenName?: string;
   tokenSymbol?: string;
   tokenImage?: string;
@@ -441,21 +444,40 @@ export async function getCachedMarketCapSnapshot(
   const now = Date.now();
   const cached = marketSnapshotCache.get(cacheKey);
   if (cached && cached.expiresAtMs > now) {
-    return cloneMarketCapResult(cached.result);
+    return {
+      ...cloneMarketCapResult(cached.result),
+      source: cached.result.source ?? "dexscreener",
+      fetchedAt: new Date(cached.fetchedAtMs).toISOString(),
+      cacheStatus: "hit",
+    };
   }
 
   const inFlight = marketSnapshotInFlight.get(cacheKey);
   if (inFlight) {
-    return cloneMarketCapResult(await inFlight);
+    const result = cloneMarketCapResult(await inFlight);
+    return {
+      ...result,
+      source: result.source ?? "dexscreener",
+      fetchedAt: result.fetchedAt ?? new Date().toISOString(),
+      cacheStatus: "inflight",
+    };
   }
 
   const request = fetchMarketCap(address, chainType)
     .then((result) => {
+      const fetchedAtMs = Date.now();
+      const enriched = {
+        ...cloneMarketCapResult(result),
+        source: "dexscreener",
+        fetchedAt: new Date(fetchedAtMs).toISOString(),
+        cacheStatus: "miss" as const,
+      };
       setMarketSnapshotCacheEntry(cacheKey, {
-        result: cloneMarketCapResult(result),
-        expiresAtMs: Date.now() + MARKETCAP_SNAPSHOT_CACHE_TTL_MS,
+        result: enriched,
+        expiresAtMs: fetchedAtMs + MARKETCAP_SNAPSHOT_CACHE_TTL_MS,
+        fetchedAtMs,
       });
-      return result;
+      return enriched;
     })
     .finally(() => {
       marketSnapshotInFlight.delete(cacheKey);
