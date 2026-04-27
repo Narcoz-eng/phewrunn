@@ -76,20 +76,21 @@ function scoreMeaning(value: number | null | undefined): string | null {
 }
 
 function momentumMeaning(value: number | null | undefined, coverage?: FeedCoverage | null): string {
-  if (coverage?.state === "unavailable" || typeof value !== "number" || !Number.isFinite(value) || value <= 0) return "Insufficient data";
+  if (coverage?.state === "unavailable") return "Insufficient data";
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return coverage?.state === "partial" || coverage?.state === "live" ? "Flat" : "Insufficient data";
   if (value >= 82) return "Accelerating";
   if (value >= 58) return "Building";
   if (value >= 35) return "Flat";
   return "Reversing";
 }
 
-function smartMoneyMeaning(value: number | null | undefined, trustedTraderCount: number | null | undefined): string {
+function smartMoneyMeaning(value: number | null | undefined, trustedTraderCount: number | null | undefined, coverage?: FeedCoverage | null): string {
   if (trustedTraderCount && trustedTraderCount > 0) {
     if (typeof value === "number" && Number.isFinite(value) && value >= 70) return "Accumulating";
     if (typeof value === "number" && Number.isFinite(value) && value > 0 && value < 40) return "Distributing";
     return "Inactive";
   }
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return "Insufficient data";
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return coverage?.state === "partial" || coverage?.state === "live" ? "Inactive" : "Insufficient data";
   if (value >= 70) return "Accumulating";
   if (value >= 45) return "Inactive";
   if (value > 0) return "Inactive";
@@ -117,6 +118,8 @@ function compact(value: number | null | undefined): string {
     maximumFractionDigits: 1,
   }).format(value);
 }
+
+const NOISY_FEED_REASONS = new Set(["Market freshness limited", "Age-decayed", "Alpha priority", "Drawdown adjusted", "Risk adjusted"]);
 
 function timeAgo(value: string): string {
   const timestamp = new Date(value).getTime();
@@ -210,7 +213,7 @@ function PostContextStrip({ post }: { post: Post }) {
   }
   for (const reason of post.scoreReasons ?? post.feedReasons ?? []) {
     if (context.length >= 3) break;
-    if (reason && !context.includes(reason)) context.push(reason);
+    if (reason && !NOISY_FEED_REASONS.has(reason) && !context.includes(reason)) context.push(reason);
   }
   if (!context.length) return null;
   return (
@@ -225,7 +228,9 @@ function PostContextStrip({ post }: { post: Post }) {
 }
 
 function WhyShown({ post }: { post: Post }) {
-  const reasons = Array.from(new Set(post.scoreReasons ?? post.feedReasons ?? [])).filter(Boolean).slice(0, 4);
+  const reasons = Array.from(new Set(post.scoreReasons ?? post.feedReasons ?? []))
+    .filter((reason) => Boolean(reason) && !NOISY_FEED_REASONS.has(reason))
+    .slice(0, 3);
   if (!reasons.length) return null;
   return (
     <div className="mt-3 rounded-[12px] border border-lime-300/12 bg-lime-300/[0.045] px-3 py-2">
@@ -344,8 +349,11 @@ function CallTokenLine({ token }: { token: Post["tokenContext"] | null | undefin
 }
 
 function AiReadStrip({ post, convictionLabel }: { post: Post; convictionLabel: string | number | null | undefined }) {
-  const dominantReason = (post.scoreReasons ?? post.feedReasons ?? post.signal?.scoreReasons ?? []).find(Boolean) ?? post.coverage?.signal.unavailableReason ?? "Awaiting stronger market confirmation.";
-  const smartMoney = smartMoneyMeaning(post.signal?.smartMoneyScore, post.trustedTraderCount);
+  const dominantReason =
+    (post.scoreReasons ?? post.feedReasons ?? post.signal?.scoreReasons ?? []).find((reason) => reason && !NOISY_FEED_REASONS.has(reason)) ??
+    post.coverage?.signal.unavailableReason ??
+    "Awaiting stronger market confirmation.";
+  const smartMoney = smartMoneyMeaning(post.signal?.smartMoneyScore, post.trustedTraderCount, post.coverage?.signal);
   const items = [
     {
       label: "Conviction",
@@ -524,13 +532,15 @@ function FeedPostCallCard(props: FeedV2PostCardProps) {
               {liveMove}
             </span>
           ) : null}
-          <PrimaryTerminalAction address={terminalAddress} postId={post.id} />
         </div>
       </div>
       <p className="mt-3 line-clamp-2 text-sm leading-5 text-white/68">{payload.thesis}</p>
-      {setupMetrics.length > 0 && liveSignal ? (
-        <div className="mt-3 grid gap-2 rounded-[14px] border border-lime-300/10 bg-[linear-gradient(90deg,rgba(169,255,52,0.055),rgba(255,255,255,0.02))] px-3 py-3 sm:grid-cols-5">
+      {(setupMetrics.length > 0 || terminalAddress) ? (
+        <div className="mt-3 grid gap-3 rounded-[15px] border border-lime-300/12 bg-[radial-gradient(circle_at_top_right,rgba(169,255,52,0.12),transparent_42%),linear-gradient(90deg,rgba(169,255,52,0.055),rgba(255,255,255,0.018))] px-3 py-3 sm:grid-cols-[repeat(5,minmax(0,1fr))_auto]">
           {setupMetrics.map((metric) => <SetupMetric key={metric.label} {...metric} />)}
+          <div className="flex items-center sm:pl-1">
+            <PrimaryTerminalAction address={terminalAddress} postId={post.id} />
+          </div>
         </div>
       ) : null}
       {chartIsLive ? <ChartPreviewState post={post} reason={payload.chartPreview?.unavailableReason ?? "No valid chart preview."} dominant /> : null}

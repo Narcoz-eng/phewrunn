@@ -4413,11 +4413,11 @@ function computeFeedScoreForCall(
   followedTokenIds: Set<string>
 ): { score: number; reasons: string[] } {
   const ageHours = Math.max(0.15, (Date.now() - call.createdAt.getTime()) / (60 * 60 * 1000));
-  const recentDecay = Math.exp(-ageHours / 14);
-  const longTailDecay = ageHours <= 24 ? 1 : Math.exp(-(ageHours - 24) / 18);
+  const recentDecay = Math.exp(-ageHours / 10);
+  const longTailDecay = ageHours <= 18 ? 1 : Math.exp(-(ageHours - 18) / 10);
   const freshnessWeight = recentDecay * longTailDecay * 34;
   const staleCallPenalty =
-    ageHours > 48 && (call.postType === "alpha" || call.postType === "chart") ? Math.min(26, (ageHours - 48) / 6) : 0;
+    ageHours > 24 && (call.postType === "alpha" || call.postType === "chart") ? Math.min(46, 10 + (ageHours - 24) / 3) : 0;
   const nonAlphaPenalty =
     kind === "latest" && call.postType !== "alpha" && call.postType !== "chart" && call.postType !== "raid"
       ? Math.min(30, 12 + ageHours * 0.45)
@@ -4428,8 +4428,8 @@ function computeFeedScoreForCall(
       ? hasFreshStoredMarket
         ? 0
         : kind === "latest" || kind === "following"
-          ? 7
-          : 16
+          ? 18
+          : 28
       : 0;
   const signalCoveragePenalty =
     (kind === "hot-alpha" || kind === "high-conviction") && call.coverage?.signal?.state !== "live" ? 18 : 0;
@@ -4469,6 +4469,16 @@ function computeFeedScoreForCall(
     : null;
   const repostBoost = call.repostContext ? Math.max(0, 5 * Math.exp(-(repostAgeHours ?? 0) / 18)) : 0;
   const riskPenalty = Math.max(finite(call.bundlePenaltyScore), finite(call.tokenRiskScore ?? 0)) >= 70 ? 14 : 0;
+  const drawdownPenalty =
+    call.postType === "alpha" || call.postType === "chart"
+      ? finite(call.roiCurrentPct) <= -80
+        ? 46
+        : finite(call.roiCurrentPct) <= -55
+          ? 28
+          : finite(call.roiCurrentPct) <= -30
+            ? 12
+            : 0
+      : 0;
   const spamPenalty =
     authorTrust > 0 && authorTrust < 18 && call.content.trim().length < 48 && engagement < 2 ? 8 : 0;
 
@@ -4496,6 +4506,7 @@ function computeFeedScoreForCall(
       repostBoost +
       kindBoost -
       riskPenalty -
+      drawdownPenalty -
       spamPenalty -
       nonAlphaPenalty -
       staleCallPenalty -
@@ -4515,6 +4526,7 @@ function computeFeedScoreForCall(
   if (kind === "latest" && (call.postType === "alpha" || call.postType === "chart")) reasons.push("Alpha priority");
   if (marketFreshnessPenalty > 0) reasons.push("Market freshness limited");
   if (staleCallPenalty > 0) reasons.push("Age-decayed");
+  if (drawdownPenalty > 0) reasons.push("Drawdown adjusted");
   if (riskPenalty > 0) reasons.push("Risk adjusted");
   return { score: Math.round(score * 10) / 10, reasons: reasons.slice(0, 4) };
 }
@@ -4996,10 +5008,13 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
           : whereClauses.length === 1
             ? whereClauses[0]
             : { AND: whereClauses };
-      const isDirectChronologicalFeed = args.kind === "following";
-      const preferStoredFeedIntelligence = isDirectChronologicalFeed;
+      const isFollowingFeed = args.kind === "following";
+      const isDirectChronologicalFeed = false;
+      const preferStoredFeedIntelligence = false;
       const candidateLimit = isDirectChronologicalFeed
         ? Math.max(limit + 1, FEED_PRIORITY_POST_COUNT)
+        : isFollowingFeed
+          ? Math.max(RANKED_FEED_MIN_CANDIDATE_COUNT, Math.min(RANKED_FEED_MAX_CANDIDATE_COUNT, limit * 10))
         : Math.max(
             RANKED_FEED_MIN_CANDIDATE_COUNT,
             Math.min(RANKED_FEED_MAX_CANDIDATE_COUNT, limit * 8)
