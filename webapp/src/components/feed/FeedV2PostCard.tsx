@@ -1,4 +1,4 @@
-import { BarChart3, ExternalLink, Heart, LineChart, MessageSquare, MoreVertical, Newspaper, RadioTower, Repeat2, ShieldCheck, Vote, Waves, Zap } from "lucide-react";
+import { BarChart3, BrainCircuit, ExternalLink, Heart, LineChart, MessageSquare, MoreVertical, Newspaper, RadioTower, Repeat2, ShieldCheck, ShieldHalf, TrendingUp, Vote, Waves, Zap } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { isValidCandleSeries } from "@/lib/data-validators";
@@ -38,6 +38,19 @@ function riskMeaning(label: string | null | undefined): string | null {
   const normalized = label?.trim();
   if (!normalized || /unknown|neutral|clean|unavailable|pending/i.test(normalized)) return null;
   return normalized;
+}
+
+function scoreMeaning(value: number | null | undefined): string | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return null;
+  if (value >= 82) return "High";
+  if (value >= 65) return "Strong";
+  if (value >= 45) return "Building";
+  return null;
+}
+
+function compactAddress(value: string | null | undefined): string | null {
+  if (!value) return null;
+  return `${value.slice(0, 6)}...${value.slice(-4)}`;
 }
 
 function compact(value: number | null | undefined): string {
@@ -171,7 +184,7 @@ function WhyShown({ post }: { post: Post }) {
   );
 }
 
-function EngagementFooter({ post, onLike, onRepost }: FeedV2PostCardProps) {
+function EngagementFooter({ post, onLike, onRepost, terminalAddress }: FeedV2PostCardProps & { terminalAddress?: string | null }) {
   const navigate = useNavigate();
   return (
     <div className="mt-4 flex items-center justify-between border-t border-white/8 pt-3 text-xs text-white/48">
@@ -191,6 +204,15 @@ function EngagementFooter({ post, onLike, onRepost }: FeedV2PostCardProps) {
         <BarChart3 className="h-4 w-4" />
         {compact(post.engagement?.views ?? post.viewCount)}
       </span>
+      {terminalAddress ? (
+        <Link
+          to={`/terminal?token=${encodeURIComponent(terminalAddress)}&post=${encodeURIComponent(post.id)}&timeframe=1h`}
+          className="inline-flex items-center gap-1.5 rounded-full border border-lime-300/16 bg-lime-300/[0.08] px-2.5 py-1 font-semibold text-lime-100 hover:bg-lime-300/[0.14]"
+        >
+          Terminal
+          <ExternalLink className="h-3.5 w-3.5" />
+        </Link>
+      ) : null}
     </div>
   );
 }
@@ -236,6 +258,69 @@ function TokenLine({ token }: { token: Post["tokenContext"] | null | undefined }
   );
 }
 
+function CallTokenLine({ token }: { token: Post["tokenContext"] | null | undefined }) {
+  if (!token) return null;
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-white/45">
+      {token.logo ? <img src={token.logo} alt="" className="h-5 w-5 rounded-full border border-white/10 object-cover" loading="lazy" /> : null}
+      {token.symbol ? <span className="font-semibold text-lime-200">${token.symbol}</span> : null}
+      {token.chain ? <span className="rounded-full border border-white/8 bg-white/[0.035] px-2 py-0.5 text-[10px] uppercase">{token.chain}</span> : null}
+      {compactAddress(token.address) ? <span className="font-mono text-[10px] text-white/36">{compactAddress(token.address)}</span> : null}
+    </div>
+  );
+}
+
+function AiReadStrip({ post, convictionLabel }: { post: Post; convictionLabel: string | number | null | undefined }) {
+  const dominantReason = (post.scoreReasons ?? post.feedReasons ?? post.signal?.scoreReasons ?? []).find(Boolean) ?? "Signal momentum is being tracked.";
+  const items = [
+    {
+      label: "Conviction",
+      value: typeof convictionLabel === "number" ? formatTradingMetric(convictionLabel, "score") : convictionLabel ?? scoreMeaning(post.signal?.aiScore) ?? "Live",
+      icon: BrainCircuit,
+      tone: "text-lime-200",
+    },
+    {
+      label: "Momentum",
+      value: scoreMeaning(post.signal?.momentumScore) ?? "Watching",
+      icon: TrendingUp,
+      tone: "text-lime-200",
+    },
+    {
+      label: "Smart Money",
+      value: scoreMeaning(post.signal?.smartMoneyScore) ?? (post.trustedTraderCount && post.trustedTraderCount > 0 ? "Detected" : "Quiet"),
+      icon: Waves,
+      tone: post.signal?.smartMoneyScore || (post.trustedTraderCount && post.trustedTraderCount > 0) ? "text-cyan-200" : "text-white/48",
+    },
+    {
+      label: "Risk",
+      value: riskMeaning(post.signal?.riskLabel) ?? "Watching",
+      icon: ShieldHalf,
+      tone: "text-amber-100",
+    },
+  ];
+  return (
+    <div className="mt-3 overflow-hidden rounded-[14px] border border-lime-300/12 bg-[linear-gradient(180deg,rgba(169,255,52,0.055),rgba(255,255,255,0.025))]">
+      <div className="grid divide-y divide-white/8 sm:grid-cols-4 sm:divide-x sm:divide-y-0">
+        {items.map((item) => {
+          const Icon = item.icon;
+          return (
+            <div key={item.label} className="flex items-center gap-2 px-3 py-2.5">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/8 bg-black/24">
+                <Icon className={cn("h-4 w-4", item.tone)} />
+              </span>
+              <div className="min-w-0">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.13em] text-white/34">{item.label}</div>
+                <div className={cn("mt-0.5 truncate text-xs font-semibold", item.tone)}>{item.value}</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="border-t border-white/8 px-3 py-2 text-xs leading-5 text-white/58">{dominantReason}</div>
+    </div>
+  );
+}
+
 function ChartPreviewState({ post, reason, dominant = false }: { post: Post; reason: string; dominant?: boolean }) {
   const candles = post.payload?.call?.chartPreview?.candles ?? post.payload?.chart?.chartPreview?.candles ?? null;
   if (isValidCandleSeries(candles) && candles.length >= 12) {
@@ -254,10 +339,10 @@ function ChartPreviewState({ post, reason, dominant = false }: { post: Post; rea
     const last = candles[candles.length - 1]?.close ?? 0;
     const movePct = first > 0 ? ((last - first) / first) * 100 : null;
     return (
-      <div className={cn("overflow-hidden rounded-[14px] border border-lime-300/14 bg-black/30 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]", dominant ? "mt-4" : "mt-3")}>
+      <div className={cn("overflow-hidden rounded-[14px] border border-lime-300/14 bg-[#03080a] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]", dominant ? "mt-4" : "mt-3")}>
         <div className="mb-2 flex items-center justify-between text-xs">
-          <span className="font-semibold text-white/66">Verified market candles</span>
-          <span className={cn("font-semibold", (movePct ?? 0) >= 0 ? "text-lime-300" : "text-rose-300")}>
+          <span className="font-semibold text-white/64">{post.tokenContext?.symbol ? `$${post.tokenContext.symbol}` : "Market"} / USD</span>
+          <span className={cn("rounded-full border px-2 py-0.5 font-semibold", (movePct ?? 0) >= 0 ? "border-lime-300/18 bg-lime-300/10 text-lime-200" : "border-rose-300/18 bg-rose-300/10 text-rose-200")}>
             {movePct === null ? "live" : formatMetric(movePct, "pct")}
           </span>
         </div>
@@ -290,13 +375,25 @@ function ChartPreviewState({ post, reason, dominant = false }: { post: Post; rea
               </g>
             );
           })}
+          {(() => {
+            const y = yFor(last);
+            return (
+              <g>
+                <line x1="0" x2={width} y1={y} y2={y} stroke="rgba(169,255,52,0.28)" strokeDasharray="4 4" />
+                <rect x={width - 76} y={Math.max(0, Math.min(height - 18, y - 9))} width="76" height="18" rx="5" fill="rgba(169,255,52,0.92)" />
+                <text x={width - 38} y={Math.max(12, Math.min(height - 6, y + 4))} textAnchor="middle" fontSize="10" fontWeight="700" fill="#041007">
+                  {formatUsd(last)}
+                </text>
+              </g>
+            );
+          })()}
         </svg>
       </div>
     );
   }
   return (
     <CompactNotice
-      title="Chart unavailable"
+      title="Market chart unavailable"
       reason={post.coverage?.candles.unavailableReason || reason}
     />
   );
@@ -308,70 +405,51 @@ function FeedPostCallCard(props: FeedV2PostCardProps) {
   if (!payload) return <FeedUnavailableCard {...props} reason="Call payload is unavailable." />;
   const terminalAddress = payload.token?.address;
   const liveSignal = post.coverage?.signal.state === "live";
-  const chartIsLive = payload.chartPreview?.state === "live" && Array.isArray(payload.chartPreview.candles) && payload.chartPreview.candles.length >= 12;
+  const chartIsLive = payload.chartPreview?.state === "live" && isValidCandleSeries(payload.chartPreview.candles);
   const entryMetric = payload.metrics.find((metric) => /entry/i.test(metric.label));
   const currentMetric = payload.metrics.find((metric) => /current/i.test(metric.label));
   const moveMetric = payload.metrics.find((metric) => /move/i.test(metric.label));
-  const riskLabel = riskMeaning(post.signal?.riskLabel);
   const convictionLabel = payload.signalLabel ?? payload.metrics.find((metric) => metric.unit === "score")?.value;
+  const setupMetrics = [
+    entryMetric ? { label: "Entry", value: formatTradingMetric(entryMetric.value, entryMetric.unit), emphasis: true } : null,
+    currentMetric ? { label: "Current", value: formatTradingMetric(currentMetric.value, currentMetric.unit), emphasis: false } : null,
+    moveMetric ? { label: moveMetric.label, value: formatTradingMetric(moveMetric.value, moveMetric.unit), emphasis: moveMetric.value > 0 } : null,
+    post.timingTier ? { label: "Timeframe", value: post.timingTier, emphasis: false } : null,
+  ].filter((item): item is { label: string; value: string; emphasis: boolean } => Boolean(item));
   return (
     <article className={cn(cardClass("call", post.coverage?.signal), !liveSignal && "p-3")}>
       {liveSignal ? <div className="pointer-events-none absolute inset-x-6 top-0 h-px bg-[linear-gradient(90deg,transparent,#a9ff34,transparent)]" /> : null}
       <PostContextStrip post={post} />
       <PostHeader post={post} badge={payload.signalLabel ?? (post.coverage?.signal.state === "partial" ? "Partial signal" : undefined)} />
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <h2 className={cn("font-semibold tracking-tight text-white", liveSignal ? "text-[22px]" : "text-xl")}>{payload.title}</h2>
-        {payload.direction ? (
-          <span className={cn("rounded-full border px-2.5 py-1 text-[11px] font-bold", payload.direction === "LONG" ? "border-lime-300/24 bg-lime-300/10 text-lime-200" : "border-rose-300/24 bg-rose-300/10 text-rose-200")}>
-            {payload.direction}
-          </span>
-        ) : null}
-        {post.coverage?.signal.state === "unavailable" ? (
-          <span className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] font-semibold text-white/48">Signal unavailable</span>
-        ) : null}
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className={cn("font-semibold tracking-tight text-white", liveSignal ? "text-[23px]" : "text-xl")}>{payload.title}</h2>
+            {payload.direction ? (
+              <span className={cn("rounded-full border px-2.5 py-1 text-[11px] font-bold", payload.direction === "LONG" ? "border-lime-300/24 bg-lime-300/10 text-lime-200" : "border-rose-300/24 bg-rose-300/10 text-rose-200")}>
+                {payload.direction}
+              </span>
+            ) : null}
+          </div>
+          <CallTokenLine token={payload.token} />
+        </div>
       </div>
-      <p className="mt-2 text-sm leading-5 text-white/66">{payload.thesis}</p>
-      <TokenLine token={payload.token} />
+      <p className="mt-3 line-clamp-2 text-sm leading-5 text-white/68">{payload.thesis}</p>
+      {setupMetrics.length > 0 && liveSignal ? (
+        <div className="mt-3 grid gap-2 rounded-[14px] border border-white/8 bg-white/[0.025] px-3 py-3 sm:grid-cols-4">
+          {setupMetrics.map((metric) => <SetupMetric key={metric.label} {...metric} />)}
+        </div>
+      ) : null}
       {chartIsLive ? <ChartPreviewState post={post} reason={payload.chartPreview?.unavailableReason ?? "No valid chart preview."} dominant /> : null}
-      {payload.metrics.length > 0 && liveSignal ? (
-        <div className="mt-4 grid gap-3 rounded-[14px] border border-white/8 bg-white/[0.025] px-3 py-3 sm:grid-cols-4">
-          {entryMetric ? <SetupMetric label="Entry" value={formatTradingMetric(entryMetric.value, entryMetric.unit)} emphasis /> : null}
-          {currentMetric ? <SetupMetric label="Current" value={formatTradingMetric(currentMetric.value, currentMetric.unit)} /> : null}
-          {moveMetric ? <SetupMetric label={moveMetric.label} value={formatTradingMetric(moveMetric.value, moveMetric.unit)} emphasis={moveMetric.value > 0} /> : null}
-          {post.timingTier ? <SetupMetric label="Timeframe" value={post.timingTier} /> : null}
-        </div>
-      ) : (
-        <CompactNotice title="Signal compressed" reason={post.coverage?.signal.unavailableReason ?? "Backend coverage is not strong enough to show trading metrics."} />
-      )}
+      {!liveSignal ? (
+        <CompactNotice title="Signal compressed" reason={post.coverage?.signal.unavailableReason ?? "More market confirmation is needed before expanding this call."} />
+      ) : null}
       {!chartIsLive && payload.chartPreview?.state === "unavailable" ? (
-        <CompactNotice title="Chart hidden" reason={payload.chartPreview.unavailableReason ?? "Validated candles are not available for this call."} />
+        <CompactNotice title="Market chart unavailable" reason={payload.chartPreview.unavailableReason ?? "Candles are not available for this call."} />
       ) : null}
-      {liveSignal ? (
-        <div className="mt-3 grid gap-2 rounded-[14px] border border-lime-300/12 bg-lime-300/[0.045] p-3 md:grid-cols-[180px_1fr]">
-          <div>
-            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-lime-200/58">AI read</div>
-            <div className="mt-1 text-sm font-semibold text-lime-100">
-              {typeof convictionLabel === "number" ? formatTradingMetric(convictionLabel, "score") : convictionLabel ?? "Signal live"}
-            </div>
-            {riskLabel ? <div className="mt-1 text-xs text-white/42">Risk: {riskLabel}</div> : null}
-          </div>
-          <div className="text-sm leading-5 text-white/58">
-            {(post.scoreReasons ?? post.feedReasons ?? []).slice(0, 2).join(" - ") || "Backend signal coverage is live for this call."}
-          </div>
-        </div>
-      ) : null}
-      {terminalAddress ? (
-        <div className="mt-3 flex flex-wrap gap-2">
-          <Link
-            to={`/terminal?token=${encodeURIComponent(terminalAddress)}&post=${encodeURIComponent(post.id)}&timeframe=1h`}
-            className="inline-flex h-9 items-center rounded-[12px] border border-lime-300/20 bg-lime-300/[0.1] px-3 text-xs font-semibold text-lime-100 hover:bg-lime-300/[0.16]"
-          >
-            Open Terminal
-          </Link>
-        </div>
-      ) : null}
+      {liveSignal ? <AiReadStrip post={post} convictionLabel={convictionLabel} /> : null}
       {liveSignal ? <WhyShown post={post} /> : null}
-      <EngagementFooter {...props} />
+      <EngagementFooter {...props} terminalAddress={terminalAddress} />
     </article>
   );
 }
@@ -575,5 +653,5 @@ export function FeedV2PostCard(props: FeedV2PostCardProps) {
   if (kind === "news") return <FeedPostNewsCard {...props} />;
   if (kind === "whale") return <FeedPostWhaleCard {...props} />;
   if (kind === "discussion") return <FeedPostDiscussionCard {...props} />;
-  return <FeedUnavailableCard {...props} reason="No typed payload was returned by /api/feed." />;
+  return <FeedUnavailableCard {...props} reason="This item is waiting for structured feed context." />;
 }

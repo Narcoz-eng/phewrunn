@@ -523,7 +523,7 @@ export default function Feed() {
                   {effectiveSearchQuery ? "Search mode" : activeTab === "latest" ? "For you" : activeTab.replace("-", " ")}
                 </div>
                 <div className="mt-1 text-sm text-white/56">
-                  {effectiveSearchQuery ? `Results for "${effectiveSearchQuery}"` : "Backend-ranked feed items only. No client-side score guessing."}
+                  {effectiveSearchQuery ? `Results for "${effectiveSearchQuery}"` : "Signals prioritized by conviction, momentum, and trader reputation."}
                 </div>
               </div>
               <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-white/50">

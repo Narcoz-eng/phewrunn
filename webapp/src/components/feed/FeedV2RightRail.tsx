@@ -48,7 +48,7 @@ function RailCard({ title, children, action }: { title: string; children: ReactN
 
 function RailUnavailable({ message }: { message: string }) {
   return (
-    <div className="rounded-[12px] border border-dashed border-white/10 bg-white/[0.02] px-3 py-3 text-sm leading-5 text-white/46">
+    <div className="rounded-[12px] border border-dashed border-white/10 bg-white/[0.02] px-3 py-3 text-sm leading-5 text-white/48">
       {message}
     </div>
   );
@@ -79,6 +79,7 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
     .slice(0, 5);
   const whaleRows = discovery?.whaleActivity ?? [];
   const marketStats = isValidMarketStats(discovery?.marketStats) ? discovery?.marketStats ?? null : null;
+  const signalBreadth = topGainers.length + trendingCalls.length + aiWatchlist.length;
   const filterByToken = (symbol?: string | null, address?: string | null): boolean => {
     const query = symbol ? `$${symbol}` : address ?? "";
     if (!query || !onFilterFeed) return false;
@@ -89,30 +90,30 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
   return (
     <aside className="space-y-3 xl:sticky xl:top-4 xl:self-start">
       <section className="rounded-[16px] border border-white/10 bg-[linear-gradient(180deg,rgba(8,13,18,0.97),rgba(4,8,11,0.99))] p-3.5">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-[15px] font-semibold tracking-tight text-white">Market Snapshot</h2>
+          <span className="rounded-[8px] border border-lime-300/14 bg-lime-300/[0.08] px-2 py-1 text-[11px] font-semibold text-lime-200">Live</span>
+        </div>
         {marketStats ? (
         <div className="grid grid-cols-3 divide-x divide-white/8 overflow-hidden rounded-[12px] border border-white/8 bg-white/[0.025]">
           {[
-            ["Market Cap", formatUsd(marketStats?.marketCap), formatPct(marketStats?.marketCapChangePct)],
-            ["24h Volume", formatUsd(marketStats?.volume24h), formatPct(marketStats?.volume24hChangePct)],
-            ["BTC Dominance", marketStats?.btcDominance != null ? `${marketStats.btcDominance.toFixed(1)}%` : "--", formatPct(marketStats?.btcDominanceChangePct)],
-          ].map(([label, value, delta]) => (
+            ["Tracked Cap", formatUsd(marketStats?.marketCap), formatPct(marketStats?.marketCapChangePct), "token universe"],
+            ["24h Flow", formatUsd(marketStats?.volume24h), formatPct(marketStats?.volume24hChangePct), "active volume"],
+            ["Signal Breadth", String(signalBreadth), signalBreadth > 0 ? "active" : "quiet", "ranked items"],
+          ].map(([label, value, delta, caption]) => (
             <div key={label} className="px-3 py-2.5">
               <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/38">{label}</div>
               <div className="mt-1 text-[15px] font-bold text-white">{value}</div>
-              <div className={cn("mt-0.5 text-[11px] font-semibold", delta.startsWith("-") ? "text-rose-300" : delta === "--" ? "text-white/30" : "text-lime-300")}>
+              <div className={cn("mt-0.5 text-[11px] font-semibold", delta.startsWith("-") ? "text-rose-300" : delta === "--" || delta === "quiet" ? "text-white/30" : "text-lime-300")}>
                 {delta}
               </div>
+              <div className="mt-0.5 text-[10px] text-white/30">{caption}</div>
             </div>
           ))}
         </div>
         ) : (
-          <div className="rounded-[12px] border border-dashed border-white/10 bg-white/[0.02] px-3 py-4 text-sm leading-6 text-white/48">
-            Market stats require live tracked-token snapshots. No inferred global numbers are shown.
-          </div>
+          <RailUnavailable message="Market snapshot is waiting for live token coverage." />
         )}
-        {marketStats?.coverage?.btcDominance === "unavailable" ? (
-          <div className="mt-2 text-[11px] leading-4 text-white/34">{marketStats.coverage.unavailableReason}</div>
-        ) : null}
       </section>
 
       <RailCard
@@ -143,7 +144,7 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
             ))}
           </div>
         ) : (
-          <RailUnavailable message="No gainers with verified non-zero 24h move are available." />
+          <RailUnavailable message="No strong 24h movers are ready yet." />
         )}
       </RailCard>
 
@@ -201,7 +202,7 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
             })}
           </div>
         ) : (
-          <RailUnavailable message="No active raid rooms have verified participant or post activity." />
+          <RailUnavailable message="No active raid rooms are moving right now." />
         )}
       </RailCard>
 
@@ -229,7 +230,7 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
             ))}
           </div>
         ) : (
-          <RailUnavailable message="No ranked calls have enough conviction, velocity, or ROI signal yet." />
+          <RailUnavailable message="Ranked calls are waiting for stronger conviction or velocity." />
         )}
       </RailCard>
 
@@ -258,7 +259,7 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
             })}
           </div>
         ) : (
-          <RailUnavailable message="Watchlist needs live token intelligence coverage before showing candidates." />
+          <RailUnavailable message="Watchlist is waiting for stronger token intelligence." />
         )}
       </RailCard>
 
@@ -288,7 +289,7 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
             ))}
           </div>
         ) : (
-          <RailUnavailable message="No verified on-chain whale rows are available for the selected feed." />
+          <RailUnavailable message="No verified whale flow is active right now." />
         )}
       </RailCard>
 

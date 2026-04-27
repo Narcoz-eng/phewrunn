@@ -21,6 +21,7 @@ type CacheEntry = {
 
 const FEED_CHART_PREVIEW_CACHE_TTL_MS = 45_000;
 const FEED_CHART_PREVIEW_TIMEOUT_MS = 2_200;
+const BIRDEYE_API_KEY = process.env.BIRDEYE_API_KEY?.trim() || "";
 const feedChartPreviewCache = new Map<string, CacheEntry>();
 const feedChartPreviewInFlight = new Map<string, Promise<FeedChartPreviewResult>>();
 
@@ -74,6 +75,59 @@ function parseGeckoCandles(payload: unknown): FeedChartPreviewCandle[] {
   return [...deduped.values()].sort((a, b) => a.timestamp - b.timestamp).slice(-48);
 }
 
+function parseBirdeyeCandles(payload: unknown): FeedChartPreviewCandle[] {
+  const top = payload && typeof payload === "object" ? payload as Record<string, unknown> : null;
+  if (top?.success === false) return [];
+  const data = top?.data && typeof top.data === "object" ? top.data as Record<string, unknown> : null;
+  const raw = Array.isArray(data?.items)
+    ? data.items
+    : Array.isArray(data?.history)
+      ? data.history
+      : [];
+  const deduped = new Map<number, FeedChartPreviewCandle>();
+  for (const row of raw) {
+    const item = row && typeof row === "object" ? row as Record<string, unknown> : null;
+    if (!item) continue;
+    const value = finite(item.value);
+    const candle = normalizeObjectCandle({
+      timestamp: item.unixTime ?? item.time ?? item.timestamp,
+      open: item.o ?? item.open ?? value,
+      high: item.h ?? item.high ?? value,
+      low: item.l ?? item.low ?? value,
+      close: item.c ?? item.close ?? value,
+      volume: item.v ?? item.volume ?? item.baseVolume ?? item.quoteVolume ?? 0,
+    });
+    if (candle) deduped.set(candle.timestamp, candle);
+  }
+  return [...deduped.values()].sort((a, b) => a.timestamp - b.timestamp).slice(-48);
+}
+
+function normalizeObjectCandle(row: {
+  timestamp: unknown;
+  open: unknown;
+  high: unknown;
+  low: unknown;
+  close: unknown;
+  volume: unknown;
+}): FeedChartPreviewCandle | null {
+  const timestamp = timestampSeconds(row.timestamp);
+  const open = finite(row.open);
+  const high = finite(row.high);
+  const low = finite(row.low);
+  const close = finite(row.close);
+  const volume = finite(row.volume) ?? 0;
+  if (timestamp === null || open === null || high === null || low === null || close === null) return null;
+  if (open <= 0 || high <= 0 || low <= 0 || close <= 0) return null;
+  return {
+    timestamp,
+    open,
+    high: Math.max(high, low, open, close),
+    low: Math.min(high, low, open, close),
+    close,
+    volume: Math.max(0, volume),
+  };
+}
+
 function isValidPreviewSeries(candles: FeedChartPreviewCandle[]): boolean {
   if (candles.length < 12) return false;
   const minLow = Math.min(...candles.map((candle) => candle.low));
@@ -91,18 +145,19 @@ export async function getFeedChartPreview(params: {
   pairAddress: string | null | undefined;
   chainType: string | null | undefined;
 }): Promise<FeedChartPreviewResult> {
+  const tokenAddress = params.tokenAddress?.trim();
   const pairAddress = params.pairAddress?.trim();
-  if (!pairAddress) {
+  if (!pairAddress && !tokenAddress) {
     return {
       state: "unavailable",
-      source: "geckoterminal",
-      unavailableReason: "No provider pair address is attached for chart preview candles.",
+      source: "chart-preview",
+      unavailableReason: "No token or pair address is attached for market candles.",
       candles: null,
     };
   }
 
   const network = params.chainType === "solana" ? "solana" : "eth";
-  const cacheKey = `${network}:${pairAddress.toLowerCase()}:minute:5`;
+  const cacheKey = `${network}:${(pairAddress ?? tokenAddress ?? "").toLowerCase()}:minute:5`;
   const cached = feedChartPreviewCache.get(cacheKey);
   if (cached && cached.expiresAtMs > Date.now()) return cached.value;
 
@@ -112,6 +167,50 @@ export async function getFeedChartPreview(params: {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), FEED_CHART_PREVIEW_TIMEOUT_MS);
       try {
+        if (network === "solana" && tokenAddress && BIRDEYE_API_KEY) {
+          const timeTo = Math.floor(Date.now() / 1000);
+          const timeFrom = timeTo - 5 * 60 * 54;
+          const birdeyeParams = new URLSearchParams({
+            address: tokenAddress,
+            address_type: "token",
+            type: "5m",
+            time_from: String(timeFrom),
+            time_to: String(timeTo),
+            count_limit: "48",
+          });
+          const birdeyeResponse = await fetch(
+            `https://public-api.birdeye.so/defi/v3/ohlcv?${birdeyeParams.toString()}`,
+            {
+              headers: {
+                accept: "application/json",
+                "x-chain": "solana",
+                "X-API-KEY": BIRDEYE_API_KEY,
+              },
+              signal: controller.signal,
+            }
+          );
+          if (birdeyeResponse.ok) {
+            const candles = parseBirdeyeCandles(await birdeyeResponse.json());
+            if (isValidPreviewSeries(candles)) {
+              return {
+                state: "live",
+                source: "birdeye",
+                unavailableReason: null,
+                candles,
+              } satisfies FeedChartPreviewResult;
+            }
+          }
+        }
+
+        if (!pairAddress) {
+          return {
+            state: "unavailable",
+            source: network === "solana" ? "birdeye" : "geckoterminal",
+            unavailableReason: "No pair address is attached for fallback market candles.",
+            candles: null,
+          } satisfies FeedChartPreviewResult;
+        }
+
         const params = new URLSearchParams({
           aggregate: "5",
           limit: "48",

@@ -4081,6 +4081,10 @@ function computeFeedScoreForCall(
     call.postType === "raid"
       ? Math.min(18, 8 + (call._count.comments ?? 0) * 1.4 + (call._count.reposts ?? 0) * 2.2)
       : 0;
+  const callPerformanceWeight =
+    call.postType === "alpha" || call.postType === "chart"
+      ? Math.max(0, Math.min(28, Math.max(finite(call.roiCurrentPct), finite(call.roiPeakPct)) * 0.55))
+      : 0;
   const repostBoost = call.repostContext ? 8 : 0;
   const riskPenalty = Math.max(finite(call.bundlePenaltyScore), finite(call.tokenRiskScore ?? 0)) >= 70 ? 14 : 0;
   const spamPenalty =
@@ -4088,9 +4092,9 @@ function computeFeedScoreForCall(
 
   const kindBoost =
     kind === "hot-alpha"
-      ? finite(call.hotAlphaScore) * 0.18
+      ? finite(call.hotAlphaScore) * 0.18 + Math.min(10, engagementVelocityWeight * 0.45)
       : kind === "high-conviction"
-        ? finite(call.highConvictionScore) * 0.18
+        ? finite(call.highConvictionScore) * 0.16 + callPerformanceWeight
         : kind === "early-runners"
           ? call.postType === "raid"
             ? raidPressureWeight
@@ -4106,6 +4110,7 @@ function computeFeedScoreForCall(
       communityContextWeight +
       personalizationWeight +
       raidPressureWeight +
+      callPerformanceWeight * (kind === "latest" ? 0.45 : 0) +
       repostBoost +
       kindBoost -
       riskPenalty -
@@ -4118,6 +4123,7 @@ function computeFeedScoreForCall(
   if (authorReputationWeight >= 12) reasons.push("Trusted caller");
   if (communityContextWeight >= 6) reasons.push(isJoinedCommunity ? "Your community" : "Community momentum");
   if (raidPressureWeight >= 10) reasons.push("Raid pressure");
+  if (callPerformanceWeight >= 8) reasons.push("Call performing");
   if (finite(call.trustedTraderCount) > 0) reasons.push("Smart money detected");
   if (call.repostContext) reasons.push("Repost momentum");
   if (riskPenalty > 0) reasons.push("Risk adjusted");
