@@ -54,6 +54,7 @@ feedRouter.get("/:kind/debug-ranking", zValidator("query", FeedDebugQuerySchema)
       kind,
       generatedAt: new Date().toISOString(),
       returnedCount: result.items.length,
+      debugCounts: result.debugCounts ?? null,
       nextCursor: result.nextCursor,
       items: result.items.map((item, index) => ({
         rank: index + 1,
@@ -146,6 +147,7 @@ feedRouter.get("/:kind", zValidator("query", FeedQuerySchema), async (c) => {
       hasMore: result.hasMore,
       nextCursor: result.nextCursor,
       totalPosts: result.totalItems,
+      debugCounts: result.debugCounts ?? null,
       degraded: result.degraded === true,
     },
   });

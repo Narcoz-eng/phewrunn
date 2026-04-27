@@ -180,8 +180,18 @@ export interface FeedItemPayload {
     relatedToken: Post["tokenContext"] | null;
   } | null;
   whale: {
-    status: "unavailable";
-    unavailableReason: string;
+    status: "live" | "unavailable";
+    unavailableReason: string | null;
+    eventId?: string | null;
+    wallet?: string | null;
+    token?: Post["tokenContext"] | null;
+    action?: string | null;
+    amount?: number | null;
+    valueUsd?: number | null;
+    txHash?: string | null;
+    explorerUrl?: string | null;
+    timestamp?: string | null;
+    source?: string | null;
   } | null;
   discussion: {
     body: string;

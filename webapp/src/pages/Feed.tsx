@@ -24,7 +24,17 @@ type FeedPage = {
   hasMore: boolean;
   nextCursor: string | null;
   totalPosts: number | null;
+  debugCounts?: FeedDebugCounts | null;
   degraded?: boolean;
+};
+
+type FeedDebugCounts = {
+  backendReturned: number;
+  afterKindFilter: number;
+  afterRanking: number;
+  selected: number;
+  alphaCandidates: number;
+  hidden: number;
 };
 
 type FeedApiPayload = {
@@ -32,6 +42,7 @@ type FeedApiPayload = {
   hasMore?: boolean;
   nextCursor?: string | null;
   totalPosts?: number | null;
+  debugCounts?: FeedDebugCounts | null;
   degraded?: boolean;
 };
 
@@ -54,15 +65,40 @@ const FEED_TAB_ITEMS: Array<{
   { id: "early-runners", label: "X Raids", icon: Radar },
 ];
 
+const chartPreviewCache = new Map<string, NonNullable<NonNullable<Post["payload"]>["call"]>["chartPreview"]>();
+
+function isLiveChartPreview(preview: NonNullable<NonNullable<Post["payload"]>["call"]>["chartPreview"] | null | undefined): boolean {
+  return Boolean(preview && preview.state === "live" && Array.isArray(preview.candles) && preview.candles.length >= 8);
+}
+
+function stabilizePostChartPreview(post: Post): Post {
+  const payload = post.payload;
+  const preview = payload?.call?.chartPreview ?? payload?.chart?.chartPreview ?? null;
+  if (isLiveChartPreview(preview)) {
+    chartPreviewCache.set(post.id, preview);
+    return post;
+  }
+  const cached = chartPreviewCache.get(post.id);
+  if (!cached || !isLiveChartPreview(cached) || !payload) return post;
+  if (payload.call) {
+    return { ...post, payload: { ...payload, call: { ...payload.call, chartPreview: cached } } };
+  }
+  if (payload.chart) {
+    return { ...post, payload: { ...payload, chart: { ...payload.chart, chartPreview: cached } } };
+  }
+  return post;
+}
+
 function normalizeFeedResponse(data: FeedApiPayload): FeedPage {
   if (!data || !Array.isArray(data.items)) {
     throw new ApiError("Feed payload was invalid. Please retry.", 500, data);
   }
   return {
-    items: data.items,
+    items: data.items.map(stabilizePostChartPreview),
     hasMore: Boolean(data.hasMore && data.nextCursor),
     nextCursor: typeof data.nextCursor === "string" ? data.nextCursor : null,
     totalPosts: typeof data.totalPosts === "number" && Number.isFinite(data.totalPosts) ? data.totalPosts : null,
+    debugCounts: data.debugCounts ?? null,
     degraded: data.degraded === true,
   };
 }
@@ -528,6 +564,11 @@ export default function Feed() {
               </div>
               <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-white/50">
                 {displayedPosts.length} visible
+                {postsPages?.pages[0]?.debugCounts ? (
+                  <span className="ml-2 text-white/30">
+                    / {postsPages.pages[0].debugCounts.backendReturned} scanned
+                  </span>
+                ) : null}
               </div>
             </div>
 

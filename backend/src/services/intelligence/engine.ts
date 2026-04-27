@@ -40,8 +40,8 @@ const HOT_ALPHA_THRESHOLD = 75;
 const EARLY_RUNNER_THRESHOLD = 72;
 const HIGH_CONVICTION_THRESHOLD = 78;
 const FEED_PRIORITY_POST_COUNT = 15;
-const RANKED_FEED_MIN_CANDIDATE_COUNT = 120;
-const RANKED_FEED_MAX_CANDIDATE_COUNT = 180;
+const RANKED_FEED_MIN_CANDIDATE_COUNT = 180;
+const RANKED_FEED_MAX_CANDIDATE_COUNT = 320;
 const FEED_PRIORITY_REFRESH_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 850 : 1_300;
 const FEED_RESULT_CACHE_TTL_MS = 15_000;
 const PERSONALIZED_FEED_RESULT_CACHE_TTL_MS = 8_000;
@@ -570,6 +570,14 @@ type FeedListResult = {
   hasMore: boolean;
   nextCursor: string | null;
   totalItems: number;
+  debugCounts?: {
+    backendReturned: number;
+    afterKindFilter: number;
+    afterRanking: number;
+    selected: number;
+    alphaCandidates: number;
+    hidden: number;
+  };
   degraded?: boolean;
 };
 
@@ -1764,12 +1772,20 @@ function applyMarketToPayload(payload: FeedItemPayload, market: NonNullable<NonN
   return payload;
 }
 
+function applyWhalePayload(payload: FeedItemPayload, whale: NonNullable<FeedItemPayload["whale"]>): FeedItemPayload {
+  return { ...payload, whale };
+}
+
 function readJsonRecord(value: Prisma.JsonValue | null | undefined): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
 function readJsonString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readJsonNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 async function enrichSelectedFeedPayloads(items: EnrichedCall[]): Promise<EnrichedCall[]> {
@@ -1789,8 +1805,12 @@ async function enrichSelectedFeedPayloads(items: EnrichedCall[]): Promise<Enrich
   const marketCandidates = items
     .filter((item) => item.payload.call && (item.token?.address ?? item.contractAddress))
     .slice(0, 10);
+  const whaleTokenIds = Array.from(new Set(items
+    .filter((item) => (item.postType === "whale" || item.postType === "alpha" || item.postType === "chart") && item.tokenId)
+    .map((item) => item.tokenId!)
+  ));
 
-  const [chartResults, raids, newsEvents, marketResults] = await Promise.all([
+  const [chartResults, raids, newsEvents, whaleEvents, marketResults] = await Promise.all([
     withSoftTimeout(
       Promise.allSettled(
         chartCandidates.map(async (item) => {
@@ -1820,6 +1840,27 @@ async function enrichSelectedFeedPayloads(items: EnrichedCall[]): Promise<Enrich
           where: { tokenId: { in: newsTokenIds } },
           orderBy: { timestamp: "desc" },
           take: Math.max(20, newsTokenIds.length * 3),
+        }).catch(() => [])
+      : Promise.resolve([]),
+    whaleTokenIds.length
+      ? prisma.tokenEvent.findMany({
+          where: {
+            tokenId: { in: whaleTokenIds },
+            eventType: {
+              in: [
+                "whale_buy",
+                "whale_sell",
+                "whale_transfer_in",
+                "whale_transfer_out",
+                "whale_accumulation",
+                "whale_distribution",
+              ],
+            },
+            timestamp: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+          },
+          orderBy: { timestamp: "desc" },
+          take: Math.max(20, whaleTokenIds.length * 2),
+          include: { token: { select: TOKEN_SELECT } },
         }).catch(() => [])
       : Promise.resolve([]),
     withSoftTimeout(
@@ -1856,6 +1897,11 @@ async function enrichSelectedFeedPayloads(items: EnrichedCall[]): Promise<Enrich
   const marketByPostId = new Map<string, MarketCapResult>();
   for (const result of marketResults ?? []) {
     if (result.status === "fulfilled") marketByPostId.set(result.value[0], result.value[1]);
+  }
+
+  const whaleByTokenId = new Map<string, (typeof whaleEvents)[number]>();
+  for (const event of whaleEvents) {
+    if (!whaleByTokenId.has(event.tokenId)) whaleByTokenId.set(event.tokenId, event);
   }
 
   return items.map((item) => {
@@ -1904,6 +1950,27 @@ async function enrichSelectedFeedPayloads(items: EnrichedCall[]): Promise<Enrich
     const marketResult = marketByPostId.get(item.id);
     if (marketResult && item.payload.call) {
       payload = applyMarketToPayload(payload, buildCallMarketValues(item, marketResult));
+    }
+
+    const whaleEvent = item.tokenId ? whaleByTokenId.get(item.tokenId) : null;
+    if (whaleEvent) {
+      const metadata = readJsonRecord(whaleEvent.metadata);
+      payload = applyWhalePayload(payload, {
+        status: "live",
+        unavailableReason: null,
+        eventId: whaleEvent.id,
+        wallet: readJsonString(metadata?.wallet),
+        token: buildFeedTokenContext(item, whaleEvent.token),
+        action:
+          readJsonString(metadata?.direction) ??
+          whaleEvent.eventType.replace(/^whale_/, "").replaceAll("_", " "),
+        amount: readJsonNumber(metadata?.amount),
+        valueUsd: readJsonNumber(metadata?.valueUsd) ?? whaleEvent.volume ?? null,
+        txHash: readJsonString(metadata?.txHash) ?? readJsonString(metadata?.signature),
+        explorerUrl: readJsonString(metadata?.explorerUrl),
+        timestamp: whaleEvent.timestamp.toISOString(),
+        source: readJsonString(metadata?.source) ?? "token-event",
+      });
     }
 
     return payload === item.payload ? item : { ...item, payload };
@@ -4306,7 +4373,7 @@ function isEligibleForForYou(call: EnrichedCall): boolean {
 
 function filterCallsForFeedKind(kind: FeedKind, calls: EnrichedCall[]): EnrichedCall[] {
   if (kind === "latest") {
-    return calls.filter(isEligibleForForYou);
+    return calls;
   }
 
   if (kind === "following") {
@@ -4950,6 +5017,7 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
           reactions: 0,
         },
       })) as CallRecord[];
+      const backendReturned = records.length;
 
       const initiallyHydrated = sortCalls(
         args.kind,
@@ -4972,6 +5040,7 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
         args.kind,
         await applyFeedRankingContext(args.kind, hydratedBeforeRanking, followedTraderIds, followedTokenIds)
       );
+      const alphaCandidates = hydrated.filter((item) => item.postType === "alpha" || item.postType === "chart").length;
       const startIndex =
         isDirectChronologicalFeed && cursorBoundary
           ? 0
@@ -4991,6 +5060,14 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
         hasMore: startIndex + limit < hydrated.length,
         nextCursor,
         totalItems: hydrated.length,
+        debugCounts: {
+          backendReturned,
+          afterKindFilter: baseHydrated.length,
+          afterRanking: hydrated.length,
+          selected: items.length,
+          alphaCandidates,
+          hidden: Math.max(0, backendReturned - hydrated.length),
+        },
       };
     };
 

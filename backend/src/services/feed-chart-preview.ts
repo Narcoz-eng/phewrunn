@@ -278,6 +278,10 @@ export async function getFeedChartPreview(params: {
   }
 
   const value = await request;
-  feedChartPreviewCache.set(cacheKey, { value, expiresAtMs: Date.now() + FEED_CHART_PREVIEW_CACHE_TTL_MS });
+  if (value.state === "live") {
+    feedChartPreviewCache.set(cacheKey, { value, expiresAtMs: Date.now() + FEED_CHART_PREVIEW_CACHE_TTL_MS });
+  } else {
+    feedChartPreviewCache.set(cacheKey, { value, expiresAtMs: Date.now() + 5_000 });
+  }
   return value;
 }
