@@ -103,11 +103,56 @@ export interface FeedSignal {
   unavailableReasons: string[];
 }
 
+export interface FeedChartPreview {
+  state: FeedCoverage["state"];
+  source: string;
+  unavailableReason: string | null;
+  candles: null;
+}
+
+export interface FeedItemPayload {
+  call: {
+    title: string;
+    thesis: string;
+    direction: "LONG" | "SHORT" | null;
+    token: Post["tokenContext"] | null;
+    metrics: Array<{ label: string; value: number; unit: "usd" | "pct" | "score" }>;
+    signalScore: number | null;
+    signalLabel: string | null;
+    chartPreview: FeedChartPreview | null;
+  } | null;
+  chart: {
+    title: string;
+    thesis: string;
+    token: Post["tokenContext"] | null;
+    timeframe: string | null;
+    chartPreview: FeedChartPreview | null;
+  } | null;
+  poll: Post["poll"] | null;
+  raid: {
+    status: "unavailable";
+    unavailableReason: string;
+  } | null;
+  news: {
+    headline: string;
+    sourceUrl: string | null;
+    summary: string;
+  } | null;
+  whale: {
+    status: "unavailable";
+    unavailableReason: string;
+  } | null;
+  discussion: {
+    body: string;
+  } | null;
+}
+
 export interface Post {
   id: string;
   content: string;
   itemType?: "post" | "repost" | "raid" | "whale" | "system";
   postType?: "alpha" | "discussion" | "chart" | "poll" | "raid" | "news";
+  payload?: FeedItemPayload;
   communityId?: string | null;
   community?: {
     id: string;

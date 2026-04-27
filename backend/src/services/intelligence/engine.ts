@@ -368,8 +368,53 @@ type FeedTokenContext = {
   dexscreenerUrl: string | null;
 };
 
+type FeedChartPreview = {
+  state: FeedSignalCoverageState;
+  source: string;
+  unavailableReason: string | null;
+  candles: null;
+};
+
+type FeedItemPayload = {
+  call: {
+    title: string;
+    thesis: string;
+    direction: "LONG" | "SHORT" | null;
+    token: FeedTokenContext | null;
+    metrics: Array<{ label: string; value: number; unit: "usd" | "pct" | "score" }>;
+    signalScore: number | null;
+    signalLabel: string | null;
+    chartPreview: FeedChartPreview | null;
+  } | null;
+  chart: {
+    title: string;
+    thesis: string;
+    token: FeedTokenContext | null;
+    timeframe: string | null;
+    chartPreview: FeedChartPreview | null;
+  } | null;
+  poll: FeedPollSummary | null;
+  raid: {
+    status: "unavailable";
+    unavailableReason: string;
+  } | null;
+  news: {
+    headline: string;
+    sourceUrl: string | null;
+    summary: string;
+  } | null;
+  whale: {
+    status: "unavailable";
+    unavailableReason: string;
+  } | null;
+  discussion: {
+    body: string;
+  } | null;
+};
+
 export type EnrichedCall = CallRecord & {
   itemType: "post" | "repost" | "raid" | "whale" | "system";
+  payload: FeedItemPayload;
   poll: FeedPollSummary | null;
   isLiked: boolean;
   isReposted: boolean;
@@ -1612,6 +1657,165 @@ function signalConvictionLabel(score: number | null): string {
   if (score >= 65) return "Bullish";
   if (score >= 45) return "Monitoring";
   return "Low conviction";
+}
+
+function inferBackendSignalDirection(content: string): "LONG" | "SHORT" | null {
+  const normalized = content.trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized.startsWith("short ") || normalized.includes(" short ") || normalized.includes("bearish")) {
+    return "SHORT";
+  }
+  if (normalized.startsWith("long ") || normalized.includes(" long ") || normalized.includes("bullish")) {
+    return "LONG";
+  }
+  return null;
+}
+
+function stripComposerIntentPrefix(content: string): string {
+  return content.replace(/^(long|short)\s+/i, "").trim();
+}
+
+function buildUnavailableChartPreview(coverage: FeedSignalCoverage): FeedChartPreview | null {
+  if (coverage.state !== "unavailable" && !coverage.unavailableReason) {
+    return null;
+  }
+  return {
+    state: "unavailable",
+    source: coverage.source,
+    unavailableReason: coverage.unavailableReason ?? "No feed chart preview was provided by the backend.",
+    candles: null,
+  };
+}
+
+function feedMetric(
+  label: string,
+  value: number | null | undefined,
+  unit: "usd" | "pct" | "score",
+  options?: { minAbs?: number; requiresLiveSignal?: boolean; signalCoverage?: FeedSignalCoverage | null }
+): { label: string; value: number; unit: "usd" | "pct" | "score" } | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  if (options?.requiresLiveSignal && options.signalCoverage?.state !== "live") return null;
+  if (options?.minAbs !== undefined && Math.abs(value) < options.minAbs) return null;
+  return { label, value, unit };
+}
+
+function buildFeedItemPayload(args: {
+  record: CallRecord;
+  tokenContext: FeedTokenContext | null;
+  signal: FeedSignalContract | null;
+  poll: FeedPollSummary | null;
+  coverage: { signal: FeedSignalCoverage; candles: FeedSignalCoverage };
+  roiCurrentPct: number | null;
+  roiPeakPct: number | null;
+  tokenRiskScore: number | null;
+}): FeedItemPayload {
+  const body = stripComposerIntentPrefix(args.record.content);
+  const symbol = args.tokenContext?.symbol ? `$${args.tokenContext.symbol}` : args.tokenContext?.name ?? "Alpha";
+  const direction = inferBackendSignalDirection(args.record.content);
+  const chartPreview = buildUnavailableChartPreview(args.coverage.candles);
+  const liveSignal = args.coverage.signal.state === "live";
+  const metrics = [
+    feedMetric("Entry MCap", args.record.entryMcap, "usd"),
+    feedMetric("Current MCap", args.record.currentMcap, "usd"),
+    feedMetric("Live Move", args.roiCurrentPct, "pct", { minAbs: 0.01 }),
+    feedMetric("Peak Move", args.roiPeakPct, "pct", { minAbs: 0.01 }),
+    feedMetric("Signal", args.signal?.aiScore, "score", {
+      requiresLiveSignal: true,
+      signalCoverage: args.signal?.aiScoreCoverage ?? null,
+    }),
+    feedMetric("Risk", args.signal?.riskScore ?? args.tokenRiskScore, "score", {
+      requiresLiveSignal: true,
+      signalCoverage: args.signal?.aiScoreCoverage ?? null,
+    }),
+  ].filter((item): item is { label: string; value: number; unit: "usd" | "pct" | "score" } => Boolean(item));
+
+  const callPayload = {
+    title: `${symbol}${direction ? ` ${direction}` : ""}`,
+    thesis: body || args.record.content,
+    direction,
+    token: args.tokenContext,
+    metrics: metrics.slice(0, 4),
+    signalScore: liveSignal && typeof args.signal?.aiScore === "number" ? args.signal.aiScore : null,
+    signalLabel: liveSignal ? args.signal?.convictionLabel ?? null : null,
+    chartPreview,
+  };
+
+  switch (args.record.postType) {
+    case "poll":
+      return {
+        call: null,
+        chart: null,
+        poll: args.poll,
+        raid: null,
+        news: null,
+        whale: null,
+        discussion: null,
+      };
+    case "raid":
+      return {
+        call: null,
+        chart: null,
+        poll: null,
+        raid: {
+          status: "unavailable",
+          unavailableReason: "This feed post is not linked to a live raid campaign payload.",
+        },
+        news: null,
+        whale: null,
+        discussion: null,
+      };
+    case "news":
+      return {
+        call: null,
+        chart: null,
+        poll: null,
+        raid: null,
+        news: {
+          headline: body.split(/\n+/)[0]?.trim() || "Market news",
+          sourceUrl: args.record.dexscreenerUrl,
+          summary: body,
+        },
+        whale: null,
+        discussion: null,
+      };
+    case "discussion":
+      return {
+        call: null,
+        chart: null,
+        poll: null,
+        raid: null,
+        news: null,
+        whale: null,
+        discussion: { body },
+      };
+    case "chart":
+      return {
+        call: null,
+        chart: {
+          title: `${symbol} Technical Setup`,
+          thesis: body,
+          token: args.tokenContext,
+          timeframe: args.record.timingTier,
+          chartPreview,
+        },
+        poll: null,
+        raid: null,
+        news: null,
+        whale: null,
+        discussion: null,
+      };
+    case "alpha":
+    default:
+      return {
+        call: callPayload,
+        chart: null,
+        poll: null,
+        raid: null,
+        news: null,
+        whale: null,
+        discussion: null,
+      };
+  }
 }
 
 function buildFeedTokenContext(record: CallRecord, token: TokenRecord | null): FeedTokenContext | null {
@@ -3309,6 +3513,14 @@ async function hydrateCalls(
       trustedTraderCount,
       radarReasons,
     });
+    const coverage = {
+      signal: signal?.aiScoreCoverage ?? feedCoverage("unavailable", "phew-signal-engine", "No signal context resolved."),
+      candles: signal?.candlesCoverage ?? feedCoverage("unavailable", "terminal-aggregate", "No token context resolved."),
+    };
+    const poll =
+      record.postType === "poll"
+        ? pollSummariesByPostId.get(record.id) ?? { totalVotes: 0, viewerOptionId: null, options: [] }
+        : null;
     const countSummary = {
       likes: record._count.likes,
       comments: record._count.comments,
@@ -3323,10 +3535,17 @@ async function hydrateCalls(
     enriched.push({
       ...record,
       itemType: record.postType === "raid" ? "raid" : "post",
-      poll:
-        record.postType === "poll"
-          ? pollSummariesByPostId.get(record.id) ?? { totalVotes: 0, viewerOptionId: null, options: [] }
-          : null,
+      payload: buildFeedItemPayload({
+        record,
+        tokenContext,
+        signal,
+        poll,
+        coverage,
+        roiCurrentPct,
+        roiPeakPct,
+        tokenRiskScore: token?.tokenRiskScore ?? null,
+      }),
+      poll,
       token,
       isLiked: socialState.likedPostIds.has(record.id),
       isReposted: socialState.repostedPostIds.has(record.id),
@@ -3338,10 +3557,7 @@ async function hydrateCalls(
         views: record.viewCount,
         velocity: roundMetricOrZero(engagementVelocity),
       },
-      coverage: {
-        signal: signal?.aiScoreCoverage ?? feedCoverage("unavailable", "phew-signal-engine", "No signal context resolved."),
-        candles: signal?.candlesCoverage ?? feedCoverage("unavailable", "terminal-aggregate", "No token context resolved."),
-      },
+      coverage,
       feedScore: 0,
       feedReasons: [],
       scoreReasons: [],
@@ -3817,6 +4033,27 @@ function shouldPriorityRefreshFeed(args: FeedArgs): boolean {
   return !args.cursor && !args.search?.trim() && PRIORITY_FEED_KINDS.includes(args.kind);
 }
 
+function sanitizeFeedItemForResponse(call: EnrichedCall): EnrichedCall {
+  const liveSignal = call.coverage.signal.state === "live";
+  return {
+    ...call,
+    confidenceScore: (liveSignal ? call.confidenceScore : null) as unknown as number,
+    hotAlphaScore: (liveSignal ? call.hotAlphaScore : null) as unknown as number,
+    earlyRunnerScore: (liveSignal ? call.earlyRunnerScore : null) as unknown as number,
+    highConvictionScore: (liveSignal ? call.highConvictionScore : null) as unknown as number,
+    marketHealthScore: null as unknown as number,
+    setupQualityScore: null as unknown as number,
+    opportunityScore: null as unknown as number,
+    dataReliabilityScore: null as unknown as number,
+    entryQualityScore: null as unknown as number,
+    bundlePenaltyScore: null as unknown as number,
+    sentimentScore: null as unknown as number,
+    trustedTraderCount: call.trustedTraderCount > 0 ? call.trustedTraderCount : 0,
+    tokenRiskScore: liveSignal ? call.tokenRiskScore : null,
+    bundleRiskLabel: liveSignal ? call.bundleRiskLabel : null,
+  };
+}
+
 async function refreshPriorityFeedSlice(
   args: FeedArgs,
   records: CallRecord[],
@@ -4246,7 +4483,7 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
           : args.cursor
             ? Math.max(0, hydrated.findIndex((item) => item.id === args.cursor) + 1)
             : 0;
-      const items = hydrated.slice(startIndex, startIndex + limit);
+      const items = hydrated.slice(startIndex, startIndex + limit).map(sanitizeFeedItemForResponse);
       const nextCursor =
         items.length === limit && hydrated[startIndex + limit]
           ? items[items.length - 1]?.id ?? null
