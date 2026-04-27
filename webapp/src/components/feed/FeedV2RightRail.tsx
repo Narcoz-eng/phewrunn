@@ -99,12 +99,12 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
           {[
             ["Tracked Cap", formatUsd(marketStats?.marketCap), formatPct(marketStats?.marketCapChangePct), "token universe"],
             ["24h Flow", formatUsd(marketStats?.volume24h), formatPct(marketStats?.volume24hChangePct), "active volume"],
-            ["Signal Breadth", String(signalBreadth), signalBreadth > 0 ? "active" : "quiet", "ranked items"],
+            ["Signal Breadth", String(signalBreadth), signalBreadth > 0 ? "active" : "no signal", "ranked items"],
           ].map(([label, value, delta, caption]) => (
             <div key={label} className="px-3 py-2.5">
               <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/38">{label}</div>
               <div className="mt-1 text-[15px] font-bold text-white">{value}</div>
-              <div className={cn("mt-0.5 text-[11px] font-semibold", delta.startsWith("-") ? "text-rose-300" : delta === "--" || delta === "quiet" ? "text-white/30" : "text-lime-300")}>
+              <div className={cn("mt-0.5 text-[11px] font-semibold", delta.startsWith("-") ? "text-rose-300" : delta === "--" || delta === "no signal" ? "text-white/30" : "text-lime-300")}>
                 {delta}
               </div>
               <div className="mt-0.5 text-[10px] text-white/30">{caption}</div>

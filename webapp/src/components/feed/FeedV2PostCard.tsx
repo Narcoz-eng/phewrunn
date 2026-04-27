@@ -54,6 +54,27 @@ function scoreMeaning(value: number | null | undefined): string | null {
   return null;
 }
 
+function momentumMeaning(value: number | null | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return "No signal";
+  if (value >= 78) return "Strong";
+  if (value >= 58) return "Building";
+  if (value >= 35) return "Weak";
+  return "Reversing";
+}
+
+function smartMoneyMeaning(value: number | null | undefined, trustedTraderCount: number | null | undefined): string {
+  if (trustedTraderCount && trustedTraderCount > 0) {
+    if (typeof value === "number" && Number.isFinite(value) && value >= 70) return "Accumulating";
+    if (typeof value === "number" && Number.isFinite(value) && value > 0 && value < 40) return "Distributing";
+    return "Active";
+  }
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return "No data";
+  if (value >= 70) return "Accumulating";
+  if (value >= 45) return "Active";
+  if (value > 0) return "Inactive";
+  return "No data";
+}
+
 function compactAddress(value: string | null | undefined): string | null {
   if (!value) return null;
   return `${value.slice(0, 6)}...${value.slice(-4)}`;
@@ -287,19 +308,19 @@ function AiReadStrip({ post, convictionLabel }: { post: Post; convictionLabel: s
     },
     {
       label: "Momentum",
-      value: scoreMeaning(post.signal?.momentumScore) ?? "Watching",
+      value: momentumMeaning(post.signal?.momentumScore),
       icon: TrendingUp,
       tone: "text-lime-200",
     },
     {
       label: "Smart Money",
-      value: scoreMeaning(post.signal?.smartMoneyScore) ?? (post.trustedTraderCount && post.trustedTraderCount > 0 ? "Detected" : "Quiet"),
+      value: smartMoneyMeaning(post.signal?.smartMoneyScore, post.trustedTraderCount),
       icon: Waves,
       tone: post.signal?.smartMoneyScore || (post.trustedTraderCount && post.trustedTraderCount > 0) ? "text-cyan-200" : "text-white/48",
     },
     {
       label: "Risk",
-      value: riskMeaning(post.signal?.riskLabel) ?? "Watching",
+      value: riskMeaning(post.signal?.riskLabel) ?? "No data",
       icon: ShieldHalf,
       tone: "text-amber-100",
     },

@@ -608,9 +608,13 @@
   }
 
   .v2-sidebar {
-    @apply fixed inset-y-0 left-0 z-40 w-[14.5rem] flex-col overflow-hidden border-r border-white/[0.07];
+    @apply fixed inset-y-0 left-0 z-40 w-[14.5rem] flex-col overflow-y-auto overflow-x-hidden border-r border-white/[0.07];
     height: 100dvh;
     max-height: 100dvh;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
     background:
       radial-gradient(circle at top left, rgba(169, 255, 52, 0.09), transparent 24%),
       radial-gradient(circle at bottom left, rgba(45, 212, 191, 0.08), transparent 30%),
@@ -621,12 +625,7 @@
   }
 
   .v2-sidebar-scroll {
-    @apply min-h-0 w-full overflow-y-auto overscroll-contain px-4 py-4;
-    height: 100dvh;
-    max-height: 100dvh;
-    scrollbar-gutter: stable;
-    scroll-behavior: smooth;
-    -webkit-overflow-scrolling: touch;
+    @apply min-h-full w-full px-4 py-4;
   }
 
   .v2-sidebar-link {

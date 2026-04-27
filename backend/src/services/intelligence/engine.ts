@@ -4257,8 +4257,41 @@ function isEligibleForRankedFeed(
   );
 }
 
+function isEligibleForForYou(call: EnrichedCall): boolean {
+  if (call.postType !== "alpha" && call.postType !== "chart") {
+    return true;
+  }
+
+  const ageHours = Math.max(0, (Date.now() - call.createdAt.getTime()) / (60 * 60 * 1000));
+  const engagement =
+    (call._count.likes ?? 0) +
+    (call._count.comments ?? call.threadCount ?? 0) * 2 +
+    (call._count.reposts ?? 0) * 3 +
+    (call._count.reactions ?? 0);
+  const hasFreshMarket = isFreshTimestamp(call.lastMcapUpdate, FEED_STORED_MARKET_MAX_AGE_MS);
+  const hasLiveSignal = call.coverage?.signal?.state === "live";
+  const currentPerformance = finite(call.roiCurrentPct);
+  const peakPerformance = finite(call.roiPeakPct);
+  const stillPerforming = hasFreshMarket && Math.max(currentPerformance, peakPerformance) >= 12;
+  const hasRecentEngagement = ageHours <= 24 && engagement >= 2;
+
+  if (ageHours <= 12) {
+    return hasLiveSignal || hasFreshMarket || hasRecentEngagement;
+  }
+
+  if (ageHours <= 72) {
+    return hasFreshMarket && hasLiveSignal && (hasRecentEngagement || stillPerforming);
+  }
+
+  return stillPerforming && hasLiveSignal;
+}
+
 function filterCallsForFeedKind(kind: FeedKind, calls: EnrichedCall[]): EnrichedCall[] {
-  if (kind === "latest" || kind === "following") {
+  if (kind === "latest") {
+    return calls.filter(isEligibleForForYou);
+  }
+
+  if (kind === "following") {
     return calls;
   }
 
