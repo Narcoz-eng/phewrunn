@@ -1,4 +1,5 @@
 const DYNAMIC_IMPORT_RELOAD_KEY_PREFIX = "phew.dynamic-import-reload";
+const DYNAMIC_IMPORT_RELOAD_PARAM = "__phew_chunk_recover";
 
 function buildReloadKey(scope: string): string {
   return `${DYNAMIC_IMPORT_RELOAD_KEY_PREFIX}:${scope}`;
@@ -50,13 +51,17 @@ function reloadOnce(scope: string): boolean {
     // ignore storage access errors and attempt a best-effort reload
   }
 
-  void navigator.serviceWorker?.getRegistrations?.()
-    .then((registrations) => Promise.all(registrations.map((registration) => registration.update().catch(() => undefined))))
-    .catch(() => undefined);
-
   const nextUrl = new URL(window.location.href);
-  nextUrl.searchParams.set("__phew_refresh", String(Date.now()));
-  window.location.replace(nextUrl.toString());
+  nextUrl.searchParams.set(DYNAMIC_IMPORT_RELOAD_PARAM, String(Date.now()));
+  void Promise.allSettled([
+    navigator.serviceWorker?.getRegistrations?.()
+      .then((registrations) => Promise.all(registrations.map((registration) => registration.update().catch(() => undefined)))),
+    typeof window.caches !== "undefined"
+      ? window.caches.keys().then((keys) => Promise.all(keys.map((key) => window.caches.delete(key))))
+      : Promise.resolve(),
+  ]).finally(() => {
+    window.location.replace(nextUrl.toString());
+  });
   return true;
 }
 

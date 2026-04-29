@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import {
   isExplicitLogoutCoolingDown,
@@ -7,12 +7,7 @@ import {
 } from "@/lib/auth-client";
 import { usePrivyAvailable } from "@/components/PrivyContext";
 import { V2AppShell } from "@/components/layout/V2AppShell";
-
-const ProtectedRouteWithPrivy = lazy(() =>
-  import("@/components/ProtectedRouteWithPrivy").then((mod) => ({
-    default: mod.ProtectedRouteWithPrivy,
-  }))
-);
+import { ProtectedRouteWithPrivy } from "@/components/ProtectedRouteWithPrivy";
 
 function isProductRoute(pathname: string): boolean {
   return (
@@ -215,10 +210,8 @@ export function ProtectedRoute({
   }
 
   return (
-    <Suspense fallback={fallback}>
-      <ProtectedRouteWithPrivy allowMissingUsername={allowMissingUsername}>
-        {children}
-      </ProtectedRouteWithPrivy>
-    </Suspense>
+    <ProtectedRouteWithPrivy allowMissingUsername={allowMissingUsername}>
+      {children}
+    </ProtectedRouteWithPrivy>
   );
 }

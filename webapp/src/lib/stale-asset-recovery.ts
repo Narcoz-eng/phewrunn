@@ -1,5 +1,6 @@
 const STALE_ASSET_RELOAD_KEY = "phew.stale-asset-reload-at";
 const STALE_ASSET_RELOAD_COOLDOWN_MS = 30_000;
+const STALE_ASSET_RELOAD_PARAM = "__phew_chunk_recover";
 
 function readLastReloadAt(): number {
   if (typeof window === "undefined") {
@@ -52,6 +53,18 @@ function isStaleAssetErrorMessage(message: string): boolean {
   );
 }
 
+async function clearBrowserManagedCaches(): Promise<void> {
+  await Promise.allSettled([
+    navigator.serviceWorker?.getRegistrations?.()
+      .then((registrations) =>
+        Promise.all(registrations.map((registration) => registration.update().catch(() => undefined)))
+      ),
+    typeof window.caches !== "undefined"
+      ? window.caches.keys().then((keys) => Promise.all(keys.map((key) => window.caches.delete(key))))
+      : Promise.resolve(),
+  ]);
+}
+
 function attemptStaleAssetReload(source: string, message: string): boolean {
   if (typeof window === "undefined") {
     return false;
@@ -77,7 +90,11 @@ function attemptStaleAssetReload(source: string, message: string): boolean {
     source,
     message,
   });
-  window.location.reload();
+  const nextUrl = new URL(window.location.href);
+  nextUrl.searchParams.set(STALE_ASSET_RELOAD_PARAM, String(now));
+  void clearBrowserManagedCaches().finally(() => {
+    window.location.replace(nextUrl.toString());
+  });
   return true;
 }
 

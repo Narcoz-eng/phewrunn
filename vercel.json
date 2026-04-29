@@ -33,6 +33,13 @@
       "dest": "/webapp/assets/$1"
     },
     {
+      "src": "/sw.js",
+      "headers": {
+        "Cache-Control": "no-cache, max-age=0, must-revalidate"
+      },
+      "dest": "/webapp/sw.js"
+    },
+    {
       "src": "/(.*\\..*)",
       "headers": {
         "Cache-Control": "public, max-age=300, must-revalidate"
