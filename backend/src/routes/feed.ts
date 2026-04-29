@@ -55,11 +55,18 @@ feedRouter.post("/chart-previews", zValidator("json", FeedChartPreviewBatchSchem
     }
   });
   await Promise.all(workers);
+  const unavailableReasons = new Map<string, number>();
+  for (const preview of Object.values(results)) {
+    if (preview.state === "live") continue;
+    const reason = preview.unavailableReason ?? "unknown";
+    unavailableReasons.set(reason, (unavailableReasons.get(reason) ?? 0) + 1);
+  }
   console.info("[feed/chart-previews] batch complete", {
     requested: tokens.length,
     deduped: deduped.size,
     dedupeHits: Math.max(0, tokens.length - deduped.size),
     liveResults: Object.values(results).filter((preview) => preview.state === "live").length,
+    unavailableReasons: Object.fromEntries(unavailableReasons.entries()),
     latencyMs: Date.now() - startedAt,
   });
   c.header("Cache-Control", "private, max-age=15, stale-while-revalidate=45");

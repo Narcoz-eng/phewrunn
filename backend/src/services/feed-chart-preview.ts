@@ -1,3 +1,5 @@
+import { prisma } from "../prisma.js";
+
 type FeedChartPreviewCandle = {
   timestamp: number;
   open: number;
@@ -152,6 +154,50 @@ function newestCandleFresh(candles: FeedChartPreviewCandle[]): boolean {
   return Date.now() - newest * 1000 <= FEED_CHART_PREVIEW_FRESH_MAX_AGE_MS;
 }
 
+async function getStoredSnapshotCandles(tokenAddress: string, chainType: string): Promise<FeedChartPreviewCandle[]> {
+  const token = await prisma.token.findUnique({
+    where: {
+      chainType_address: {
+        chainType,
+        address: tokenAddress,
+      },
+    },
+    select: {
+      snapshots: {
+        select: {
+          capturedAt: true,
+          priceUsd: true,
+          marketCap: true,
+          volume24h: true,
+        },
+        orderBy: { capturedAt: "desc" },
+        take: 48,
+      },
+    },
+  });
+  if (!token?.snapshots.length) return [];
+
+  const rows = [...token.snapshots].reverse();
+  return rows
+    .map((snapshot, index) => {
+      const close = finite(snapshot.priceUsd) ?? finite(snapshot.marketCap);
+      if (close === null || close <= 0) return null;
+      const previous = index > 0 ? finite(rows[index - 1]?.priceUsd) ?? finite(rows[index - 1]?.marketCap) : close;
+      const open = previous && previous > 0 ? previous : close;
+      const high = Math.max(open, close);
+      const low = Math.min(open, close);
+      return {
+        timestamp: Math.floor(snapshot.capturedAt.getTime() / 1000),
+        open,
+        high,
+        low,
+        close,
+        volume: Math.max(0, finite(snapshot.volume24h) ?? 0),
+      };
+    })
+    .filter((candle): candle is FeedChartPreviewCandle => Boolean(candle));
+}
+
 function unavailablePreview(source: string, unavailableReason: string): FeedChartPreviewResult {
   return {
     state: "unavailable",
@@ -246,6 +292,19 @@ export async function getFeedChartPreview(params: {
         }
 
         if (!pairAddress) {
+          if (tokenAddress) {
+            const storedCandles = await getStoredSnapshotCandles(tokenAddress, network === "solana" ? "solana" : "evm");
+            if (isValidPreviewSeries(storedCandles) && newestCandleFresh(storedCandles)) {
+              return {
+                state: "live",
+                source: "token-snapshots",
+                fetchedAt: new Date().toISOString(),
+                maxAgeMs: FEED_CHART_PREVIEW_FRESH_MAX_AGE_MS,
+                unavailableReason: null,
+                candles: storedCandles,
+              } satisfies FeedChartPreviewResult;
+            }
+          }
           return unavailablePreview(
             network === "solana" ? "birdeye" : "geckoterminal",
             "No pair address is attached for fallback market candles."
@@ -267,6 +326,19 @@ export async function getFeedChartPreview(params: {
         }
         const candles = parseGeckoCandles(await response.json());
         if (!isValidPreviewSeries(candles) || !newestCandleFresh(candles)) {
+          if (tokenAddress) {
+            const storedCandles = await getStoredSnapshotCandles(tokenAddress, network === "solana" ? "solana" : "evm");
+            if (isValidPreviewSeries(storedCandles) && newestCandleFresh(storedCandles)) {
+              return {
+                state: "live",
+                source: "token-snapshots",
+                fetchedAt: new Date().toISOString(),
+                maxAgeMs: FEED_CHART_PREVIEW_FRESH_MAX_AGE_MS,
+                unavailableReason: null,
+                candles: storedCandles,
+              } satisfies FeedChartPreviewResult;
+            }
+          }
           return unavailablePreview(
             "geckoterminal",
             !newestCandleFresh(candles)

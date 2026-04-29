@@ -10,6 +10,18 @@ const DISCOVERY_CALL_MAX_AGE_MS = 48 * 60 * 60_000;
 const DISCOVERY_TRENDING_CALL_MARKET_MAX_AGE_MS = 5 * 60_000;
 const DISCOVERY_WHALE_MAX_AGE_MS = 24 * 60 * 60_000;
 const DISCOVERY_WHALE_ARCHIVE_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
+const DISCOVERY_SIDEBAR_CACHE_TTL_MS = 45_000;
+const DISCOVERY_SIDEBAR_STALE_MS = 5 * 60_000;
+const DISCOVERY_SIDEBAR_COLD_WAIT_MS = 180;
+
+type DiscoverySidebarPayload = Awaited<ReturnType<typeof buildDiscoveryFeedSidebarPayload>>;
+type DiscoverySidebarCacheEntry = {
+  cachedAtMs: number;
+  data: DiscoverySidebarPayload;
+};
+
+let discoverySidebarCache: DiscoverySidebarCacheEntry | null = null;
+let discoverySidebarInFlight: Promise<DiscoverySidebarPayload | null> | null = null;
 
 function toNumber(value: number | null | undefined, fallback = 0): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
@@ -79,7 +91,51 @@ function parseReactionSummary(value: unknown): { count: number; positiveBias: nu
   return { count, positiveBias };
 }
 
-discoveryRouter.get("/feed-sidebar", async (c) => {
+async function refreshDiscoverySidebar(): Promise<DiscoverySidebarPayload | null> {
+  if (discoverySidebarInFlight) return discoverySidebarInFlight;
+  const startedAt = Date.now();
+  discoverySidebarInFlight = buildDiscoveryFeedSidebarPayload()
+    .then((data) => {
+      discoverySidebarCache = { cachedAtMs: Date.now(), data };
+      console.info("[discovery/feed-sidebar] refresh complete", {
+        latencyMs: Date.now() - startedAt,
+        topGainers: data.topGainers.length,
+        trendingCalls: data.trendingCalls.length,
+        liveRaids: data.liveRaids.length,
+        whaleRows: data.whaleActivity.length,
+      });
+      return data;
+    })
+    .catch((error) => {
+      console.warn("[discovery/feed-sidebar] refresh failed", {
+        latencyMs: Date.now() - startedAt,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    })
+    .finally(() => {
+      discoverySidebarInFlight = null;
+    });
+  return discoverySidebarInFlight;
+}
+
+function queueDiscoverySidebarRefresh(): boolean {
+  if (discoverySidebarInFlight) return false;
+  void refreshDiscoverySidebar();
+  return true;
+}
+
+function readDiscoverySidebarCache(): { entry: DiscoverySidebarCacheEntry; state: "fresh" | "stale" } | null {
+  if (!discoverySidebarCache) return null;
+  const ageMs = Date.now() - discoverySidebarCache.cachedAtMs;
+  if (ageMs > DISCOVERY_SIDEBAR_STALE_MS) {
+    discoverySidebarCache = null;
+    return null;
+  }
+  return { entry: discoverySidebarCache, state: ageMs <= DISCOVERY_SIDEBAR_CACHE_TTL_MS ? "fresh" : "stale" };
+}
+
+async function buildDiscoveryFeedSidebarPayload() {
   const [topTokens, liveRaids, recentCalls, communities, whaleEvents] = await Promise.all([
     prisma.token.findMany({
       select: {
@@ -506,8 +562,7 @@ discoveryRouter.get("/feed-sidebar", async (c) => {
     })
     .filter((event) => isFreshDate(event.asOf, whaleCoverage === "live" ? DISCOVERY_WHALE_MAX_AGE_MS : DISCOVERY_WHALE_ARCHIVE_MAX_AGE_MS));
 
-  return c.json({
-    data: {
+  return {
       marketStats,
       topGainers,
       liveRaids: liveRaids
@@ -545,6 +600,45 @@ discoveryRouter.get("/feed-sidebar", async (c) => {
           }
         : null,
       whaleActivity,
+  };
+}
+
+discoveryRouter.get("/feed-sidebar", async (c) => {
+  const startedAt = Date.now();
+  const cached = readDiscoverySidebarCache();
+  if (cached) {
+    const refreshQueued = cached.state === "stale" ? queueDiscoverySidebarRefresh() : false;
+    c.header("X-Discovery-Cache", cached.state);
+    console.info("[discovery/feed-sidebar] served cache", {
+      cacheState: cached.state,
+      refreshQueued,
+      latencyMs: Date.now() - startedAt,
+    });
+    return c.json({ data: cached.entry.data });
+  }
+
+  const cold = await Promise.race([
+    refreshDiscoverySidebar(),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), DISCOVERY_SIDEBAR_COLD_WAIT_MS)),
+  ]);
+  if (cold) {
+    c.header("X-Discovery-Cache", "cold");
+    return c.json({ data: cold });
+  }
+
+  c.header("X-Discovery-Cache", "warming");
+  console.warn("[discovery/feed-sidebar] cold cache warming; returning compact empty payload", {
+    latencyMs: Date.now() - startedAt,
+  });
+  return c.json({
+    data: {
+      marketStats: null,
+      topGainers: [],
+      liveRaids: [],
+      trendingCalls: [],
+      trendingCommunities: [],
+      aiSpotlight: null,
+      whaleActivity: [],
     },
   });
 });

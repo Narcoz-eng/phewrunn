@@ -28,6 +28,9 @@ export default defineConfig(({ mode }) => ({
     include: [
       "buffer",
       "bs58",
+      "canonicalize",
+      "eventemitter3",
+      "fetch-retry",
     ],
     // These packages are ESM-only and must not go through esbuild CJS transform
     exclude: [

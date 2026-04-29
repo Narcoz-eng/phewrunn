@@ -8,7 +8,7 @@ import { useAuth, useSession } from "@/lib/auth-client";
 import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
 import { applyPostPollVote } from "@/lib/post-poll";
 import { cn } from "@/lib/utils";
-import { stabilizePostChartPreview } from "@/lib/feed-chart-cache";
+import { feedChartCacheKeys, getCachedFeedChart, loadBatchedFeedChartPreview, stabilizePostChartPreview } from "@/lib/feed-chart-cache";
 import type { DiscoveryFeedSidebarResponse, FeedTab, Post, User } from "@/types";
 import { FeedV2PostCard } from "@/components/feed/FeedV2PostCard";
 import { FeedV2RightRail } from "@/components/feed/FeedV2RightRail";
@@ -555,6 +555,34 @@ export default function Feed() {
   const shouldShowFeedFatalError = Boolean(postsError && !hasPosts && !shouldShowFollowingAuthState && !shouldShowFollowingSessionRecovery);
   const shouldShowFeedSoftError = Boolean(postsError && hasPosts);
   const isRefreshing = isManualRefreshing || (isFetching && !isFetchingNextPage);
+
+  useEffect(() => {
+    const visibleChartCandidates = displayedPosts.slice(0, 12).flatMap((post) => {
+      const token = post.payload?.call?.token ?? post.payload?.chart?.token ?? post.tokenContext ?? null;
+      if (!token?.address) return [];
+      const timeframe = post.payload?.chart?.timeframe ?? "1h";
+      const cacheKeys = feedChartCacheKeys(post, timeframe);
+      if (!cacheKeys.length || getCachedFeedChart(cacheKeys)) return [];
+      const key = cacheKeys.find((item) => item.startsWith("token:")) ?? cacheKeys[0];
+      return [{
+        key,
+        cacheKeys,
+        tokenAddress: token.address,
+        pairAddress: token.pairAddress ?? null,
+        chainType: token.chain ?? null,
+      }];
+    });
+    const deduped = new Map(visibleChartCandidates.map((item) => [item.key, item] as const));
+    if (!deduped.size) return;
+    console.info("[feed] visible chart batch queued", {
+      visibleCandidates: visibleChartCandidates.length,
+      deduped: deduped.size,
+      dedupeHits: Math.max(0, visibleChartCandidates.length - deduped.size),
+    });
+    for (const item of deduped.values()) {
+      void loadBatchedFeedChartPreview(item).catch(() => undefined);
+    }
+  }, [displayedPosts]);
 
   return (
     <div className="space-y-3">

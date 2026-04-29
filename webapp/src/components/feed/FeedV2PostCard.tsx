@@ -549,7 +549,7 @@ function PlaceholderCandles({ id, dominant = false, className }: { id: string; d
   );
 }
 
-function ChartPreviewState({ post, reason, dominant = false }: { post: Post; reason: string; dominant?: boolean }) {
+function ChartPreviewState({ post, reason, dominant = false, compact = false }: { post: Post; reason: string; dominant?: boolean; compact?: boolean }) {
   const payloadPreview = post.payload?.call?.chartPreview ?? post.payload?.chart?.chartPreview ?? null;
   const token = post.payload?.call?.token ?? post.payload?.chart?.token ?? post.tokenContext ?? null;
   const timeframe = post.payload?.chart?.timeframe ?? "1h";
@@ -610,8 +610,8 @@ function ChartPreviewState({ post, reason, dominant = false }: { post: Post; rea
     const maxHigh = Math.max(...candles.map((candle) => candle.high));
     const maxVolume = Math.max(1, ...candles.map((candle) => candle.volume));
     const width = 520;
-    const priceHeight = dominant ? 188 : 128;
-    const volumeHeight = dominant ? 42 : 28;
+    const priceHeight = dominant ? 188 : compact ? 76 : 128;
+    const volumeHeight = dominant ? 42 : compact ? 18 : 28;
     const gap = 10;
     const height = priceHeight + volumeHeight + gap;
     const candleStep = width / candles.length;
@@ -628,8 +628,8 @@ function ChartPreviewState({ post, reason, dominant = false }: { post: Post; rea
             {movePct === null ? "live" : formatMetric(movePct, "pct")}
           </span>
         </div>
-        <PlaceholderCandles id={post.id.replace(/[^a-zA-Z0-9_-]/g, "")} dominant={dominant} className="absolute inset-x-3 bottom-3 opacity-45" />
-        <svg viewBox={`0 0 ${width} ${height}`} className={cn("relative w-full animate-fade-in", dominant ? "h-60" : "h-40")} role="img" aria-label="Candlestick chart preview">
+        {!compact ? <PlaceholderCandles id={post.id.replace(/[^a-zA-Z0-9_-]/g, "")} dominant={dominant} className="absolute inset-x-3 bottom-3 opacity-45" /> : null}
+        <svg viewBox={`0 0 ${width} ${height}`} className={cn("relative w-full animate-fade-in", dominant ? "h-60" : compact ? "h-28" : "h-40")} role="img" aria-label="Candlestick chart preview">
           <defs>
             <linearGradient id={`volume-${post.id}`} x1="0" x2="0" y1="0" y2="1">
               <stop offset="0%" stopColor="rgba(169,255,52,0.52)" />
@@ -671,6 +671,17 @@ function ChartPreviewState({ post, reason, dominant = false }: { post: Post; rea
             );
           })()}
         </svg>
+      </div>
+    );
+  }
+  if (compact) {
+    return (
+      <div ref={containerRef} className="mt-0 flex items-center justify-between gap-3 bg-[#03080a] px-3 py-2">
+        <div className="min-w-0">
+          <div className="truncate text-xs font-semibold text-white/56">{post.tokenContext?.symbol ? `$${post.tokenContext.symbol}` : "Market"} preview</div>
+          <div className="mt-0.5 truncate text-[11px] text-white/34">{preview?.unavailableReason ?? post.coverage?.candles.unavailableReason ?? reason}</div>
+        </div>
+        <span className="shrink-0 rounded-full border border-white/8 bg-white/[0.035] px-2 py-0.5 text-[10px] font-semibold text-white/40">Compact</span>
       </div>
     );
   }
@@ -784,7 +795,7 @@ function FeedPostCallCard(props: FeedV2PostCardProps) {
         </div>
       </div>
       <div className={cn("mt-3 overflow-hidden border-t border-white/[0.055] pt-0", isWeakSignal && "mt-2")}>
-        <ChartPreviewState post={post} reason={payload.chartPreview?.unavailableReason ?? "Targets forming"} dominant={isHighConviction} />
+        <ChartPreviewState post={post} reason={payload.chartPreview?.unavailableReason ?? "Targets forming"} dominant={isHighConviction} compact={isWeakSignal} />
       </div>
       <AiDecisionPanel post={post} convictionLabel={convictionLabel} confidence={confidenceValue} compact={isWeakSignal} />
       {liveSignal ? <WhyShown post={post} /> : null}
