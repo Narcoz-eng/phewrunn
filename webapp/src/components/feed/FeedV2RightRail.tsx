@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { ArrowUpRight, BrainCircuit, RadioTower, Waves } from "lucide-react";
+import { ArrowUpRight, BrainCircuit, RadioTower } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { V2StatusPill } from "@/components/ui/v2/V2StatusPill";
 import { cn } from "@/lib/utils";
@@ -45,11 +45,17 @@ function timeAgo(value: string | null | undefined): string | null {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
+function whaleDirection(action: string | null | undefined): "BUY" | "SELL" {
+  const normalized = (action ?? "").toLowerCase();
+  if (normalized.includes("sell") || normalized.includes("distribut") || normalized.includes("outflow")) return "SELL";
+  return "BUY";
+}
+
 function convictionLabel(score: number | null): string {
   if (score === null) return "Early setup";
   if (score >= 75) return "Strong conviction";
   if (score >= 55) return "Medium conviction";
-  return "Conviction forming";
+  return "Momentum unconfirmed";
 }
 
 function RailCard({ title, children, action }: { title: string; children: ReactNode; action?: ReactNode }) {
@@ -131,7 +137,7 @@ export function FeedV2RightRail({ discovery, onFilterFeed }: FeedV2RightRailProp
           ))}
         </div>
         ) : (
-          <RailUnavailable message="Price syncing across tracked tokens" />
+          <RailUnavailable message="Market pulse muted" />
         )}
       </section>
 
@@ -164,7 +170,7 @@ export function FeedV2RightRail({ discovery, onFilterFeed }: FeedV2RightRailProp
             ))}
           </div>
         ) : (
-          <RailUnavailable message="Top movers forming" tone="positive" />
+          <RailUnavailable message="No sharp movers right now" tone="positive" />
         )}
       </RailCard>
 
@@ -209,7 +215,7 @@ export function FeedV2RightRail({ discovery, onFilterFeed }: FeedV2RightRailProp
             })}
           </div>
         ) : (
-          <RailUnavailable message="Live raids forming" tone="positive" />
+          <RailUnavailable message="No live raid pressure" tone="positive" />
         )}
       </RailCard>
 
@@ -237,7 +243,7 @@ export function FeedV2RightRail({ discovery, onFilterFeed }: FeedV2RightRailProp
             ))}
           </div>
         ) : (
-          <RailUnavailable message="Active calls forming" tone="positive" />
+          <RailUnavailable message="No strong calls right now" tone="positive" />
         )}
       </RailCard>
 
@@ -266,14 +272,17 @@ export function FeedV2RightRail({ discovery, onFilterFeed }: FeedV2RightRailProp
             })}
           </div>
         ) : (
-          <RailUnavailable message="AI watchlist forming" tone="positive" />
+          <RailUnavailable message="No high-confidence watchlist" tone="positive" />
         )}
       </RailCard>
 
       <RailCard title="Whale Flow" action={<span className="rounded-[8px] border border-white/10 bg-white/[0.04] px-2 py-1 text-[11px] text-white/54">24h</span>}>
         {whaleRows.length ? (
           <div className="space-y-2">
-            {whaleRows.slice(0, 4).map((item) => (
+            {whaleRows.slice(0, 4).map((item) => {
+              const direction = whaleDirection(item.action);
+              const seenAt = timeAgo(item.createdAt) ?? "Live";
+              return (
             <button
               key={`whale-${item.id}`}
               type="button"
@@ -284,20 +293,19 @@ export function FeedV2RightRail({ discovery, onFilterFeed }: FeedV2RightRailProp
                   window.open(item.explorerUrl, "_blank", "noopener,noreferrer");
                 }
               }}
-              className="flex w-full items-center gap-2 rounded-[12px] px-1.5 py-1.5 text-left transition hover:bg-white/[0.045]"
+              className="grid w-full grid-cols-[minmax(54px,0.8fr)_minmax(48px,0.62fr)_minmax(76px,0.82fr)_44px_46px] items-center gap-2 rounded-[12px] px-1.5 py-1.5 text-left transition hover:bg-white/[0.045]"
             >
-              <Waves className="h-4 w-4 text-cyan-300" />
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-bold text-white">{item.tokenSymbol ? `$${item.tokenSymbol}` : "Tracked token"}</div>
-                <div className="truncate text-[11px] text-white/40">
-                  {compactAddress(item.wallet)}{item.amount ? ` - ${item.amount}` : ""}{timeAgo(item.createdAt) ? ` - ${timeAgo(item.createdAt)}` : " - Live"}
-                </div>
+                <div className="truncate font-mono text-[11px] font-semibold text-white/60">{compactAddress(item.wallet)}</div>
                 {item.isTest ? <div className="mt-0.5 text-[10px] font-semibold text-cyan-200/62">Verified test event</div> : null}
               </div>
-              <div className="text-right text-xs text-white/62">{formatUsd(item.valueUsd)}</div>
-              <ArrowUpRight className="h-3.5 w-3.5 text-cyan-200/50" />
+              <div className="truncate text-xs font-black text-white">{item.tokenSymbol ? `$${item.tokenSymbol}` : "Token"}</div>
+              <div className="text-right text-xs font-black text-white">{formatUsd(item.valueUsd)}</div>
+              <div className={cn("text-right text-[11px] font-black", direction === "BUY" ? "text-lime-300" : "text-rose-300")}>{direction}</div>
+              <div className="text-right text-[10px] font-semibold text-white/42">{seenAt}</div>
             </button>
-            ))}
+              );
+            })}
           </div>
         ) : (
           <RailUnavailable message="No recent smart-money flow" />

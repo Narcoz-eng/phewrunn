@@ -115,12 +115,14 @@
 
   html {
     scroll-behavior: smooth;
+    height: 100%;
     min-height: 100%;
   }
 
   body {
     @apply bg-background text-foreground antialiased;
     position: relative;
+    height: 100%;
     min-height: 100vh;
     min-height: 100dvh;
     margin: 0;
@@ -137,6 +139,7 @@
   }
 
   #root {
+    height: 100%;
     min-height: 100vh;
     min-height: 100dvh;
   }
@@ -568,6 +571,7 @@
     @apply min-h-screen;
     min-height: 100dvh;
     height: 100dvh;
+    max-height: 100dvh;
     overflow: hidden;
     background:
       radial-gradient(circle at top left, rgba(169, 255, 52, 0.09), transparent 16%),
@@ -619,6 +623,8 @@
 
   .v2-sidebar {
     @apply fixed inset-y-0 left-0 z-40 w-[14.5rem] flex-col overflow-hidden border-r border-white/[0.07];
+    top: 0;
+    bottom: 0;
     height: 100dvh;
     max-height: 100dvh;
     min-height: 0;
@@ -633,9 +639,11 @@
 
   .v2-sidebar-scroll {
     @apply flex w-full flex-col overflow-y-auto overflow-x-hidden px-4 py-4;
+    flex: 1 1 auto;
     height: 100%;
+    max-height: 100dvh;
     min-height: 0;
-    padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
+    padding-bottom: max(2rem, env(safe-area-inset-bottom));
     overscroll-behavior: contain;
     scrollbar-gutter: stable;
     scroll-behavior: smooth;

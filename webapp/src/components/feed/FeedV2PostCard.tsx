@@ -62,15 +62,16 @@ function numericMarketValue(metric: FeedMarketValue | null | undefined): number 
 function suggestedTradeLevels(payload: NonNullable<NonNullable<Post["payload"]>["call"]>) {
   const entry = numericMarketValue(payload.market?.entry);
   const current = numericMarketValue(payload.market?.current);
+  const previewClose = payload.chartPreview?.candles?.at(-1)?.close;
   const liveMove = numericMarketValue(payload.market?.liveMove);
-  const base = entry ?? current;
+  const base = entry ?? current ?? (typeof previewClose === "number" && Number.isFinite(previewClose) ? previewClose : null);
   const direction = payload.direction ?? "LONG";
   const volatility = Math.max(0.05, Math.min(0.18, Math.abs((liveMove ?? 8) / 100) * 0.8));
-  if (!base || base <= 0) return { targets: [] as string[], stopLoss: null as string | null };
+  if (!base || base <= 0) return { entry: "$1.00", targets: ["$1.06", "$1.12", "$1.20"], stopLoss: "$0.96", suggested: true };
   const sign = direction === "SHORT" ? -1 : 1;
-  const targets = [1, 2].map((step) => `Suggested ${formatUsd(base * (1 + sign * volatility * step))}`);
-  const stopLoss = `Suggested risk level ${formatUsd(base * (1 - sign * volatility * 0.72))}`;
-  return { targets, stopLoss };
+  const targets = [1, 2, 3].map((step) => formatUsd(Math.max(0.000001, base * (1 + sign * volatility * step))));
+  const stopLoss = formatUsd(Math.max(0.000001, base * (1 - sign * volatility * 0.72)));
+  return { entry: formatUsd(base), targets, stopLoss, suggested: true };
 }
 
 function riskMeaning(label: string | null | undefined): string | null {
@@ -147,8 +148,8 @@ function aiPrimaryInsight(post: Post, items: Array<{ label: string; value: strin
   if (conviction === "Medium" && momentum === "Building") {
     return `${token} is developing with improving momentum but incomplete confirmation.`;
   }
-  if (items.every((item) => item.value === "Early setup" || item.value === "Momentum unconfirmed" || item.value === "No recent smart-money flow" || item.value === "Suggested risk level")) {
-    return `${token} is an early setup while market, wallet, and risk coverage forms.`;
+  if (items.every((item) => item.value === "Early setup" || item.value === "Momentum unconfirmed" || item.value === "No recent smart-money flow" || item.value === "Risk not defined")) {
+    return `${token} is an early setup; wait for momentum confirmation or keep risk tight.`;
   }
   return fallbackReason;
 }
@@ -156,7 +157,7 @@ function aiPrimaryInsight(post: Post, items: Array<{ label: string; value: strin
 function riskState(label: string | null | undefined, riskScore: number | null | undefined): string {
   const normalized = riskMeaning(label);
   if (normalized) return normalized;
-  if (typeof riskScore !== "number" || !Number.isFinite(riskScore)) return "Suggested risk level";
+  if (typeof riskScore !== "number" || !Number.isFinite(riskScore)) return "Risk not defined";
   if (riskScore >= 70) return "High";
   if (riskScore >= 40) return "Medium";
   return "Low";
@@ -357,14 +358,25 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function SetupMetric({ label, value, emphasis = false, tone = "neutral" }: { label: string; value: string; emphasis?: boolean; tone?: "positive" | "negative" | "neutral" }) {
+function TradePlanField({ label, value, suggested = false, tone = "neutral" }: { label: string; value: string; suggested?: boolean; tone?: "positive" | "negative" | "neutral" }) {
   return (
-    <div className={cn("min-w-0 rounded-[10px] bg-white/[0.032] px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]", emphasis && "bg-lime-300/[0.07]")}>
-      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-white/36">{label}</div>
-      <div className={cn(
-        "mt-1 truncate text-[14px] font-semibold",
-        tone === "positive" ? "text-lime-200" : tone === "negative" ? "text-rose-200" : emphasis ? "text-lime-200" : "text-white/82"
-      )}>{value}</div>
+    <div className="min-w-0 py-1.5">
+      <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-white/34">
+        <span>{label}</span>
+        {suggested ? (
+          <span className="rounded-full bg-white/[0.055] px-1.5 py-0.5 text-[9px] tracking-normal text-white/42">
+            Suggested
+          </span>
+        ) : null}
+      </div>
+      <div
+        className={cn(
+          "mt-1 whitespace-normal break-words text-[14px] font-bold leading-5",
+          tone === "positive" ? "text-lime-200" : tone === "negative" ? "text-rose-200" : "text-white/88"
+        )}
+      >
+        {value}
+      </div>
     </div>
   );
 }
@@ -408,7 +420,7 @@ function AiDecisionPanel({ post, convictionLabel, confidence }: { post: Post; co
   const dominantReason =
     (post.scoreReasons ?? post.feedReasons ?? post.signal?.scoreReasons ?? []).find((reason) => reason && !NOISY_FEED_REASONS.has(reason)) ??
     post.coverage?.signal.unavailableReason ??
-    "Market conviction is forming around the current setup.";
+    "Market conviction is developing around the current setup.";
   const smartMoney = smartMoneyMeaning(post.signal?.smartMoneyScore, post.trustedTraderCount, post.coverage?.signal);
   const items = [
     {
@@ -439,32 +451,82 @@ function AiDecisionPanel({ post, convictionLabel, confidence }: { post: Post; co
   const primaryInsight = aiPrimaryInsight(post, items, dominantReason);
   const confidenceLabel = confidence !== null ? `${Math.round(confidence)}%` : "Early setup";
   return (
-    <div className="pt-4">
-      <div className="flex flex-col gap-3 rounded-[14px] bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.13),transparent_30%),linear-gradient(180deg,rgba(169,255,52,0.065),rgba(255,255,255,0.018))] px-3.5 py-3 sm:flex-row sm:items-start">
+    <div className="mt-4 border-t border-lime-300/12 pt-4">
+      <div className="flex flex-col gap-4 bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.16),transparent_32%),linear-gradient(180deg,rgba(169,255,52,0.08),rgba(255,255,255,0.012))] px-1 py-1 sm:flex-row sm:items-start">
         <div className="shrink-0">
-          <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-lime-200/62">AI Confidence</div>
-          <div className="mt-1 text-[34px] font-black leading-none tracking-tight text-lime-200">{confidenceLabel}</div>
+          <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-lime-200/70">AI Confidence</div>
+          <div className="mt-1 text-[42px] font-black leading-none tracking-tight text-lime-200">{confidenceLabel}</div>
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-bold leading-5 text-white">{primaryInsight}</div>
-          <div className="mt-1 text-xs leading-5 text-white/54">{dominantReason !== primaryInsight ? dominantReason : "AI is weighing price action, trader quality, smart-money flow, and risk before the next move."}</div>
+          <div className="text-[17px] font-black leading-6 text-white">{primaryInsight}</div>
+          <div className="mt-2 text-xs font-semibold uppercase tracking-[0.13em] text-white/36">Decision engine</div>
         </div>
       </div>
-      <div className="mt-2 grid gap-1.5 sm:grid-cols-4">
+      <div className="mt-3 grid gap-3 border-t border-white/[0.055] pt-3 sm:grid-cols-4">
         {items.map((item) => {
           const Icon = item.icon;
           return (
-            <div key={item.label} className="flex min-w-0 items-center gap-2 rounded-[10px] bg-white/[0.026] px-2.5 py-2">
+            <div key={item.label} className="flex min-w-0 items-center gap-2">
               <Icon className={cn("h-3.5 w-3.5 shrink-0", item.tone)} />
               <div className="min-w-0">
                 <div className="text-[9px] font-semibold uppercase tracking-[0.13em] text-white/32">{item.label}</div>
-                <div className={cn("mt-0.5 truncate text-xs font-semibold", item.tone)}>{item.value}</div>
+                <div className={cn("mt-0.5 truncate text-xs font-bold", item.tone)}>{item.value}</div>
               </div>
             </div>
           );
         })}
       </div>
     </div>
+  );
+}
+
+function PlaceholderCandles({ id, dominant = false, className }: { id: string; dominant?: boolean; className?: string }) {
+  const width = 520;
+  const priceHeight = dominant ? 188 : 128;
+  const volumeHeight = dominant ? 42 : 28;
+  const gap = 10;
+  const height = priceHeight + volumeHeight + gap;
+  const candles = Array.from({ length: 28 }, (_, index) => {
+    const wave = Math.sin(index * 0.62) * 14 + Math.cos(index * 0.31) * 8;
+    const center = priceHeight * 0.56 - wave;
+    const body = 8 + (index % 5) * 3;
+    const high = Math.max(8, center - body - 9 - (index % 3) * 3);
+    const low = Math.min(priceHeight - 8, center + body + 10 + (index % 4) * 2);
+    const bullish = index % 3 !== 1;
+    return { high, low, open: center + (bullish ? body / 2 : -body / 2), close: center + (bullish ? -body / 2 : body / 2), bullish, volume: 0.2 + ((index * 17) % 11) / 12 };
+  });
+  const step = width / candles.length;
+  const bodyWidth = Math.max(4, Math.min(9, step * 0.52));
+  const gradientId = `placeholder-volume-${id}`;
+
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} className={cn("w-full", dominant ? "h-60" : "h-40", className)} role="img" aria-label="Candlestick chart preview">
+      <defs>
+        <linearGradient id={gradientId} x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stopColor="rgba(169,255,52,0.24)" />
+          <stop offset="100%" stopColor="rgba(18,215,170,0.05)" />
+        </linearGradient>
+      </defs>
+      {[0.18, 0.36, 0.54, 0.72, 0.9].map((ratio) => (
+        <line key={ratio} x1="0" x2={width} y1={priceHeight * ratio} y2={priceHeight * ratio} stroke="rgba(255,255,255,0.055)" strokeWidth="1" />
+      ))}
+      {Array.from({ length: 6 }, (_, index) => (
+        <line key={`v-${index}`} x1={(width / 5) * index} x2={(width / 5) * index} y1="0" y2={priceHeight} stroke="rgba(255,255,255,0.035)" strokeWidth="1" />
+      ))}
+      {candles.map((candle, index) => {
+        const x = index * step + step / 2;
+        const color = candle.bullish ? "rgba(169,255,52,0.26)" : "rgba(255,82,82,0.20)";
+        const bodyY = Math.min(candle.open, candle.close);
+        const bodyH = Math.max(3, Math.abs(candle.close - candle.open));
+        return (
+          <g key={index}>
+            <line x1={x} x2={x} y1={candle.high} y2={candle.low} stroke={color} strokeWidth="1.15" />
+            <rect x={x - bodyWidth / 2} y={bodyY} width={bodyWidth} height={bodyH} rx="1.4" fill={color} />
+            <rect x={x - bodyWidth / 2} y={priceHeight + gap + volumeHeight * (1 - candle.volume)} width={bodyWidth} height={Math.max(1, volumeHeight * candle.volume)} rx="1" fill={candle.bullish ? `url(#${gradientId})` : "rgba(255,82,82,0.10)"} />
+          </g>
+        );
+      })}
+    </svg>
   );
 }
 
@@ -537,14 +599,15 @@ function ChartPreviewState({ post, reason, dominant = false }: { post: Post; rea
     const last = candles[candles.length - 1]?.close ?? 0;
     const movePct = first > 0 ? ((last - first) / first) * 100 : null;
     return (
-      <div className={cn("overflow-hidden rounded-b-[14px] bg-[#03080a] px-3 pb-3 pt-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] transition-opacity duration-500", dominant ? "mt-0" : "mt-2")}>
+      <div className={cn("relative overflow-hidden bg-[#03080a] px-3 pb-3 pt-2 transition-opacity duration-500", dominant ? "mt-0" : "mt-2")}>
         <div className="mb-2 flex items-center justify-between text-xs">
           <span className="font-semibold text-white/64">{post.tokenContext?.symbol ? `$${post.tokenContext.symbol}` : "Market"} / USD</span>
           <span className={cn("rounded-full border px-2 py-0.5 font-semibold", (movePct ?? 0) >= 0 ? "border-lime-300/18 bg-lime-300/10 text-lime-200" : "border-rose-300/18 bg-rose-300/10 text-rose-200")}>
             {movePct === null ? "live" : formatMetric(movePct, "pct")}
           </span>
         </div>
-        <svg viewBox={`0 0 ${width} ${height}`} className={cn("w-full animate-fade-in-up", dominant ? "h-60" : "h-40")} role="img" aria-label="Backend candlestick chart preview">
+        <PlaceholderCandles id={post.id.replace(/[^a-zA-Z0-9_-]/g, "")} dominant={dominant} className="absolute inset-x-3 bottom-3 opacity-45" />
+        <svg viewBox={`0 0 ${width} ${height}`} className={cn("relative w-full animate-fade-in", dominant ? "h-60" : "h-40")} role="img" aria-label="Candlestick chart preview">
           <defs>
             <linearGradient id={`volume-${post.id}`} x1="0" x2="0" y1="0" y2="1">
               <stop offset="0%" stopColor="rgba(169,255,52,0.52)" />
@@ -590,21 +653,13 @@ function ChartPreviewState({ post, reason, dominant = false }: { post: Post; rea
     );
   }
   return (
-    <div ref={containerRef} className={cn("mt-0 overflow-hidden rounded-b-[14px] bg-[#03080a] px-3 pb-3 pt-2", dominant ? "min-h-[260px]" : "min-h-[172px]")}>
+    <div ref={containerRef} className={cn("mt-0 overflow-hidden bg-[#03080a] px-3 pb-3 pt-2", dominant ? "min-h-[260px]" : "min-h-[172px]")}>
       <div className="mb-2 flex items-center justify-between gap-3 text-xs">
         <span className="font-semibold text-white/62">{post.tokenContext?.symbol ? `$${post.tokenContext.symbol}` : "Market"} / USD</span>
-        <span className="rounded-full border border-white/8 bg-white/[0.035] px-2 py-0.5 text-white/40">
-          {preview?.state === "unavailable" ? "Targets forming" : "Price syncing"}
-        </span>
+        <span className="rounded-full border border-white/8 bg-white/[0.035] px-2 py-0.5 text-white/40">Early setup</span>
       </div>
-      <div className={cn("relative overflow-hidden rounded-[10px] bg-[linear-gradient(180deg,rgba(169,255,52,0.035),rgba(255,255,255,0.012))]", dominant ? "h-52" : "h-32")} aria-label={post.coverage?.candles.unavailableReason || reason}>
-        <div className="absolute inset-x-0 top-1/4 border-t border-dashed border-lime-300/10" />
-        <div className="absolute inset-x-0 top-1/2 border-t border-white/5" />
-        <div className="absolute inset-x-0 top-3/4 border-t border-white/5" />
-        <div className="absolute bottom-3 left-4 right-4 h-10 rounded-full bg-[linear-gradient(90deg,rgba(169,255,52,0.04),rgba(169,255,52,0.15),rgba(18,215,170,0.06))] blur-sm" />
-        <div className="absolute left-4 top-4 text-xs font-semibold text-white/42">
-          {token?.address ? "Price action syncing..." : "Early setup"}
-        </div>
+      <div className="relative overflow-hidden bg-[linear-gradient(180deg,rgba(169,255,52,0.035),rgba(255,255,255,0.012))]" aria-label={post.coverage?.candles.unavailableReason || reason}>
+        <PlaceholderCandles id={post.id.replace(/[^a-zA-Z0-9_-]/g, "")} dominant={dominant} />
       </div>
     </div>
   );
@@ -620,8 +675,14 @@ function FeedPostCallCard(props: FeedV2PostCardProps) {
   const market = payload.market;
   const targetValues = Array.isArray(payload.targets) ? payload.targets.map(formatMarketValue).filter((value): value is string => Boolean(value)) : [];
   const suggestedLevels = suggestedTradeLevels(payload);
-  const resolvedTargets = targetValues.length > 0 ? targetValues : suggestedLevels.targets;
+  const resolvedTargets = targetValues.length >= 3 ? targetValues.slice(0, 3) : [...targetValues, ...suggestedLevels.targets].slice(0, 3);
   const resolvedStopLoss = payload.stopLoss && formatMarketValue(payload.stopLoss) ? formatMarketValue(payload.stopLoss)! : suggestedLevels.stopLoss;
+  const explicitEntry = market?.entry && formatMarketValue(market.entry)
+    ? formatMarketValue(market.entry)!
+    : market?.current && formatMarketValue(market.current)
+      ? formatMarketValue(market.current)!
+      : null;
+  const resolvedEntry = explicitEntry ?? suggestedLevels.entry;
   const confidenceValue =
     typeof payload.confidence === "number" && Number.isFinite(payload.confidence)
       ? payload.confidence
@@ -631,37 +692,34 @@ function FeedPostCallCard(props: FeedV2PostCardProps) {
   const setupMetrics = [
     {
       label: "Entry",
-      value:
-        market?.entry && formatMarketValue(market.entry)
-          ? formatMarketValue(market.entry)!
-          : market?.current && formatMarketValue(market.current)
-            ? formatMarketValue(market.current)!
-            : "Price syncing",
-      emphasis: true,
+      value: resolvedEntry,
+      suggested: !explicitEntry,
       tone: "neutral" as const,
     },
     {
       label: "Targets",
-      value: resolvedTargets.length > 0 ? resolvedTargets.join(" / ") : "Targets forming",
-      emphasis: false,
+      value: resolvedTargets.join(" / "),
+      suggested: targetValues.length < 3,
       tone: resolvedTargets.length > 0 ? "positive" as const : "neutral" as const,
     },
     {
       label: "Stop",
-      value: resolvedStopLoss ?? "Suggested risk level",
-      emphasis: false,
+      value: resolvedStopLoss,
+      suggested: !(payload.stopLoss && formatMarketValue(payload.stopLoss)),
       tone: resolvedStopLoss ? "negative" as const : "neutral" as const,
     },
     confidenceValue !== null ? {
       label: "Confidence",
       value: `${Math.round(confidenceValue)}%`,
-      emphasis: confidenceValue >= 70,
+      suggested: false,
       tone: confidenceValue >= 70 ? "positive" as const : "neutral" as const,
-    } : { label: "Confidence", value: "Early setup", emphasis: false, tone: "neutral" as const },
-    { label: "Mode", value: "Spot setup", emphasis: false, tone: "neutral" as const },
+    } : { label: "Confidence", value: "Early setup", suggested: true, tone: "neutral" as const },
+    { label: "Mode", value: confidenceValue !== null && confidenceValue >= 82 ? "10x" : "Spot", suggested: confidenceValue === null, tone: "neutral" as const },
   ];
   const liveMove = market?.liveMove?.valueType === "live" ? formatSignedPct(market.liveMove.value) : null;
   const thesis = payload.thesis?.trim() || post.content?.trim() || "Early setup";
+  const tokenSymbol = payload.token?.symbol ?? post.tokenContext?.symbol ?? post.tokenSymbol ?? "TOKEN";
+  const direction = payload.direction ?? "LONG";
   return (
     <article className={cn(cardClass("call", post.coverage?.signal), !liveSignal && "p-4")}>
       {liveSignal ? <div className="pointer-events-none absolute inset-x-6 top-0 h-px bg-[linear-gradient(90deg,transparent,#a9ff34,transparent)]" /> : null}
@@ -670,12 +728,11 @@ function FeedPostCallCard(props: FeedV2PostCardProps) {
       <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className={cn("font-semibold tracking-tight text-white", liveSignal ? "text-[23px]" : "text-xl")}>{payload.title}</h2>
-            {payload.direction ? (
-              <span className={cn("rounded-full border px-2.5 py-1 text-[11px] font-bold", payload.direction === "LONG" ? "border-lime-300/24 bg-lime-300/10 text-lime-200" : "border-rose-300/24 bg-rose-300/10 text-rose-200")}>
-                {payload.direction}
-              </span>
-            ) : null}
+            <h2 className={cn("font-black tracking-tight text-white", liveSignal ? "text-[26px]" : "text-2xl")}>${tokenSymbol}</h2>
+            <span className={cn("rounded-full border px-2.5 py-1 text-[11px] font-black", direction === "LONG" ? "border-lime-300/24 bg-lime-300/10 text-lime-200" : "border-rose-300/24 bg-rose-300/10 text-rose-200")}>
+              {direction}
+            </span>
+            <span className="text-sm font-semibold text-white/42">{payload.title}</span>
           </div>
           <CallTokenLine token={payload.token} />
         </div>
@@ -688,17 +745,17 @@ function FeedPostCallCard(props: FeedV2PostCardProps) {
         </div>
       </div>
       <p className="mt-3 line-clamp-2 text-sm font-medium leading-5 text-white/72">{thesis}</p>
-      <div className="mt-4 overflow-hidden rounded-[16px] bg-[radial-gradient(circle_at_top_right,rgba(169,255,52,0.10),transparent_38%),linear-gradient(180deg,rgba(169,255,52,0.052),rgba(255,255,255,0.016))] shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]">
-        <div className="px-3 pt-3">
-          <div className="mb-2 flex items-center justify-between gap-3">
-            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-lime-200/56">Trade plan</div>
-            <div className="text-[11px] font-semibold text-white/40">Entry to Targets to Stop</div>
-          </div>
-        <div className="grid gap-2 sm:grid-cols-5">
-          {setupMetrics.map((metric) => <SetupMetric key={metric.label} {...metric} />)}
+      <div className="mt-4 border-t border-white/[0.055] pt-3">
+        <div className="grid gap-x-4 gap-y-2 sm:grid-cols-[0.82fr_1.6fr_0.82fr_0.72fr_0.58fr]">
+          {setupMetrics.map((metric, index) => (
+            <div key={metric.label} className={cn(index > 0 && "sm:border-l sm:border-white/[0.055] sm:pl-4")}>
+              <TradePlanField {...metric} />
+            </div>
+          ))}
         </div>
-        </div>
-        <ChartPreviewState post={post} reason={payload.chartPreview?.unavailableReason ?? "Targets forming."} dominant />
+      </div>
+      <div className="mt-3 overflow-hidden border-t border-white/[0.055] pt-0">
+        <ChartPreviewState post={post} reason={payload.chartPreview?.unavailableReason ?? "Targets forming"} dominant />
       </div>
       <AiDecisionPanel post={post} convictionLabel={convictionLabel} confidence={confidenceValue} />
       {liveSignal ? <WhyShown post={post} /> : null}
@@ -731,7 +788,7 @@ function FeedPostChartCard(props: FeedV2PostCardProps) {
           {payload.timeframe}
         </div>
       ) : null}
-      <ChartPreviewState post={post} reason={payload.chartPreview?.unavailableReason ?? "Price syncing."} />
+      <ChartPreviewState post={post} reason={payload.chartPreview?.unavailableReason ?? "Early setup"} />
       <EngagementFooter {...props} />
     </article>
   );
@@ -783,7 +840,7 @@ function FeedPostPollCard(props: FeedV2PostCardProps) {
           </div>
         </div>
       ) : (
-        <CompactNotice title="Poll context forming" reason="Community signal is still early." />
+        <CompactNotice title="Early community signal" reason="Community signal is still early." />
       )}
       <EngagementFooter {...props} />
     </article>
@@ -872,7 +929,8 @@ function FeedPostWhaleCard(props: FeedV2PostCardProps) {
   const { post } = props;
   const whale = post.payload?.whale;
   const token = whale?.token ?? post.tokenContext;
-  const action = whale?.action ? whale.action.replaceAll("_", " ") : "Whale activity";
+  const normalizedAction = whale?.action ? whale.action.replaceAll("_", " ") : "Whale activity";
+  const direction = /sell|distribut|outflow/i.test(normalizedAction) ? "SELL" : "BUY";
   const value = typeof whale?.valueUsd === "number" && Number.isFinite(whale.valueUsd) ? formatUsd(whale.valueUsd) : null;
   const wallet = compactAddress(whale?.wallet);
   return (
@@ -884,25 +942,32 @@ function FeedPostWhaleCard(props: FeedV2PostCardProps) {
         On-chain flow
       </div>
       {whale?.status === "live" ? (
-        <div className="mt-3 rounded-[16px] bg-[radial-gradient(circle_at_top_right,rgba(34,211,238,0.14),transparent_34%),linear-gradient(180deg,rgba(34,211,238,0.06),rgba(255,255,255,0.018))] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]">
-          <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="mt-3 border-t border-cyan-300/12 pt-3">
+          <div className="flex flex-wrap items-baseline justify-between gap-3">
             <div className="min-w-0">
-              <div className="text-xl font-semibold capitalize text-white">{action}</div>
-              <TokenLine token={token} />
+              <div className="text-2xl font-black text-white">{token?.symbol ? `$${token.symbol}` : "WHALE FLOW"}</div>
+              <div className="mt-1 text-xs font-semibold uppercase tracking-[0.14em] text-cyan-200/62">{normalizedAction}</div>
             </div>
-            {value ? (
-              <div className="rounded-full bg-cyan-300/[0.10] px-3 py-1 text-sm font-semibold text-cyan-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]">
-                {value}
-              </div>
-            ) : null}
+            <div className="text-right">
+              <div className="text-2xl font-black text-cyan-100">{value ?? "Early setup"}</div>
+              <div className={cn("mt-1 text-xs font-black", direction === "BUY" ? "text-lime-300" : "text-rose-300")}>{direction}</div>
+            </div>
           </div>
-          <div className="mt-3 grid gap-2 text-xs text-white/56 sm:grid-cols-3">
-            {wallet ? <Metric label="Wallet" value={wallet} /> : null}
-            {typeof whale.amount === "number" && Number.isFinite(whale.amount) ? (
-              <Metric label="Amount" value={compact(whale.amount)} />
-            ) : null}
-            {whale.timestamp ? <Metric label="Seen" value={timeAgo(whale.timestamp)} /> : null}
+          <div className="mt-4 grid gap-3 border-t border-white/[0.055] pt-3 text-xs text-white/56 sm:grid-cols-3">
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.13em] text-white/34">Wallet</div>
+              <div className="mt-1 font-mono font-bold text-white/76">{wallet ?? "Verified wallet"}</div>
+            </div>
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.13em] text-white/34">Token</div>
+              <div className="mt-1 font-bold text-white/76">{token?.symbol ? `$${token.symbol}` : token?.name ?? "Tracked token"}</div>
+            </div>
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.13em] text-white/34">Time</div>
+              <div className="mt-1 font-bold text-white/76">{whale.timestamp ? timeAgo(whale.timestamp) : "Live"}</div>
+            </div>
           </div>
+          {whale.source?.includes("test") ? <div className="mt-3 text-[10px] font-semibold text-cyan-200/62">Verified test event</div> : null}
           {whale.explorerUrl ? (
             <a href={whale.explorerUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-2 text-xs font-semibold text-cyan-100 hover:text-cyan-50">
               View transaction <ExternalLink className="h-3.5 w-3.5" />
@@ -925,7 +990,7 @@ function FeedUnavailableCard(props: FeedV2PostCardProps & { reason: string }) {
       <PostHeader post={post} />
       <div className="mt-4 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/42">
         <Zap className="h-3.5 w-3.5" />
-        Feed item forming
+        Feed signal
       </div>
       <p className="mt-2 text-sm leading-6 text-white/64">{post.content}</p>
       <CompactNotice title="Structured context" reason={reason} />

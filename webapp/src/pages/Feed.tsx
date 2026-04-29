@@ -609,7 +609,7 @@ export default function Feed() {
                 onClick={() => void handleRefresh()}
                 className="ml-auto inline-flex h-8 items-center rounded-[9px] border border-white/8 bg-white/[0.025] px-3 text-xs font-semibold text-white/46 hover:bg-white/[0.055] hover:text-white/78"
               >
-                {isRefreshing ? "Syncing" : "Refresh"}
+                {isRefreshing ? "Refreshing" : "Refresh"}
               </button>
             </div>
           </section>
@@ -670,7 +670,7 @@ export default function Feed() {
               <div className="app-empty-state">
                 <RefreshCw className="h-10 w-10 animate-spin text-muted-foreground" />
                 <div>
-                  <p className="text-lg font-semibold text-foreground">Following stream syncing</p>
+                  <p className="text-lg font-semibold text-foreground">Following stream preparing</p>
                   <p className="mt-1 text-sm text-muted-foreground">Finalizing your session and followed traders.</p>
                 </div>
               </div>
@@ -700,11 +700,11 @@ export default function Feed() {
                     {effectiveSearchQuery
                       ? "Search is narrowing"
                       : activeTab === "following"
-                        ? "Following stream forming"
-                        : "Alpha stream forming"}
+                        ? "No followed calls right now"
+                        : "No strong calls right now"}
                   </p>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    {effectiveSearchQuery ? "Try a different search term." : "Ranked feed items are forming."}
+                    {effectiveSearchQuery ? "Try a different search term." : "Momentum is quiet across ranked signals."}
                   </p>
                 </div>
               </div>
@@ -738,7 +738,7 @@ export default function Feed() {
                         <>
                           <div className="flex items-center gap-2 text-sm text-muted-foreground">
                             <RefreshCw className="h-4 w-4 animate-spin" />
-                            More signals syncing...
+                            Refreshing more signals...
                           </div>
                           <PostCardSkeleton showMarketData={false} />
                         </>

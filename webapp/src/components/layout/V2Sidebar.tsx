@@ -202,7 +202,7 @@ export function V2Sidebar() {
             <button type="button" onClick={() => navigate("/profile")} className="rounded-xl p-2 hover:bg-white/[0.05] hover:text-white" aria-label="Wallet security">
               <ShieldCheck className="h-4 w-4" />
             </button>
-            <button type="button" disabled title="Language preferences are forming." className="cursor-not-allowed rounded-xl p-2 opacity-45" aria-label="Language preferences">
+            <button type="button" disabled title="Language preferences are not configured yet." className="cursor-not-allowed rounded-xl p-2 opacity-45" aria-label="Language preferences">
               <Globe2 className="h-4 w-4" />
             </button>
             <button type="button" onClick={signOut} className="rounded-xl p-2 hover:bg-white/[0.05] hover:text-white" aria-label="Sign out">
