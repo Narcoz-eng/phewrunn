@@ -55,7 +55,7 @@ function placeholderFor(intent: ComposerIntent): string {
   if (intent === "raid") return "Share raid target, room context, and what action traders should take...";
   if (intent === "poll") return "Ask the room a focused market question...";
   if (intent === "discussion") return "Start a thread for traders, communities, or token context...";
-  if (intent === "news") return "Headline, source, and why it matters...";
+  if (intent === "news") return "Headline and why it matters...";
   return "What's your alpha today?";
 }
 

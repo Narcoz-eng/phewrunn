@@ -25,22 +25,6 @@ type FeedPage = {
   hasMore: boolean;
   nextCursor: string | null;
   totalPosts: number | null;
-  debugCounts?: FeedDebugCounts | null;
-  degraded?: boolean;
-};
-
-type FeedDebugCounts = {
-  backendReturned: number;
-  afterKindFilter: number;
-  afterRanking: number;
-  selected: number;
-  alphaCandidates: number;
-  selectedCallCandidates?: number;
-  selectedChartPreviews?: number;
-  hidden: number;
-  source?: string;
-  cacheState?: string;
-  latencyMs?: number;
 };
 
 type FeedApiPayload = {
@@ -48,8 +32,6 @@ type FeedApiPayload = {
   hasMore?: boolean;
   nextCursor?: string | null;
   totalPosts?: number | null;
-  debugCounts?: FeedDebugCounts | null;
-  degraded?: boolean;
 };
 
 const FEED_PAGE_SIZE = 10;
@@ -86,8 +68,6 @@ function normalizeFeedResponse(data: FeedApiPayload): FeedPage {
     hasMore: Boolean(data.hasMore && data.nextCursor),
     nextCursor: typeof data.nextCursor === "string" ? data.nextCursor : null,
     totalPosts: typeof data.totalPosts === "number" && Number.isFinite(data.totalPosts) ? data.totalPosts : null,
-    debugCounts: data.debugCounts ?? null,
-    degraded: data.degraded === true,
   };
 }
 
@@ -298,8 +278,6 @@ export default function Feed() {
   const displayedPosts = useMemo(() => postsPages?.pages.flatMap((page) => page.items) ?? [], [postsPages?.pages]);
   const hasPosts = displayedPosts.length > 0;
   const hasInitialFeedResult = isPostsFetched || Boolean(postsError);
-  const firstPageDebugCounts = postsPages?.pages[0]?.debugCounts ?? null;
-  const showFeedDiagnostics = Boolean(import.meta.env.DEV || user?.isAdmin);
   const isAuthWritePending = Boolean(session?.user) && !canPerformAuthenticatedWrites;
 
   useEffect(() => {
@@ -307,12 +285,12 @@ export default function Feed() {
     const tabOrder = FEED_TAB_ITEMS.map((item) => item.id);
     const activeIndex = tabOrder.indexOf(activeTab);
     const neighborTabs = activeTab === "latest"
-      ? (["following", "hot-alpha"] as FeedTab[])
+      ? (["hot-alpha"] as FeedTab[])
       : [tabOrder[activeIndex - 1], tabOrder[activeIndex + 1]].filter((tab): tab is FeedTab => Boolean(tab));
 
     for (const tab of neighborTabs) {
       if (tab === activeTab) continue;
-      if (tab === "following" && !hasLiveSession) continue;
+      if (tab === "following") continue;
       const queryKey = feedQueryKey(tab, "", viewerScope);
       if (queryClient.getQueryData(queryKey)) continue;
       void queryClient.prefetchInfiniteQuery({
@@ -557,7 +535,7 @@ export default function Feed() {
   const isRefreshing = isManualRefreshing || (isFetching && !isFetchingNextPage);
 
   useEffect(() => {
-    const visibleChartCandidates = displayedPosts.slice(0, 12).flatMap((post) => {
+    const visibleChartCandidates = displayedPosts.slice(0, 24).flatMap((post) => {
       const token = post.payload?.call?.token ?? post.payload?.chart?.token ?? post.tokenContext ?? null;
       if (!token?.address) return [];
       const timeframe = post.payload?.chart?.timeframe ?? "1h";
@@ -579,10 +557,11 @@ export default function Feed() {
       deduped: deduped.size,
       dedupeHits: Math.max(0, visibleChartCandidates.length - deduped.size),
     });
-    for (const item of deduped.values()) {
-      void loadBatchedFeedChartPreview(item).catch(() => undefined);
-    }
-  }, [displayedPosts]);
+    void Promise.allSettled([...deduped.values()].map((item) => loadBatchedFeedChartPreview(item))).then((results) => {
+      if (!results.some((result) => result.status === "fulfilled")) return;
+      updatePostInAllFeedPages(queryClient, stabilizePostChartPreview);
+    });
+  }, [displayedPosts, queryClient]);
 
   return (
     <div className="space-y-3">
@@ -675,11 +654,6 @@ export default function Feed() {
               </div>
               <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-white/50">
                 {displayedPosts.length} visible
-                {showFeedDiagnostics && firstPageDebugCounts ? (
-                  <span className="ml-2 text-white/30">
-                    / {firstPageDebugCounts.backendReturned} scanned
-                  </span>
-                ) : null}
               </div>
             </div>
 
@@ -732,10 +706,10 @@ export default function Feed() {
                       ? "Search is narrowing"
                       : activeTab === "following"
                         ? "No followed calls right now"
-                        : "No strong calls right now"}
+                        : "No ranked alpha yet"}
                   </p>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    {effectiveSearchQuery ? "Try a different search term." : "Momentum is quiet across ranked signals."}
+                    {effectiveSearchQuery ? "Try a different search term." : "The feed will fill as alpha, charts, raids, or news are posted."}
                   </p>
                 </div>
               </div>

@@ -1,7 +1,7 @@
+import { Prisma } from "@prisma/client";
 import { cacheGetJson, cacheSetJson } from "../lib/redis.js";
 import { prisma } from "../prisma.js";
 import {
-  listFeedCalls,
   type EnrichedCall,
   type FeedArgs,
   type FeedKind,
@@ -15,8 +15,8 @@ type MaterializedFeedEnvelope = {
 
 type MaterializedFeedRead = FeedListResult & {
   materialized: {
-    source: "memory" | "redis" | "ranked" | "latest-cache" | "lightweight" | "passthrough";
-    cacheState: "fresh" | "stale" | "warming" | "lightweight" | "passthrough";
+    source: "memory" | "redis" | "stored-db" | "latest-cache" | "following-db";
+    cacheState: "fresh" | "stale" | "warming" | "direct";
     refreshQueued: boolean;
     latencyMs: number;
   };
@@ -385,32 +385,51 @@ async function listLightweightPosts(args: FeedArgs, limit: number) {
   const followedTokenIds = followed?.[1].map((item) => item.tokenId) ?? [];
   if (args.kind === "following" && followedTraderIds.length === 0 && followedTokenIds.length === 0) return [];
 
+  const whereClauses: Prisma.PostWhereInput[] = [];
+  if (args.cursor) {
+    whereClauses.push({ createdAt: { lt: new Date(Number.isFinite(Number(args.cursor)) ? Number(args.cursor) : Date.now()) } });
+  }
+  if (args.postType) {
+    whereClauses.push({ postType: args.postType });
+  }
+  const search = args.search?.trim();
+  if (search) {
+    whereClauses.push({
+      OR: [
+        { content: { contains: search, mode: "insensitive" } },
+        { tokenSymbol: { contains: search.replace(/^\$/, ""), mode: "insensitive" } },
+        { tokenName: { contains: search, mode: "insensitive" } },
+        { contractAddress: { contains: search, mode: "insensitive" } },
+        { author: { username: { contains: search.replace(/^@/, ""), mode: "insensitive" } } },
+        { author: { name: { contains: search, mode: "insensitive" } } },
+      ],
+    });
+  }
+  if (args.kind === "following") {
+    whereClauses.push({
+      OR: [
+        ...(followedTraderIds.length ? [{ authorId: { in: followedTraderIds } }] : []),
+        ...(followedTokenIds.length ? [{ tokenId: { in: followedTokenIds } }] : []),
+      ],
+    });
+  } else if (args.kind === "hot-alpha" || args.kind === "high-conviction") {
+    whereClauses.push({ postType: { in: ["alpha", "chart"] } });
+  } else if (args.kind === "early-runners") {
+    whereClauses.push({ postType: { in: ["raid", "alpha", "chart"] } });
+  }
+
+  const where = whereClauses.length === 0 ? undefined : whereClauses.length === 1 ? whereClauses[0] : { AND: whereClauses };
+
   return prisma.post.findMany({
-    where: {
-      ...(args.cursor ? { createdAt: { lt: new Date(Number.isFinite(Number(args.cursor)) ? Number(args.cursor) : Date.now()) } } : {}),
-      ...(args.kind === "following"
-        ? {
-            OR: [
-              ...(followedTraderIds.length ? [{ authorId: { in: followedTraderIds } }] : []),
-              ...(followedTokenIds.length ? [{ tokenId: { in: followedTokenIds } }] : []),
-            ],
-          }
-        : args.kind === "latest"
-          ? {}
-          : {
-              createdAt: {
-                gte: new Date(Date.now() - 72 * 60 * 60 * 1000),
-              },
-            }),
-    },
+    where,
     select: LIGHTWEIGHT_FEED_SELECT,
     orderBy:
       args.kind === "hot-alpha"
-        ? [{ hotAlphaScore: "desc" }, { createdAt: "desc" }]
+        ? [{ hotAlphaScore: "desc" }, { highConvictionScore: "desc" }, { confidenceScore: "desc" }, { createdAt: "desc" }]
         : args.kind === "high-conviction"
-          ? [{ highConvictionScore: "desc" }, { createdAt: "desc" }]
+          ? [{ highConvictionScore: "desc" }, { confidenceScore: "desc" }, { hotAlphaScore: "desc" }, { createdAt: "desc" }]
           : args.kind === "early-runners"
-            ? [{ earlyRunnerScore: "desc" }, { createdAt: "desc" }]
+            ? [{ earlyRunnerScore: "desc" }, { hotAlphaScore: "desc" }, { createdAt: "desc" }]
             : args.kind === "latest"
               ? [
                   { highConvictionScore: "desc" },
@@ -423,8 +442,29 @@ async function listLightweightPosts(args: FeedArgs, limit: number) {
   });
 }
 
+async function listLatestAlphaInventory(args: FeedArgs, limit: number): Promise<LightweightFeedPost[]> {
+  if (args.kind === "following") return [];
+  return prisma.post.findMany({
+    where: {
+      ...(args.cursor ? { createdAt: { lt: new Date(Number.isFinite(Number(args.cursor)) ? Number(args.cursor) : Date.now()) } } : {}),
+      postType: { in: ["alpha", "chart", "raid", "news"] },
+    },
+    select: LIGHTWEIGHT_FEED_SELECT,
+    orderBy: [
+      { highConvictionScore: "desc" },
+      { hotAlphaScore: "desc" },
+      { earlyRunnerScore: "desc" },
+      { createdAt: "desc" },
+    ],
+    take: limit + 1,
+  });
+}
+
 async function listLightweightFeed(args: FeedArgs, limit: number): Promise<FeedListResult> {
-  const rows = await listLightweightPosts(args, limit);
+  let rows = await listLightweightPosts(args, limit);
+  if (args.kind !== "following" && !args.search?.trim() && !args.postType && rows.length === 0) {
+    rows = await listLatestAlphaInventory(args, limit);
+  }
   const rankedRows = [...rows].sort((left, right) => {
     const leftScore = lightweightProductScore(left, toFinite(left.confidenceScore) ?? toFinite(left.highConvictionScore) ?? 0);
     const rightScore = lightweightProductScore(right, toFinite(right.confidenceScore) ?? toFinite(right.highConvictionScore) ?? 0);
@@ -476,10 +516,10 @@ function readMemoryEnvelope(key: string): MaterializedFeedEnvelope | null {
 async function readMaterializedEnvelope(kind: FeedKind): Promise<{ envelope: MaterializedFeedEnvelope | null; source: "memory" | "redis" | null }> {
   const key = buildMaterializedFeedKey(kind);
   const memory = readMemoryEnvelope(key);
-  if (memory) return { envelope: memory, source: "memory" };
+  if (memory && memory.result.items.length > 0) return { envelope: memory, source: "memory" };
 
   const redisEnvelope = await cacheGetJson<MaterializedFeedEnvelope>(buildRedisFeedKey(kind));
-  if (redisEnvelope && Date.now() - redisEnvelope.cachedAtMs <= MATERIALIZED_FEED_STALE_MS) {
+  if (redisEnvelope && redisEnvelope.result.items.length > 0 && Date.now() - redisEnvelope.cachedAtMs <= MATERIALIZED_FEED_STALE_MS) {
     materializedFeedMemory.set(key, clone(redisEnvelope));
     return { envelope: redisEnvelope, source: "redis" };
   }
@@ -517,7 +557,7 @@ async function refreshMaterializedFeed(kind: FeedKind): Promise<MaterializedFeed
   materializedFeedLastRefreshStartedAt.set(key, startedAt);
   const request = (async () => {
     try {
-      const result = await listFeedCalls(
+      const result = await listLightweightFeed(
         {
           kind,
           viewerId: null,
@@ -525,8 +565,18 @@ async function refreshMaterializedFeed(kind: FeedKind): Promise<MaterializedFeed
           cursor: null,
           search: null,
           postType: undefined,
-        }
+        },
+        MATERIALIZED_FEED_LIMIT
       );
+      if (result.items.length === 0) {
+        const existing = readMemoryEnvelope(key);
+        console.warn("[feed/materialized] refresh produced no items; preserving last good", {
+          kind,
+          latencyMs: Date.now() - startedAt,
+          hadLastGood: Boolean(existing?.result.items.length),
+        });
+        return existing;
+      }
       const envelope: MaterializedFeedEnvelope = {
         cachedAtMs: Date.now(),
         result: {
@@ -591,8 +641,8 @@ export async function listMaterializedFeedCalls(args: FeedArgs): Promise<Materia
     return {
       ...result,
       materialized: {
-        source: "lightweight",
-        cacheState: "lightweight",
+        source: "following-db",
+        cacheState: "direct",
         refreshQueued: false,
         latencyMs: Date.now() - startedAt,
       },
@@ -600,12 +650,12 @@ export async function listMaterializedFeedCalls(args: FeedArgs): Promise<Materia
   }
 
   if (!canUseMaterializedFeed(args)) {
-    const result = await listFeedCalls(args);
+    const result = await listLightweightFeed(args, limit);
     return {
       ...result,
       materialized: {
-        source: "passthrough",
-        cacheState: "passthrough",
+        source: "stored-db",
+        cacheState: "direct",
         refreshQueued: false,
         latencyMs: Date.now() - startedAt,
       },
@@ -667,18 +717,18 @@ export async function listMaterializedFeedCalls(args: FeedArgs): Promise<Materia
     };
   }
 
-  const ranked = await listFeedCalls({ ...args, limit });
-  if (ranked.items.length > 0) {
-    console.info("[feed/materialized] cold cache served ranked feed while warming", {
+  const direct = await listLightweightFeed({ ...args, limit }, limit);
+  if (direct.items.length > 0) {
+    console.info("[feed/materialized] cold cache served stored ranked feed while warming", {
       kind: args.kind,
-      selected: ranked.items.length,
+      selected: direct.items.length,
       refreshQueued,
       latencyMs: Date.now() - startedAt,
     });
     return {
-      ...ranked,
+      ...direct,
       materialized: {
-        source: "ranked",
+        source: "stored-db",
         cacheState: "warming",
         refreshQueued,
         latencyMs: Date.now() - startedAt,
@@ -686,18 +736,16 @@ export async function listMaterializedFeedCalls(args: FeedArgs): Promise<Materia
     };
   }
 
-  const lightweight = await listLightweightFeed(args, limit);
-  console.warn("[feed/materialized] ranked feed unavailable; serving compact alpha-first inventory", {
+  console.warn("[feed/materialized] no stored feed inventory available", {
     kind: args.kind,
-    selected: lightweight.items.length,
     refreshQueued,
     latencyMs: Date.now() - startedAt,
   });
   return {
-    ...lightweight,
+    ...direct,
     materialized: {
-      source: "lightweight",
-      cacheState: "lightweight",
+      source: "stored-db",
+      cacheState: "direct",
       refreshQueued,
       latencyMs: Date.now() - startedAt,
     },

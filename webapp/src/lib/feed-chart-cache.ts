@@ -13,6 +13,7 @@ const feedChartPreviewBackoffUntil = new Map<string, number>();
 const feedChartPreviewLastRequestedAt = new Map<string, number>();
 const feedChartPreviewUnavailableStrike = new Map<string, number>();
 const feedChartPreviewSuppressedUntil = new Map<string, number>();
+const feedChartBatchSizeDistribution = new Map<number, number>();
 
 type FeedChartBatchRequest = {
   key: string;
@@ -177,11 +178,13 @@ async function flushFeedChartBatchQueue(): Promise<void> {
   }
   try {
     for (const item of batch) feedChartPreviewLastRequestedAt.set(item.key, Date.now());
+    feedChartBatchSizeDistribution.set(batch.length, (feedChartBatchSizeDistribution.get(batch.length) ?? 0) + 1);
     console.info("[feed-chart-cache] requesting batch", {
       queued: queuedAtFlush,
       skippedFresh: freshBatch.length,
       skippedUnavailable: suppressedBatch.length,
       batchSize: batch.length,
+      batchSizeDistribution: Object.fromEntries(feedChartBatchSizeDistribution.entries()),
       remainingQueued: feedChartBatchQueue.size,
     });
     const response = await api.post<{ results: Record<string, FeedChartPreview> }>("/api/feed/chart-previews", {

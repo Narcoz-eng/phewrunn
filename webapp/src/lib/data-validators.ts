@@ -41,6 +41,11 @@ export function isValidGainer(item: DiscoverySidebarMover | null | undefined): i
 
 export function isValidCandleSeries(candles: TerminalCandle[] | null | undefined): candles is TerminalCandle[] {
   if (!Array.isArray(candles) || candles.length < 12) return false;
+  for (let index = 1; index < candles.length; index += 1) {
+    const previous = candles[index - 1];
+    const current = candles[index];
+    if (!finite(previous?.timestamp) || !finite(current?.timestamp) || current.timestamp <= previous.timestamp) return false;
+  }
   const valid = candles.filter(
     (candle) => {
       if (
@@ -49,10 +54,12 @@ export function isValidCandleSeries(candles: TerminalCandle[] | null | undefined
         !finite(candle.high) ||
         !finite(candle.low) ||
         !finite(candle.close) ||
+        !finite(candle.volume) ||
         candle.open <= 0 ||
         candle.high <= 0 ||
         candle.low <= 0 ||
         candle.close <= 0 ||
+        candle.volume < 0 ||
         candle.high < Math.max(candle.open, candle.close) ||
         candle.low > Math.min(candle.open, candle.close)
       ) {
@@ -63,9 +70,9 @@ export function isValidCandleSeries(candles: TerminalCandle[] | null | undefined
       if (range <= 0) return false;
       const basis = Math.max(candle.open, candle.close, candle.low);
       const rangeRatio = basis > 0 ? range / basis : 0;
-      if (rangeRatio > 0.95) return false;
-      if (body > 0 && range / body > 28 && rangeRatio > 0.18) return false;
-      if (body === 0 && rangeRatio > 0.08) return false;
+      if (rangeRatio > 0.65) return false;
+      if (body > 0 && range / body > 18 && rangeRatio > 0.12) return false;
+      if (body === 0 && rangeRatio > 0.04) return false;
       return true;
     }
   );
@@ -84,14 +91,14 @@ export function isValidCandleSeries(candles: TerminalCandle[] | null | undefined
   });
   const extremeSingleBar = returns.some((value, index) => {
     const current = valid[index + 1];
-    if (!current || value < 0.65) return false;
+    if (!current || value < 0.45) return false;
     const previousValues = returns.slice(Math.max(0, index - 5), index);
     const nextValues = returns.slice(index + 1, index + 6);
     const neighborMax = Math.max(0, ...previousValues, ...nextValues);
     return neighborMax < value / 8;
   });
 
-  return !extremeSingleBar && rangePct >= 0.05 && rangePct <= 950 && (movePct >= 0.03 || bodyCount >= Math.ceil(valid.length * 0.25));
+  return !extremeSingleBar && rangePct >= 0.05 && rangePct <= 600 && (movePct >= 0.03 || bodyCount >= Math.ceil(valid.length * 0.25));
 }
 
 export function isValidSignalScore(value: number | null | undefined, coverageState?: string | null): value is number {

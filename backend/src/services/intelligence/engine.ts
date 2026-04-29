@@ -1,5 +1,5 @@
 import { Prisma, type AlertPreference } from "@prisma/client";
-import { prisma, isPrismaPoolPressureActive, isTransientPrismaError, notePrismaPoolPressure } from "../../prisma.js";
+import { prisma, isTransientPrismaError } from "../../prisma.js";
 import {
   applyConfidenceGuardrails,
   buildReactionCounts,
@@ -33,18 +33,12 @@ const TOKEN_INTELLIGENCE_STALE_MS = 15 * 60 * 1000;
 const TRADER_METRICS_STALE_MS = 6 * 60 * 60 * 1000;
 const TOKEN_SNAPSHOT_MIN_INTERVAL_MS = 10 * 60 * 1000;
 const DEFAULT_FEED_LIMIT = 20;
-const MAX_FEED_LIMIT = 40;
 const TRUSTED_TRADER_THRESHOLD = 58;
 const HOT_ALPHA_THRESHOLD = 75;
 const EARLY_RUNNER_THRESHOLD = 72;
 const HIGH_CONVICTION_THRESHOLD = 78;
 const FEED_PRIORITY_POST_COUNT = 15;
-const RANKED_FEED_MIN_CANDIDATE_COUNT = 40;
-const RANKED_FEED_MAX_CANDIDATE_COUNT = 96;
 const FEED_PRIORITY_REFRESH_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 850 : 1_300;
-const FEED_RESULT_CACHE_TTL_MS = 15_000;
-const PERSONALIZED_FEED_RESULT_CACHE_TTL_MS = 8_000;
-const FEED_LIST_SOFT_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 1_800 : 3_000;
 const FOLLOWING_SNAPSHOT_CACHE_TTL_MS = 15_000;
 const TOKEN_OVERVIEW_CACHE_TTL_MS = 20_000;
 const PERSONALIZED_TOKEN_OVERVIEW_CACHE_TTL_MS = 12_000;
@@ -52,7 +46,6 @@ const TOKEN_OVERVIEW_CACHE_VERSION = 11;
 const TOKEN_LOOKUP_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2 * 60_000 : 15_000;
 const TOKEN_LOOKUP_REDIS_TTL_MS = process.env.NODE_ENV === "production" ? 90_000 : 20_000;
 const TOKEN_LOOKUP_CACHE_MAX_ENTRIES = 2_000;
-const FEED_LIST_CACHE_MAX_ENTRIES = 500;
 const TOKEN_OVERVIEW_CACHE_MAX_ENTRIES = 500;
 const TRADER_OVERVIEW_CACHE_MAX_ENTRIES = 300;
 const FOLLOWING_SNAPSHOT_CACHE_MAX_ENTRIES = 1_000;
@@ -725,9 +718,6 @@ type SocialState = {
   reactionCountsByPostId: Map<string, ReactionCounts>;
 };
 
-const feedListCache = new Map<string, CacheEntry<FeedListResult>>();
-const feedListLastGoodCache = new Map<string, CacheEntry<FeedListResult>>();
-const feedListInFlight = new Map<string, Promise<FeedListResult>>();
 const followingSnapshotCache = new Map<
   string,
   CacheEntry<{ followedTraderIds: string[]; followedTokenIds: string[] }>
@@ -826,8 +816,6 @@ const marketContextCache = new Map<string, CacheEntry<MarketContextSnapshot>>();
 const marketContextInFlight = new Map<string, Promise<MarketContextSnapshot>>();
 
 // Register LRU size limits — writeCacheValue enforces these on every write.
-cacheMaxEntriesRegistry.set(feedListCache, FEED_LIST_CACHE_MAX_ENTRIES);
-cacheMaxEntriesRegistry.set(feedListLastGoodCache, FEED_LIST_CACHE_MAX_ENTRIES);
 cacheMaxEntriesRegistry.set(followingSnapshotCache, FOLLOWING_SNAPSHOT_CACHE_MAX_ENTRIES);
 cacheMaxEntriesRegistry.set(tokenLookupCache, TOKEN_LOOKUP_CACHE_MAX_ENTRIES);
 cacheMaxEntriesRegistry.set(tokenOverviewCache, TOKEN_OVERVIEW_CACHE_MAX_ENTRIES);
@@ -863,25 +851,6 @@ type MarketContextSnapshot = {
 
 function buildTokenLookupCacheKey(address: string): string {
   return `token:lookup:${sanitizeCacheKeyPart(address.trim().toLowerCase())}`;
-}
-
-function buildFeedLastGoodCacheKey(args: FeedArgs, limit: number): string {
-  const viewerKey = args.viewerId ?? "anonymous";
-  const searchKey = sanitizeCacheKeyPart(args.search);
-  const postTypeKey = args.postType ?? "all-types";
-  return `feed:last-good:${args.kind}:${viewerKey}:${searchKey}:${postTypeKey}:${limit}`;
-}
-
-function findFallbackLastGoodFeed(args: FeedArgs, limit: number): FeedListResult | null {
-  const exactPrefix = `feed:last-good:${args.kind}:`;
-  const looseLimitSuffix = `:${limit}`;
-  const entries = Array.from(feedListLastGoodCache.entries()).reverse();
-  for (const [key, entry] of entries) {
-    if (!key.startsWith(exactPrefix) || !key.endsWith(looseLimitSuffix)) continue;
-    if (entry.value.items.length === 0) continue;
-    return cloneCachedValue(entry.value);
-  }
-  return null;
 }
 
 function writeTokenLookupCacheValue(address: string, value: TokenRecord | null): void {
@@ -1253,22 +1222,11 @@ function clearCacheEntriesByPrefix<T>(cache: Map<string, T>, prefix: string): vo
   }
 }
 
-function clearCacheEntriesContaining<T>(cache: Map<string, T>, fragment: string): void {
-  for (const key of Array.from(cache.keys())) {
-    if (key.includes(fragment)) {
-      cache.delete(key);
-    }
-  }
-}
-
 export function invalidateViewerSocialCaches(viewerId: string | null | undefined): void {
   const normalizedViewerId = viewerId?.trim();
   if (!normalizedViewerId) return;
 
-  const viewerKey = sanitizeCacheKeyPart(normalizedViewerId);
   followingSnapshotCache.delete(normalizedViewerId);
-  clearCacheEntriesContaining(feedListCache, `:${viewerKey}:`);
-  clearCacheEntriesContaining(feedListInFlight, `:${viewerKey}:`);
   clearCacheEntriesByPrefix(tokenOverviewCache, `token:v${TOKEN_OVERVIEW_CACHE_VERSION}:${normalizedViewerId}:`);
   clearCacheEntriesByPrefix(tokenOverviewInFlight, `token:v${TOKEN_OVERVIEW_CACHE_VERSION}:${normalizedViewerId}:`);
   clearCacheEntriesByPrefix(traderOverviewCache, `trader:${normalizedViewerId}:`);
@@ -1280,8 +1238,8 @@ export function invalidateViewerSocialCaches(viewerId: string | null | undefined
 }
 
 export function invalidateFeedListCaches(): void {
-  feedListCache.clear();
-  feedListInFlight.clear();
+  // Feed request caching now lives in services/materialized-feed.ts. This export
+  // remains for write paths that still call it after post/community mutations.
 }
 
 function buildTokenMapFromRecords(records: CallRecord[]): Map<string, TokenRecord> {
@@ -5049,7 +5007,6 @@ async function runIntelligencePriorityLoop(): Promise<void> {
     try {
       await enqueuePriorityIntelligenceRefresh();
       // Enforce Map size limits on each cycle to prevent unbounded memory growth
-      evictOldestFromMap(feedListCache, FEED_LIST_CACHE_MAX_ENTRIES);
       evictOldestFromMap(tokenOverviewCache, TOKEN_OVERVIEW_CACHE_MAX_ENTRIES);
       evictOldestFromMap(traderOverviewCache, TRADER_OVERVIEW_CACHE_MAX_ENTRIES);
     } catch (error) {
@@ -5084,297 +5041,6 @@ export function startIntelligencePriorityLoop(opts?: { canRun?: () => boolean })
   intelligencePriorityLoopTimer = setInterval(() => {
     triggerLoop();
   }, INTELLIGENCE_PREWARM_INTERVAL_MS);
-}
-
-export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
-  const limit = Math.max(1, Math.min(MAX_FEED_LIMIT, args.limit ?? DEFAULT_FEED_LIMIT));
-  const viewerKey = args.viewerId ?? "anonymous";
-  const searchKey = sanitizeCacheKeyPart(args.search);
-  const cursorKey = sanitizeCacheKeyPart(args.cursor);
-  const postTypeKey = args.postType ?? "all-types";
-  const cacheKey = `feed:${args.kind}:${viewerKey}:${searchKey}:${cursorKey}:${postTypeKey}:${limit}`;
-  const lastGoodCacheKey = buildFeedLastGoodCacheKey(args, limit);
-  const ttlMs =
-    args.kind === "following" || args.viewerId
-      ? PERSONALIZED_FEED_RESULT_CACHE_TTL_MS
-      : FEED_RESULT_CACHE_TTL_MS;
-  const freshCached = readCacheValue(feedListCache, cacheKey);
-  if (freshCached) {
-    return freshCached;
-  }
-  const staleCached = peekCacheValue(feedListCache, cacheKey);
-  const lastGoodCached = peekCacheValue(feedListLastGoodCache, lastGoodCacheKey);
-  const fallbackLastGoodCached = lastGoodCached ?? findFallbackLastGoodFeed(args, limit);
-  if (await isPrismaPoolPressureActive()) {
-    if (staleCached) {
-      console.warn("[intelligence/feed] serving stale feed cache during prisma pool pressure", {
-        kind: args.kind,
-        viewerId: args.viewerId,
-      });
-      return staleCached;
-    }
-    if (fallbackLastGoodCached) {
-      console.warn("[intelligence/feed] serving last-good feed cache during prisma pool pressure", {
-        kind: args.kind,
-        viewerId: args.viewerId,
-      });
-      return { ...fallbackLastGoodCached, degraded: true };
-    }
-
-    console.warn("[intelligence/feed] pool pressure active; serving compact degraded feed fallback", {
-      kind: args.kind,
-      viewerId: args.viewerId,
-    });
-    return {
-      items: [],
-      hasMore: false,
-      nextCursor: null,
-      totalItems: 0,
-      degraded: true,
-    };
-  }
-  const currentInFlight = feedListInFlight.get(cacheKey);
-  if (currentInFlight) {
-    if (staleCached) {
-      return staleCached;
-    }
-    return cloneCachedValue(await currentInFlight);
-  }
-
-  const request = (async () => {
-    const computeFeedResult = async (): Promise<FeedListResult> => {
-      const { followedTraderIds, followedTokenIds } = args.viewerId
-        ? await getFollowingSnapshot(args.viewerId)
-        : { followedTraderIds: [], followedTokenIds: [] };
-      if (args.kind === "following" && followedTraderIds.length === 0 && followedTokenIds.length === 0) {
-        return {
-          items: [],
-          hasMore: false,
-          nextCursor: null,
-          totalItems: 0,
-        };
-      }
-
-      const cursorBoundary = await resolveFeedCursorBoundary(args.kind, args.cursor);
-      const whereClauses: Prisma.PostWhereInput[] = [];
-      const searchWhere = buildSearchWhere(args.search);
-      if (searchWhere) {
-        whereClauses.push(searchWhere);
-      }
-      if (args.postType) {
-        whereClauses.push({ postType: args.postType });
-      }
-
-      if (args.kind === "following") {
-        whereClauses.push({
-          OR: [
-            ...(followedTraderIds.length > 0 ? [{ authorId: { in: followedTraderIds } }] : []),
-            ...(followedTokenIds.length > 0 ? [{ tokenId: { in: followedTokenIds } }] : []),
-          ],
-        });
-      } else if (args.kind !== "latest") {
-        whereClauses.push({
-          createdAt: {
-            gte: new Date(Date.now() - 72 * 60 * 60 * 1000),
-          },
-        });
-      }
-
-      const cursorWhere = buildFeedCursorWhere(cursorBoundary);
-      if (cursorWhere) {
-        whereClauses.push(cursorWhere);
-      }
-
-      const where =
-        whereClauses.length === 0
-          ? undefined
-          : whereClauses.length === 1
-            ? whereClauses[0]
-            : { AND: whereClauses };
-      const isFollowingFeed = args.kind === "following";
-      const isDirectChronologicalFeed = false;
-      const preferStoredFeedIntelligence = false;
-      const candidateLimit = isDirectChronologicalFeed
-        ? Math.max(limit + 1, FEED_PRIORITY_POST_COUNT)
-        : isFollowingFeed
-          ? Math.max(RANKED_FEED_MIN_CANDIDATE_COUNT, Math.min(RANKED_FEED_MAX_CANDIDATE_COUNT, limit * 10))
-        : Math.max(
-            RANKED_FEED_MIN_CANDIDATE_COUNT,
-            Math.min(RANKED_FEED_MAX_CANDIDATE_COUNT, limit * 8)
-          );
-      const lightRecords = await prisma.post.findMany({
-        where,
-        select: FEED_CALL_SELECT,
-        orderBy: buildFeedOrderBy(args.kind),
-        take: Math.max(limit + 1, candidateLimit),
-      });
-      const records = lightRecords.map((record) => ({
-        ...record,
-        _count: {
-          likes: 0,
-          comments: record.threadCount ?? 0,
-          reposts: 0,
-          reactions: 0,
-        },
-      })) as CallRecord[];
-      const backendReturned = records.length;
-
-      const initiallyHydrated = sortCalls(
-        args.kind,
-        await hydrateCalls(records, args.viewerId, {
-          refreshTraders: false,
-          refreshTokens: false,
-          ensureTokenLinks: true,
-          persistComputed: false,
-          preferStoredIntelligence: preferStoredFeedIntelligence,
-        })
-      );
-      const baseHydrated = filterCallsForFeedKind(args.kind, initiallyHydrated);
-      const hydratedBeforeRanking = filterCallsForFeedKind(
-        args.kind,
-        isDirectChronologicalFeed
-          ? await refreshPriorityFeedSlice(args, records, baseHydrated)
-          : baseHydrated
-      );
-      const hydrated = sortCalls(
-        args.kind,
-        await applyFeedRankingContext(args.kind, hydratedBeforeRanking, followedTraderIds, followedTokenIds)
-      );
-      const whaleFeedItems = await listRecentWhaleFeedItems(args, followedTokenIds, limit);
-      const rankedFeedItems = [...whaleFeedItems, ...hydrated].sort((left, right) => {
-        if (left.itemType === "whale" && right.itemType !== "whale") return -1;
-        if (right.itemType === "whale" && left.itemType !== "whale") return 1;
-        return right.createdAt.getTime() - left.createdAt.getTime();
-      });
-      const alphaCandidates = hydrated.filter((item) => item.postType === "alpha" || item.postType === "chart").length;
-      const startIndex =
-        isDirectChronologicalFeed && cursorBoundary
-          ? 0
-          : args.cursor
-            ? Math.max(0, rankedFeedItems.findIndex((item) => item.id === args.cursor) + 1)
-            : 0;
-      const items = await enrichSelectedFeedPayloads(
-        rankedFeedItems.slice(startIndex, startIndex + limit).map(sanitizeFeedItemForResponse)
-      );
-      const selectedCallCandidates = items.filter((item) => item.payload.call || item.payload.chart).length;
-      const selectedChartPreviews = items.filter((item) => {
-        const preview = item.payload.call?.chartPreview ?? item.payload.chart?.chartPreview ?? null;
-        return preview?.state === "live" && Array.isArray(preview.candles) && preview.candles.length >= 8;
-      }).length;
-      const nextCursor =
-        items.length === limit && rankedFeedItems[startIndex + limit]
-          ? items[items.length - 1]?.id ?? null
-          : null;
-
-      return {
-        items,
-        hasMore: startIndex + limit < rankedFeedItems.length,
-        nextCursor,
-        totalItems: rankedFeedItems.length,
-        debugCounts: {
-          backendReturned,
-          afterKindFilter: baseHydrated.length,
-          afterRanking: rankedFeedItems.length,
-          selected: items.length,
-          alphaCandidates,
-          selectedCallCandidates,
-          selectedChartPreviews,
-          hidden: Math.max(0, backendReturned - hydrated.length),
-        },
-      };
-    };
-
-    try {
-      const result = await withSoftTimeout(computeFeedResult(), FEED_LIST_SOFT_TIMEOUT_MS);
-      if (result) {
-        return result;
-      }
-
-      if (staleCached) {
-        console.warn("[intelligence/feed] serving stale feed cache after soft timeout", {
-          kind: args.kind,
-          viewerId: args.viewerId,
-          timeoutMs: FEED_LIST_SOFT_TIMEOUT_MS,
-        });
-        return staleCached;
-      }
-      if (fallbackLastGoodCached) {
-        console.warn("[intelligence/feed] serving last-good feed cache after soft timeout", {
-          kind: args.kind,
-          viewerId: args.viewerId,
-          timeoutMs: FEED_LIST_SOFT_TIMEOUT_MS,
-        });
-        return { ...fallbackLastGoodCached, degraded: true };
-      }
-
-      console.warn("[intelligence/feed] feed soft-timed out; serving compact degraded feed fallback", {
-        kind: args.kind,
-        viewerId: args.viewerId,
-        timeoutMs: FEED_LIST_SOFT_TIMEOUT_MS,
-      });
-      notePrismaPoolPressure(`intelligence/feed_soft_timeout:${args.kind}`);
-      const whaleFallback = await listRecentWhaleFeedItems(args, [], Math.min(4, limit))
-        .then((items) => items.map(sanitizeFeedItemForResponse))
-        .catch(() => []);
-      return {
-        items: whaleFallback,
-        hasMore: false,
-        nextCursor: null,
-        totalItems: whaleFallback.length,
-        degraded: true,
-      };
-    } catch (error) {
-      if (!isTransientPrismaError(error)) {
-        throw error;
-      }
-
-      if (staleCached) {
-        console.warn("[intelligence/feed] serving stale feed cache after transient prisma failure", {
-          kind: args.kind,
-          viewerId: args.viewerId,
-          message: error instanceof Error ? error.message : String(error),
-        });
-        return staleCached;
-      }
-      if (fallbackLastGoodCached) {
-        console.warn("[intelligence/feed] serving last-good feed cache after transient prisma failure", {
-          kind: args.kind,
-          viewerId: args.viewerId,
-          message: error instanceof Error ? error.message : String(error),
-        });
-        return { ...fallbackLastGoodCached, degraded: true };
-      }
-
-      console.warn("[intelligence/feed] feed unavailable during transient prisma pressure; serving compact degraded feed fallback", {
-        kind: args.kind,
-        viewerId: args.viewerId,
-        message: error instanceof Error ? error.message : String(error),
-      });
-      const whaleFallback = await listRecentWhaleFeedItems(args, [], Math.min(4, limit))
-        .then((items) => items.map(sanitizeFeedItemForResponse))
-        .catch(() => []);
-      return {
-        items: whaleFallback,
-        hasMore: false,
-        nextCursor: null,
-        totalItems: whaleFallback.length,
-        degraded: true,
-      };
-    }
-  })()
-    .then((value) => {
-      const cachedValue = writeCacheValue(feedListCache, cacheKey, value, ttlMs, FEED_LIST_CACHE_MAX_ENTRIES);
-      if (!value.degraded && value.items.length > 0 && !args.cursor) {
-        writeCacheValue(feedListLastGoodCache, lastGoodCacheKey, value, 30 * 60_000, FEED_LIST_CACHE_MAX_ENTRIES);
-      }
-      return cachedValue;
-    })
-    .finally(() => {
-      feedListInFlight.delete(cacheKey);
-    });
-
-  feedListInFlight.set(cacheKey, request);
-  return cloneCachedValue(await request);
 }
 
 export async function getEnrichedCallById(id: string, viewerId: string | null): Promise<EnrichedCall | null> {

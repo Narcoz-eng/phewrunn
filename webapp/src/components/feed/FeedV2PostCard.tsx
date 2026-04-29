@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo } from "react";
 import { BarChart3, BrainCircuit, ExternalLink, Heart, LineChart, MessageSquare, MoreVertical, Newspaper, RadioTower, Repeat2, ShieldCheck, ShieldHalf, TrendingUp, Vote, Waves, Zap } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -8,8 +8,6 @@ import {
   feedChartCacheKeys,
   getCachedFeedChart,
   isLiveFeedChartPreview,
-  loadBatchedFeedChartPreview,
-  setCachedFeedChart,
 } from "@/lib/feed-chart-cache";
 import { getAvatarUrl, type FeedCoverage, type Post } from "@/types";
 import type { FeedChartPreview, FeedMarketValue } from "@/types";
@@ -181,7 +179,6 @@ const NOISY_FEED_REASONS = new Set([
   "Alpha priority",
   "Drawdown adjusted",
   "Risk adjusted",
-  "Cached social read",
 ]);
 
 function isInternalFeedReason(reason: string): boolean {
@@ -428,7 +425,7 @@ function CallTokenLine({ token }: { token: Post["tokenContext"] | null | undefin
 
 function AiDecisionPanel({ post, convictionLabel, confidence, compact = false }: { post: Post; convictionLabel: string | number | null | undefined; confidence: number | null; compact?: boolean }) {
   const dominantReason =
-    (post.scoreReasons ?? post.feedReasons ?? post.signal?.scoreReasons ?? []).find((reason) => reason && !NOISY_FEED_REASONS.has(reason)) ??
+    (post.scoreReasons ?? post.feedReasons ?? post.signal?.scoreReasons ?? []).find((reason) => reason && !NOISY_FEED_REASONS.has(reason) && !isInternalFeedReason(reason)) ??
     post.coverage?.signal.unavailableReason ??
     "Market conviction is developing around the current setup.";
   const smartMoney = smartMoneyMeaning(post.signal?.smartMoneyScore, post.trustedTraderCount, post.coverage?.signal);
@@ -512,58 +509,9 @@ function AiDecisionPanel({ post, convictionLabel, confidence, compact = false }:
 
 function ChartPreviewState({ post, reason, dominant = false, compact = false }: { post: Post; reason: string; dominant?: boolean; compact?: boolean }) {
   const payloadPreview = post.payload?.call?.chartPreview ?? post.payload?.chart?.chartPreview ?? null;
-  const token = post.payload?.call?.token ?? post.payload?.chart?.token ?? post.tokenContext ?? null;
   const timeframe = post.payload?.chart?.timeframe ?? "1h";
   const cacheKeys = useMemo(() => feedChartCacheKeys(post, timeframe), [post, timeframe]);
-  const primaryCacheKey = cacheKeys.find((key) => key.startsWith("token:")) ?? cacheKeys[0] ?? null;
-  const [preview, setPreview] = useState<FeedChartPreview | null>(() => {
-    const cached = getCachedFeedChart(cacheKeys);
-    if (cached) return cached;
-    if (isLiveFeedChartPreview(payloadPreview)) {
-      setCachedFeedChart(cacheKeys, payloadPreview);
-      return payloadPreview;
-    }
-    return null;
-  });
-  const containerRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!token?.address || !primaryCacheKey || preview?.state === "live") return;
-    let cancelled = false;
-    const load = async () => {
-      const cached = getCachedFeedChart(cacheKeys);
-      if (cached?.state === "live") {
-        if (!cancelled) setPreview(cached);
-        return;
-      }
-      const result = await loadBatchedFeedChartPreview({
-        key: primaryCacheKey,
-        cacheKeys,
-        tokenAddress: token.address!,
-        pairAddress: token.pairAddress ?? null,
-        chainType: token.chain ?? null,
-      });
-      setCachedFeedChart(cacheKeys, result);
-      if (!cancelled) setPreview(getCachedFeedChart(cacheKeys) ?? result);
-    };
-
-    const node = containerRef.current;
-    if (!node || typeof IntersectionObserver === "undefined") {
-      void load().catch(() => undefined);
-      return () => { cancelled = true; };
-    }
-    const observer = new IntersectionObserver(([entry]) => {
-      if (entry?.isIntersecting) {
-        observer.disconnect();
-        void load().catch(() => undefined);
-      }
-    }, { rootMargin: "420px" });
-    observer.observe(node);
-    return () => {
-      cancelled = true;
-      observer.disconnect();
-    };
-  }, [cacheKeys, preview?.state, primaryCacheKey, token?.address, token?.chain, token?.pairAddress]);
+  const preview = getCachedFeedChart(cacheKeys) ?? (isLiveFeedChartPreview(payloadPreview) ? payloadPreview : null);
 
   const candles = preview?.candles ?? null;
   if (isValidCandleSeries(candles) && candles.length >= 12) {
@@ -636,7 +584,7 @@ function ChartPreviewState({ post, reason, dominant = false, compact = false }: 
   }
   if (compact) {
     return (
-      <div ref={containerRef} className="mt-0 flex items-center justify-between gap-3 bg-[#03080a] px-3 py-2">
+      <div className="mt-0 flex items-center justify-between gap-3 bg-[#03080a] px-3 py-2">
         <div className="min-w-0">
           <div className="truncate text-xs font-semibold text-white/56">{post.tokenContext?.symbol ? `$${post.tokenContext.symbol}` : "Market"} preview</div>
           <div className="mt-0.5 truncate text-[11px] text-white/34">Chart unavailable for this setup.</div>
@@ -646,7 +594,7 @@ function ChartPreviewState({ post, reason, dominant = false, compact = false }: 
     );
   }
   return (
-    <div ref={containerRef} className="mt-0 flex items-center justify-between gap-3 bg-[#03080a] px-3 py-3">
+    <div className="mt-0 flex items-center justify-between gap-3 bg-[#03080a] px-3 py-3">
       <div className="min-w-0">
         <div className="truncate text-xs font-semibold text-white/58">{post.tokenContext?.symbol ? `$${post.tokenContext.symbol}` : "Market"} preview</div>
         <div className="mt-0.5 truncate text-[11px] text-white/36">Chart unavailable for this setup.</div>
