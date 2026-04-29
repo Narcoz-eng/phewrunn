@@ -415,7 +415,7 @@ function CallTokenLine({ token }: { token: Post["tokenContext"] | null | undefin
   );
 }
 
-function AiDecisionPanel({ post, convictionLabel, confidence }: { post: Post; convictionLabel: string | number | null | undefined; confidence: number | null }) {
+function AiDecisionPanel({ post, convictionLabel, confidence, compact = false }: { post: Post; convictionLabel: string | number | null | undefined; confidence: number | null; compact?: boolean }) {
   const dominantReason =
     (post.scoreReasons ?? post.feedReasons ?? post.signal?.scoreReasons ?? []).find((reason) => reason && !NOISY_FEED_REASONS.has(reason)) ??
     post.coverage?.signal.unavailableReason ??
@@ -449,6 +449,26 @@ function AiDecisionPanel({ post, convictionLabel, confidence }: { post: Post; co
   ];
   const primaryInsight = aiPrimaryInsight(post, items, dominantReason);
   const confidenceLabel = confidence !== null ? `${Math.round(confidence)}%` : "Early setup";
+  if (compact) {
+    const visibleItems = items.filter((item) => !/unconfirmed|No recent|not defined|Early setup/i.test(item.value)).slice(0, 2);
+    return (
+      <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-white/[0.055] pt-3">
+        <span className="rounded-[9px] border border-white/8 bg-white/[0.035] px-2.5 py-1 text-[11px] font-bold text-white/54">
+          AI {confidenceLabel}
+        </span>
+        {visibleItems.map((item) => {
+          const Icon = item.icon;
+          return (
+            <span key={item.label} className="inline-flex items-center gap-1.5 rounded-[9px] bg-white/[0.028] px-2.5 py-1 text-[11px] font-semibold text-white/58">
+              <Icon className={cn("h-3.5 w-3.5", item.tone)} />
+              {item.value}
+            </span>
+          );
+        })}
+        <span className="min-w-[180px] flex-1 truncate text-xs font-medium text-white/42">{primaryInsight}</span>
+      </div>
+    );
+  }
   return (
     <div className="mt-4 border-t border-lime-300/12 pt-4">
       <div className="flex flex-col gap-4 bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.16),transparent_32%),linear-gradient(180deg,rgba(169,255,52,0.08),rgba(255,255,255,0.012))] px-1 py-1 sm:flex-row sm:items-start">
@@ -534,7 +554,7 @@ function ChartPreviewState({ post, reason, dominant = false }: { post: Post; rea
   const token = post.payload?.call?.token ?? post.payload?.chart?.token ?? post.tokenContext ?? null;
   const timeframe = post.payload?.chart?.timeframe ?? "1h";
   const cacheKeys = useMemo(() => feedChartCacheKeys(post, timeframe), [post, timeframe]);
-  const primaryCacheKey = cacheKeys[1] ?? cacheKeys[0] ?? null;
+  const primaryCacheKey = cacheKeys.find((key) => key.startsWith("token:")) ?? cacheKeys[0] ?? null;
   const [preview, setPreview] = useState<FeedChartPreview | null>(() => {
     const cached = getCachedFeedChart(cacheKeys);
     if (cached) return cached;
@@ -722,15 +742,18 @@ function FeedPostCallCard(props: FeedV2PostCardProps) {
   const thesis = payload.thesis?.trim() || post.content?.trim() || "Early setup";
   const tokenSymbol = payload.token?.symbol ?? post.tokenContext?.symbol ?? post.tokenSymbol ?? "TOKEN";
   const direction = payload.direction ?? "LONG";
+  const isHighConviction = Boolean(confidenceValue !== null && confidenceValue >= 70 && (liveSignal || post.feedScore >= 65));
+  const isWeakSignal = Boolean(confidenceValue !== null && confidenceValue < 40);
+  const visibleSetupMetrics = isWeakSignal ? setupMetrics.slice(0, 4) : setupMetrics;
   return (
-    <article className={cn(cardClass("call", post.coverage?.signal), !liveSignal && "p-4")}>
+    <article className={cn(cardClass("call", post.coverage?.signal), !liveSignal && "p-4", isWeakSignal && "p-3")}>
       {liveSignal ? <div className="pointer-events-none absolute inset-x-6 top-0 h-px bg-[linear-gradient(90deg,transparent,#a9ff34,transparent)]" /> : null}
       <PostContextStrip post={post} />
       <PostHeader post={post} badge={payload.signalLabel ?? (post.coverage?.signal.state === "partial" ? "Partial signal" : undefined)} />
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+      <div className={cn("mt-3 flex flex-wrap items-center justify-between gap-3", isWeakSignal && "mt-2")}>
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className={cn("font-black tracking-tight text-white", liveSignal ? "text-[26px]" : "text-2xl")}>${tokenSymbol}</h2>
+            <h2 className={cn("font-black tracking-tight text-white", isHighConviction ? "text-[26px]" : "text-xl")}>${tokenSymbol}</h2>
             <span className={cn("rounded-full border px-2.5 py-1 text-[11px] font-black", direction === "LONG" ? "border-lime-300/24 bg-lime-300/10 text-lime-200" : "border-rose-300/24 bg-rose-300/10 text-rose-200")}>
               {direction}
             </span>
@@ -746,22 +769,26 @@ function FeedPostCallCard(props: FeedV2PostCardProps) {
           ) : null}
         </div>
       </div>
-      <p className="mt-3 line-clamp-2 text-sm font-medium leading-5 text-white/72">{thesis}</p>
+      <p className={cn("mt-3 text-sm font-medium leading-5 text-white/72", isWeakSignal ? "line-clamp-1" : "line-clamp-2")}>{thesis}</p>
       <div className="mt-4 border-t border-white/[0.055] pt-3">
-        <div className="grid gap-x-4 gap-y-2 sm:grid-cols-[0.82fr_1.6fr_0.82fr_0.72fr_0.58fr]">
-          {setupMetrics.map((metric, index) => (
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-white/34">Trade plan</div>
+          <PrimaryTerminalAction address={terminalAddress} postId={post.id} />
+        </div>
+        <div className={cn("grid gap-x-4 gap-y-2", isWeakSignal ? "sm:grid-cols-4" : "sm:grid-cols-[0.82fr_1.6fr_0.82fr_0.72fr_0.58fr]")}>
+          {visibleSetupMetrics.map((metric, index) => (
             <div key={metric.label} className={cn(index > 0 && "sm:border-l sm:border-white/[0.055] sm:pl-4")}>
               <TradePlanField {...metric} />
             </div>
           ))}
         </div>
       </div>
-      <div className="mt-3 overflow-hidden border-t border-white/[0.055] pt-0">
-        <ChartPreviewState post={post} reason={payload.chartPreview?.unavailableReason ?? "Targets forming"} dominant />
+      <div className={cn("mt-3 overflow-hidden border-t border-white/[0.055] pt-0", isWeakSignal && "mt-2")}>
+        <ChartPreviewState post={post} reason={payload.chartPreview?.unavailableReason ?? "Targets forming"} dominant={isHighConviction} />
       </div>
-      <AiDecisionPanel post={post} convictionLabel={convictionLabel} confidence={confidenceValue} />
+      <AiDecisionPanel post={post} convictionLabel={convictionLabel} confidence={confidenceValue} compact={isWeakSignal} />
       {liveSignal ? <WhyShown post={post} /> : null}
-      <EngagementFooter {...props} terminalAddress={terminalAddress} />
+      <EngagementFooter {...props} />
     </article>
   );
 }

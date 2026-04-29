@@ -3,6 +3,7 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { type AuthVariables } from "../auth.js";
 import { listFeedCalls } from "../services/intelligence/engine.js";
+import { listMaterializedFeedCalls } from "../services/materialized-feed.js";
 import { getFeedChartPreview } from "../services/feed-chart-preview.js";
 import { PostTypeSchema } from "../types.js";
 
@@ -21,8 +22,8 @@ const FeedDebugQuerySchema = z.object({
 
 const FeedChartPreviewQuerySchema = z.object({
   tokenAddress: z.string().trim().min(1),
-  pairAddress: z.string().trim().min(1).optional(),
-  chainType: z.string().trim().min(1).optional(),
+  pairAddress: z.string().trim().min(1).nullable().optional(),
+  chainType: z.string().trim().min(1).nullable().optional(),
 });
 
 const FeedChartPreviewBatchSchema = z.object({
@@ -31,21 +32,16 @@ const FeedChartPreviewBatchSchema = z.object({
   })).min(1).max(12),
 });
 
-feedRouter.get("/chart-preview", zValidator("query", FeedChartPreviewQuerySchema), async (c) => {
-  const query = c.req.valid("query");
-  const preview = await getFeedChartPreview({
-    tokenAddress: query.tokenAddress,
-    pairAddress: query.pairAddress ?? null,
-    chainType: query.chainType ?? null,
-  });
-  c.header("Cache-Control", preview.state === "live" ? "public, max-age=30" : "private, no-store");
-  return c.json({ data: preview });
-});
-
 feedRouter.post("/chart-previews", zValidator("json", FeedChartPreviewBatchSchema), async (c) => {
+  const startedAt = Date.now();
   const { tokens } = c.req.valid("json");
   const results: Record<string, Awaited<ReturnType<typeof getFeedChartPreview>>> = {};
-  const queue = [...tokens];
+  const deduped = new Map<string, (typeof tokens)[number]>();
+  for (const token of tokens) {
+    const key = token.key ?? `${token.chainType ?? "any"}:${token.pairAddress ?? token.tokenAddress}`.toLowerCase();
+    if (!deduped.has(key)) deduped.set(key, token);
+  }
+  const queue = [...deduped.values()];
   const workers = Array.from({ length: Math.min(3, queue.length) }, async () => {
     while (queue.length > 0) {
       const token = queue.shift();
@@ -59,6 +55,13 @@ feedRouter.post("/chart-previews", zValidator("json", FeedChartPreviewBatchSchem
     }
   });
   await Promise.all(workers);
+  console.info("[feed/chart-previews] batch complete", {
+    requested: tokens.length,
+    deduped: deduped.size,
+    dedupeHits: Math.max(0, tokens.length - deduped.size),
+    liveResults: Object.values(results).filter((preview) => preview.state === "live").length,
+    latencyMs: Date.now() - startedAt,
+  });
   c.header("Cache-Control", "private, max-age=15, stale-while-revalidate=45");
   return c.json({ data: { results } });
 });
@@ -161,7 +164,8 @@ feedRouter.get("/:kind", zValidator("query", FeedQuerySchema), async (c) => {
     !query.cursor &&
     !query.search?.trim();
 
-  const result = await listFeedCalls({
+  const startedAt = Date.now();
+  const result = await listMaterializedFeedCalls({
     kind,
     viewerId: viewer?.id ?? null,
     limit: query.limit,
@@ -174,9 +178,22 @@ feedRouter.get("/:kind", zValidator("query", FeedQuerySchema), async (c) => {
   c.header(
     "Cache-Control",
     shouldUsePublicResponseCaching
-      ? "public, max-age=15, stale-while-revalidate=45"
+      ? "public, max-age=30, stale-while-revalidate=120"
       : "private, no-store"
   );
+  c.header("X-Feed-Source", result.materialized.source);
+  c.header("X-Feed-Cache", result.materialized.cacheState);
+
+  console.info("[feed/route] served", {
+    kind,
+    viewerScope: viewer?.id ? "user" : "anonymous",
+    items: result.items.length,
+    totalItems: result.totalItems,
+    source: result.materialized.source,
+    cacheState: result.materialized.cacheState,
+    refreshQueued: result.materialized.refreshQueued,
+    latencyMs: Date.now() - startedAt,
+  });
 
   return c.json({
     data: {
@@ -184,8 +201,15 @@ feedRouter.get("/:kind", zValidator("query", FeedQuerySchema), async (c) => {
       hasMore: result.hasMore,
       nextCursor: result.nextCursor,
       totalPosts: result.totalItems,
-      debugCounts: result.debugCounts ?? null,
-      degraded: result.degraded === true,
+      debugCounts: result.debugCounts
+        ? {
+            ...result.debugCounts,
+            source: result.materialized.source,
+            cacheState: result.materialized.cacheState,
+            latencyMs: result.materialized.latencyMs,
+          }
+        : null,
+      degraded: false,
     },
   });
 });

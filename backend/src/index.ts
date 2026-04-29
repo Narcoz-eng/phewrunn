@@ -46,6 +46,7 @@ import {
 import { cacheGetJson, cacheSetJson, redisDelete } from "./lib/redis.js";
 import { getInternalJobQueueHealthSummary } from "./lib/job-queue.js";
 import { startIntelligencePriorityLoop } from "./services/intelligence/engine.js";
+import { startMaterializedFeedPrewarmLoop } from "./services/materialized-feed.js";
 import { handleRealtimeUpgrade, realtimeWebSocketHandlers } from "./lib/realtime.js";
 
 // Security middleware imports
@@ -199,6 +200,7 @@ function scheduleBackgroundLoopBootstrap(): void {
     const canRun = () => Date.now() - lastAuthSensitiveRequestAt >= INTELLIGENCE_PRIORITY_AUTH_QUIET_MS;
     if (INTELLIGENCE_PRIORITY_LOOP_ENABLED) {
       startIntelligencePriorityLoop({ canRun });
+      startMaterializedFeedPrewarmLoop({ canRun });
     }
     if (BACKGROUND_MAINTENANCE_LOOP_ENABLED) {
       startMaintenanceLoop({ canRun });

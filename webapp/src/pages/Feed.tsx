@@ -38,6 +38,9 @@ type FeedDebugCounts = {
   selectedCallCandidates?: number;
   selectedChartPreviews?: number;
   hidden: number;
+  source?: string;
+  cacheState?: string;
+  latencyMs?: number;
 };
 
 type FeedApiPayload = {

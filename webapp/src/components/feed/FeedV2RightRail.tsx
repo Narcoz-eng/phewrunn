@@ -55,7 +55,7 @@ function convictionLabel(score: number | null): string {
   if (score === null) return "Early setup";
   if (score >= 75) return "Strong conviction";
   if (score >= 55) return "Medium conviction";
-  return "Momentum unconfirmed";
+  return "Developing";
 }
 
 function RailCard({ title, children, action }: { title: string; children: ReactNode; action?: ReactNode }) {
@@ -100,8 +100,11 @@ export function FeedV2RightRail({ discovery, onFilterFeed }: FeedV2RightRailProp
       return rows.findIndex((row) => (row.contractAddress?.toLowerCase() || row.tokenSymbol?.toLowerCase() || row.id) === key) === index;
     });
   const aiWatchlist = topGainers
-    .filter((item) => isValidSignalScore(item.confidenceScore) || isValidSignalScore(item.highConvictionScore))
-    .slice(0, 5);
+    .filter((item) => {
+      const score = item.highConvictionScore ?? item.confidenceScore ?? item.hotAlphaScore ?? null;
+      return isValidSignalScore(score) && score >= 55;
+    })
+    .slice(0, 4);
   const whaleRows = discovery?.whaleActivity ?? [];
   const marketStats = isValidMarketStats(discovery?.marketStats) ? discovery?.marketStats ?? null : null;
   const signalBreadth = topGainers.length + trendingCalls.length + aiWatchlist.length;
@@ -120,15 +123,14 @@ export function FeedV2RightRail({ discovery, onFilterFeed }: FeedV2RightRailProp
           <span className="rounded-[8px] border border-lime-300/14 bg-lime-300/[0.08] px-2 py-1 text-[11px] font-semibold text-lime-200">Live</span>
         </div>
         {marketStats ? (
-        <div className="grid grid-cols-3 divide-x divide-white/8 overflow-hidden rounded-[12px] bg-white/[0.026] shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]">
+        <div className="grid grid-cols-2 divide-x divide-white/8 overflow-hidden rounded-[12px] bg-white/[0.026] shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]">
           {[
             ["Tracked Cap", formatUsd(marketStats?.marketCap), formatPct(marketStats?.marketCapChangePct), "token universe"],
             ["24h Flow", formatUsd(marketStats?.volume24h), formatPct(marketStats?.volume24hChangePct), "active volume"],
-            ["Signal Breadth", String(signalBreadth), signalBreadth > 0 ? "active" : "Early setup", "ranked items"],
           ].map(([label, value, delta, caption]) => (
             <div key={label} className="px-3 py-2.5">
               <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/38">{label}</div>
-              <div className="mt-1 text-[15px] font-bold text-white">{value}</div>
+              <div className="mt-1 text-[13px] font-bold text-white">{value}</div>
               <div className={cn("mt-0.5 text-[11px] font-semibold", delta.startsWith("-") ? "text-rose-300" : delta === "Early setup" || delta === "Momentum unconfirmed" ? "text-white/34" : "text-lime-300")}>
                 {delta}
               </div>
@@ -136,9 +138,9 @@ export function FeedV2RightRail({ discovery, onFilterFeed }: FeedV2RightRailProp
             </div>
           ))}
         </div>
-        ) : (
-          <RailUnavailable message="Market pulse muted" />
-        )}
+        ) : signalBreadth > 0 ? (
+          <RailUnavailable message={`${signalBreadth} ranked signals active`} tone="positive" />
+        ) : null}
       </section>
 
       <RailCard
@@ -174,8 +176,8 @@ export function FeedV2RightRail({ discovery, onFilterFeed }: FeedV2RightRailProp
         )}
       </RailCard>
 
+      {liveRaids.length ? (
       <RailCard title="Live Raids" action={<V2StatusPill tone="live">Live</V2StatusPill>}>
-        {liveRaids.length ? (
           <div className="space-y-3">
             {liveRaids.slice(0, 2).map((raid) => {
             const progress = Math.max(8, Math.min(100, (raid.postedCount / Math.max(raid.participantCount, 1)) * 100));
@@ -214,13 +216,11 @@ export function FeedV2RightRail({ discovery, onFilterFeed }: FeedV2RightRailProp
             );
             })}
           </div>
-        ) : (
-          <RailUnavailable message="No live raid pressure" tone="positive" />
-        )}
       </RailCard>
+      ) : null}
 
+      {trendingCalls.length ? (
       <RailCard title="Active Calls" action={<span className="rounded-[8px] border border-amber-300/20 bg-amber-300/10 px-2 py-1 text-[11px] font-semibold text-amber-200">Fresh</span>}>
-        {trendingCalls.length ? (
           <div className="space-y-2">
             {trendingCalls.slice(0, 5).map((item) => (
             <button
@@ -242,13 +242,11 @@ export function FeedV2RightRail({ discovery, onFilterFeed }: FeedV2RightRailProp
             </button>
             ))}
           </div>
-        ) : (
-          <RailUnavailable message="No strong calls right now" tone="positive" />
-        )}
       </RailCard>
+      ) : null}
 
+      {aiWatchlist.length ? (
       <RailCard title="AI Watchlist">
-        {aiWatchlist.length ? (
           <div className="space-y-2">
             {aiWatchlist.map((item) => {
             const score = item.highConvictionScore ?? item.confidenceScore ?? item.hotAlphaScore ?? null;
@@ -271,10 +269,8 @@ export function FeedV2RightRail({ discovery, onFilterFeed }: FeedV2RightRailProp
             );
             })}
           </div>
-        ) : (
-          <RailUnavailable message="No high-confidence watchlist" tone="positive" />
-        )}
       </RailCard>
+      ) : null}
 
       <RailCard title="Whale Flow" action={<span className="rounded-[8px] border border-white/10 bg-white/[0.04] px-2 py-1 text-[11px] text-white/54">24h</span>}>
         {whaleRows.length ? (

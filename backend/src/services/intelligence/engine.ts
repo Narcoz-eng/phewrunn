@@ -572,7 +572,7 @@ type RealtimeIntelligenceOverride = {
   settledAt?: Date | null;
 };
 
-type FeedListResult = {
+export type FeedListResult = {
   items: EnrichedCall[];
   hasMore: boolean;
   nextCursor: string | null;
