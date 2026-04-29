@@ -8,6 +8,7 @@
     "pretypecheck": "npm run db:generate",
     "dev": "bun run --hot src/index.ts",
     "start": "node_modules/.bin/prisma generate && node ./scripts/prisma-migrate-deploy.mjs && bun run src/index.ts",
+    "worker": "bun run src/worker.ts",
     "build": "npx prisma@6 generate",
     "load:sim": "bun run ./scripts/load-sim.ts",
     "settlement:repair": "bun run ./scripts/repair-missed-settlements.ts",

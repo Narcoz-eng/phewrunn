@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { isPrismaPoolPressureActive, prisma } from "../prisma.js";
 import { cacheGetJson, cacheSetJson } from "../lib/redis.js";
+import { enqueueInternalJob, hasQStashPublishConfig } from "../lib/job-queue.js";
 import { getCachedMarketCapSnapshot } from "../services/marketcap.js";
 
 export const discoveryRouter = new Hono();
@@ -11,10 +12,11 @@ const DISCOVERY_CALL_MAX_AGE_MS = 48 * 60 * 60_000;
 const DISCOVERY_TRENDING_CALL_MARKET_MAX_AGE_MS = 5 * 60_000;
 const DISCOVERY_WHALE_MAX_AGE_MS = 24 * 60 * 60_000;
 const DISCOVERY_WHALE_ARCHIVE_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
-const DISCOVERY_SIDEBAR_CACHE_TTL_MS = 45_000;
+const DISCOVERY_SIDEBAR_CACHE_TTL_MS = 30_000;
 const DISCOVERY_SIDEBAR_STALE_MS = 5 * 60_000;
-const DISCOVERY_SIDEBAR_REDIS_KEY = "phew:discovery:feed-sidebar:v2";
-const DISCOVERY_SIDEBAR_REFRESH_MIN_MS = 60_000;
+const DISCOVERY_SIDEBAR_REDIS_KEY = "sidebar:v2";
+const DISCOVERY_SIDEBAR_REFRESH_MIN_MS = 30_000;
+const DISCOVERY_SIDEBAR_REFRESH_BUCKET_MS = 30_000;
 
 const EMPTY_DISCOVERY_SIDEBAR_PAYLOAD = {
   marketStats: null,
@@ -33,7 +35,6 @@ type DiscoverySidebarCacheEntry = {
 };
 
 let discoverySidebarCache: DiscoverySidebarCacheEntry | null = null;
-let discoverySidebarInFlight: Promise<DiscoverySidebarPayload | null> | null = null;
 let discoverySidebarLastRefreshStartedAt = 0;
 
 function toNumber(value: number | null | undefined, fallback = 0): number {
@@ -104,8 +105,7 @@ function parseReactionSummary(value: unknown): { count: number; positiveBias: nu
   return { count, positiveBias };
 }
 
-async function refreshDiscoverySidebar(): Promise<DiscoverySidebarPayload | null> {
-  if (discoverySidebarInFlight) return discoverySidebarInFlight;
+export async function runDiscoverySidebarRefreshJob(): Promise<DiscoverySidebarPayload | null> {
   const now = Date.now();
   const cached = await readDiscoverySidebarCache();
   if (now - discoverySidebarLastRefreshStartedAt < DISCOVERY_SIDEBAR_REFRESH_MIN_MS) {
@@ -119,38 +119,48 @@ async function refreshDiscoverySidebar(): Promise<DiscoverySidebarPayload | null
   }
   const startedAt = Date.now();
   discoverySidebarLastRefreshStartedAt = startedAt;
-  discoverySidebarInFlight = buildDiscoveryFeedSidebarPayload()
-    .then((data) => {
-      const entry = { cachedAtMs: Date.now(), data };
-      discoverySidebarCache = entry;
-      void cacheSetJson(DISCOVERY_SIDEBAR_REDIS_KEY, entry, DISCOVERY_SIDEBAR_STALE_MS);
-      console.info("[discovery/feed-sidebar] refresh complete", {
-        latencyMs: Date.now() - startedAt,
-        topGainers: data.topGainers.length,
-        trendingCalls: data.trendingCalls.length,
-        liveRaids: data.liveRaids.length,
-        whaleRows: data.whaleActivity.length,
-      });
-      return data;
-    })
-    .catch((error) => {
-      console.warn("[discovery/feed-sidebar] refresh failed", {
-        latencyMs: Date.now() - startedAt,
-        message: error instanceof Error ? error.message : String(error),
-      });
-      return null;
-    })
-    .finally(() => {
-      discoverySidebarInFlight = null;
+  try {
+    const data = await buildDiscoveryFeedSidebarPayload();
+    const entry = { cachedAtMs: Date.now(), data };
+    discoverySidebarCache = entry;
+    void cacheSetJson(DISCOVERY_SIDEBAR_REDIS_KEY, entry, DISCOVERY_SIDEBAR_STALE_MS);
+    console.info("[discovery/feed-sidebar] refresh complete", {
+      latencyMs: Date.now() - startedAt,
+      topGainers: data.topGainers.length,
+      trendingCalls: data.trendingCalls.length,
+      liveRaids: data.liveRaids.length,
+      whaleRows: data.whaleActivity.length,
     });
-  return discoverySidebarInFlight;
+    return data;
+  } catch (error) {
+    console.warn("[discovery/feed-sidebar] refresh failed", {
+      latencyMs: Date.now() - startedAt,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
 }
 
 function queueDiscoverySidebarRefresh(reason = "request"): boolean {
-  if (discoverySidebarInFlight) return false;
   if (Date.now() - discoverySidebarLastRefreshStartedAt < DISCOVERY_SIDEBAR_REFRESH_MIN_MS) return false;
+  if (!hasQStashPublishConfig()) {
+    console.warn("[discovery/feed-sidebar] refresh not queued; queue publish config missing", { reason });
+    return false;
+  }
+
+  discoverySidebarLastRefreshStartedAt = Date.now();
+  const bucket = Math.floor(discoverySidebarLastRefreshStartedAt / DISCOVERY_SIDEBAR_REFRESH_BUCKET_MS);
+  void enqueueInternalJob({
+    jobName: "sidebar_refresh",
+    idempotencyKey: `refresh-sidebar:v2:${bucket}`,
+    payload: { reason },
+  }).catch((error) => {
+    console.warn("[discovery/feed-sidebar] refresh enqueue failed", {
+      reason,
+      message: error instanceof Error ? error.message : String(error),
+    });
+  });
   console.info("[discovery/feed-sidebar] refresh queued", { reason });
-  void refreshDiscoverySidebar();
   return true;
 }
 

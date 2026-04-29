@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import { prisma } from "../prisma.js";
-import { getCachedMarketCapSnapshot } from "../services/marketcap.js";
+import { readCachedMarketCapSnapshotOnly } from "../services/marketcap.js";
 
 export const webhooksRouter = new Hono();
 
@@ -79,7 +79,7 @@ async function dynamicWhaleThreshold(tokenAddress: string, chainType: string): P
   liquidity: number | null;
   source: string;
 }> {
-  const snapshot = await getCachedMarketCapSnapshot(tokenAddress, chainType).catch(() => null);
+  const snapshot = await readCachedMarketCapSnapshotOnly(tokenAddress, chainType).catch(() => null);
   const liquidity = snapshot?.liquidityUsd ?? null;
   const marketCap = snapshot?.mcap ?? null;
   const liquidityThreshold =

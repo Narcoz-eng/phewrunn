@@ -177,8 +177,8 @@ export function ProTerminalSurface({ initialTokenAddress = null }: ProTerminalSu
   const terminalQuery = useQuery<TerminalAggregateResponse>({
     queryKey: ["terminal-aggregate-v1", tokenAddress, timeframe],
     enabled: tokenAddress.length > 0,
-    staleTime: 5_000,
-    refetchInterval: tokenAddress ? 10_000 : false,
+    staleTime: 30_000,
+    refetchInterval: tokenAddress ? 60_000 : false,
     refetchOnWindowFocus: false,
     queryFn: () => api.get<TerminalAggregateResponse>(`/api/tokens/${tokenAddress}/terminal?timeframe=${timeframe}`),
   });

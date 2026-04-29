@@ -29,6 +29,7 @@ import {
 } from "../types.js";
 import {
   getCachedMarketCapSnapshot,
+  readCachedMarketCapSnapshotOnly,
   clearMarketCapSnapshotCache,
   needsMcapUpdate,
   determineTrackingMode,
@@ -51,10 +52,7 @@ import {
   fetchBirdeyeRecentTrades,
   getBufferedBirdeyeLiveFeedSnapshot,
   hasBirdeyeTradeFeedConfig,
-  startBirdeyeLiveFeed,
   type BirdeyeTradeFeedChain,
-  type TradeFeedSnapshot,
-  type TradeFeedStatus,
 } from "../services/birdeye-trade-feed.js";
 import {
   buildLeaderboardRefreshJobInput,
@@ -62,7 +60,7 @@ import {
   runLeaderboardStatsRefresh,
 } from "./leaderboard.js";
 import { invalidateNotificationsCache } from "./notifications.js";
-import { cacheGetJson, cacheSetJson } from "../lib/redis.js";
+import { cacheGetJson, cacheSetJson, redisGetString, redisSetString } from "../lib/redis.js";
 import { enqueueInternalJob, hasQStashPublishConfig, type EnqueueInternalJobInput } from "../lib/job-queue.js";
 import {
   buildIntelligenceRefreshJobInput,
@@ -147,6 +145,11 @@ type ChartCandlesFetchResult = {
   source: ChartCandlesSource;
   network: "solana" | "eth";
   candles: NormalizedChartCandle[];
+};
+
+type ChartCandlesCacheEntry = {
+  cachedAtMs: number;
+  result: ChartCandlesFetchResult;
 };
 
 type ChartCandlesSourceHealth = {
@@ -3834,6 +3837,13 @@ async function getFeedMarketCapSnapshot(
   address: string,
   chainType?: string | null
 ): Promise<MarketCapResult> {
+  return readCachedMarketCapSnapshotOnly(address, chainType).then((snapshot) => snapshot ?? { mcap: null });
+}
+
+async function getLiveMarketCapSnapshot(
+  address: string,
+  chainType?: string | null
+): Promise<MarketCapResult> {
   return getCachedMarketCapSnapshot(address, chainType);
 }
 
@@ -4673,7 +4683,7 @@ async function refreshTrackedMarketCaps(): Promise<MarketRefreshRunResult> {
       let heliusMetadata: Awaited<ReturnType<typeof getHeliusTokenMetadataForMint>> | null = null;
 
       try {
-        marketCapResult = await getFeedMarketCapSnapshot(contractAddress, chainType);
+        marketCapResult = await getLiveMarketCapSnapshot(contractAddress, chainType);
         if (
           isHeliusConfigured() &&
           posts.some((p) => p.chainType === "solana" && (!p.tokenName || !p.tokenSymbol || !p.tokenImage))
@@ -8693,6 +8703,93 @@ function buildChartCandlesCacheKey(payload: ChartCandlesPayload): string {
   ].join(":");
 }
 
+function buildChartCandlesRedisKey(payload: ChartCandlesPayload): string {
+  const address = (payload.tokenAddress ?? payload.poolAddress ?? "unknown").toLowerCase();
+  return `chart:${address}:${payload.timeframe ?? "minute"}:${payload.aggregate ?? 5}`;
+}
+
+function buildChartCandlesCooldownKey(payload: ChartCandlesPayload): string {
+  return `chart:cooldown:${buildChartCandlesRedisKey(payload)}`;
+}
+
+function buildChartRefreshIdempotencyKey(payload: ChartCandlesPayload): string {
+  return `refresh-chart:${buildChartCandlesRedisKey(payload)}:${Math.floor(Date.now() / 60_000)}`;
+}
+
+function readChartCandlesMemoryCache(
+  cacheKey: string,
+  allowStale = false
+): ChartCandlesFetchResult | null {
+  const cached = chartCandlesCache.get(cacheKey);
+  if (!cached) return null;
+  const now = Date.now();
+  if (cached.expiresAtMs > now || (allowStale && cached.staleUntilMs > now)) return cached.result;
+  if (cached.staleUntilMs <= now) {
+    chartCandlesCache.delete(cacheKey);
+  }
+  return null;
+}
+
+export async function readCachedChartCandles(
+  payload: ChartCandlesPayload,
+  opts: { allowStale?: boolean } = {}
+): Promise<ChartCandlesFetchResult | null> {
+  const cacheKey = buildChartCandlesCacheKey(payload);
+  const memory = readChartCandlesMemoryCache(cacheKey, opts.allowStale ?? false);
+  if (memory) return memory;
+
+  const entry = await cacheGetJson<ChartCandlesCacheEntry>(buildChartCandlesRedisKey(payload));
+  if (!entry?.result || typeof entry.cachedAtMs !== "number") return null;
+
+  const ageMs = Date.now() - entry.cachedAtMs;
+  const maxAgeMs = opts.allowStale ? CHART_CANDLES_STALE_FALLBACK_MS : CHART_CANDLES_CACHE_TTL_MS;
+  if (ageMs > maxAgeMs) return null;
+
+  chartCandlesCache.set(cacheKey, {
+    result: entry.result,
+    expiresAtMs: entry.cachedAtMs + CHART_CANDLES_CACHE_TTL_MS,
+    staleUntilMs: entry.cachedAtMs + CHART_CANDLES_STALE_FALLBACK_MS,
+  });
+  return entry.result;
+}
+
+function writeChartCandlesCache(payload: ChartCandlesPayload, result: ChartCandlesFetchResult): void {
+  const cacheKey = buildChartCandlesCacheKey(payload);
+  const cachedAtMs = Date.now();
+  chartCandlesCache.set(cacheKey, {
+    result,
+    expiresAtMs: cachedAtMs + CHART_CANDLES_CACHE_TTL_MS,
+    staleUntilMs: cachedAtMs + CHART_CANDLES_STALE_FALLBACK_MS,
+  });
+  void cacheSetJson(
+    buildChartCandlesRedisKey(payload),
+    { cachedAtMs, result } satisfies ChartCandlesCacheEntry,
+    CHART_CANDLES_STALE_FALLBACK_MS
+  );
+}
+
+export function queueChartCandlesRefresh(payload: ChartCandlesPayload, reason: string): boolean {
+  if (!hasQStashPublishConfig()) {
+    return false;
+  }
+  void enqueueInternalJob({
+    jobName: "chart_refresh",
+    idempotencyKey: buildChartRefreshIdempotencyKey(payload),
+    payload: {
+      ...payload,
+      purpose: "candles",
+      reason,
+    },
+  }).catch((error) => {
+    console.warn("[posts/chart/candles] refresh enqueue failed", {
+      reason,
+      cacheKey: buildChartCandlesRedisKey(payload),
+      message: error instanceof Error ? error.message : String(error),
+    });
+  });
+  return true;
+}
+
 function toBirdeyeTradeFeedChain(chainType: string | null | undefined): BirdeyeTradeFeedChain {
   return chainType === "ethereum" || chainType === "evm" ? "ethereum" : "solana";
 }
@@ -9504,6 +9601,50 @@ export async function fetchBestChartCandles(payload: ChartCandlesPayload): Promi
   throw new Error("No chart provider available");
 }
 
+export async function runChartRefreshJob(payload: ChartCandlesPayload): Promise<{
+  refreshed: boolean;
+  source: string | null;
+  candles: number;
+  skippedReason: string | null;
+}> {
+  const cooldownKey = buildChartCandlesCooldownKey(payload);
+  const activeCooldown = await redisGetString(cooldownKey);
+  if (activeCooldown) {
+    return {
+      refreshed: false,
+      source: null,
+      candles: 0,
+      skippedReason: "cooldown",
+    };
+  }
+
+  try {
+    const result = await Promise.race<ChartCandlesFetchResult>([
+      fetchBestChartCandles(payload),
+      new Promise<ChartCandlesFetchResult>((_, reject) => {
+        setTimeout(() => reject(new Error("Chart candles request timed out")), CHART_CANDLES_FETCH_TIMEOUT_MS);
+      }),
+    ]);
+    writeChartCandlesCache(payload, result);
+    return {
+      refreshed: true,
+      source: result.source,
+      candles: result.candles.length,
+      skippedReason: null,
+    };
+  } catch (error) {
+    const cooldownMs = isProviderRateLimitError(error) ? 2 * 60_000 : 30_000;
+    void redisSetString(cooldownKey, String(Date.now() + cooldownMs), cooldownMs);
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn("[posts/chart/candles] refresh failed", {
+      cacheKey: buildChartCandlesRedisKey(payload),
+      cooldownMs,
+      message,
+    });
+    throw error;
+  }
+}
+
 postsRouter.post(
   "/trade-context",
   requireNotBanned,
@@ -9736,294 +9877,92 @@ postsRouter.post(
 
 postsRouter.post("/chart/candles", zValidator("json", ChartCandlesProxySchema), async (c) => {
   const payload = c.req.valid("json");
-  const cacheKey = buildChartCandlesCacheKey(payload);
-  const now = Date.now();
-  const cached = chartCandlesCache.get(cacheKey);
-  if (cached && cached.expiresAtMs > now) {
+  const cached = await readCachedChartCandles(payload);
+  if (cached) {
     return c.json({
       data: {
-        source: cached.result.source,
-        network: cached.result.network,
+        source: cached.source,
+        network: cached.network,
         poolAddress: payload.poolAddress ?? null,
         tokenAddress: payload.tokenAddress ?? null,
         timeframe: payload.timeframe ?? "minute",
         aggregate: payload.aggregate ?? 5,
-        candles: cached.result.candles,
+        candles: cached.candles,
       },
     });
   }
-  const staleCachedResult = cached && cached.staleUntilMs > now ? cached.result : null;
-  if (cached && cached.staleUntilMs <= now) {
-    chartCandlesCache.delete(cacheKey);
-  }
 
-  const backoffUntil = chartCandlesBackoffUntil.get(cacheKey) ?? 0;
-  if (backoffUntil > now) {
+  const staleCachedResult = await readCachedChartCandles(payload, { allowStale: true });
+  const queued = queueChartCandlesRefresh(payload, staleCachedResult ? "stale-cache" : "cold-cache");
+  if (staleCachedResult) {
+    c.header("X-Chart-Cache", "stale");
     return c.json({
       data: {
-        source: staleCachedResult?.source ?? "unknown",
-        network: staleCachedResult?.network ?? null,
+        source: staleCachedResult.source,
+        network: staleCachedResult.network,
         poolAddress: payload.poolAddress ?? null,
         tokenAddress: payload.tokenAddress ?? null,
         timeframe: payload.timeframe ?? "minute",
         aggregate: payload.aggregate ?? 5,
-        candles: staleCachedResult?.candles ?? [],
+        candles: staleCachedResult.candles,
+        refreshQueued: queued,
       },
     });
   }
-  if (backoffUntil > 0) {
-    chartCandlesBackoffUntil.delete(cacheKey);
-  }
 
-  let request = chartCandlesInFlight.get(cacheKey);
-  if (!request) {
-    request = Promise.race<ChartCandlesFetchResult>([
-      fetchBestChartCandles(payload),
-      new Promise<ChartCandlesFetchResult>((_, reject) => {
-        setTimeout(() => reject(new Error("Chart candles request timed out")), CHART_CANDLES_FETCH_TIMEOUT_MS);
-      }),
-    ]);
-    chartCandlesInFlight.set(cacheKey, request);
-  }
-
-  try {
-    const result = await request;
-    chartCandlesCache.set(cacheKey, {
-      result,
-      expiresAtMs: Date.now() + CHART_CANDLES_CACHE_TTL_MS,
-      staleUntilMs: Date.now() + CHART_CANDLES_STALE_FALLBACK_MS,
-    });
-    chartCandlesBackoffUntil.delete(cacheKey);
-
-    return c.json({
-      data: {
-        source: result.source,
-        network: result.network,
-        poolAddress: payload.poolAddress ?? null,
-        tokenAddress: payload.tokenAddress ?? null,
-        timeframe: payload.timeframe ?? "minute",
-        aggregate: payload.aggregate ?? 5,
-        candles: result.candles,
+  c.header("X-Chart-Cache", "missing");
+  return c.json({
+    data: {
+      source: "cache",
+      network: null,
+      poolAddress: payload.poolAddress ?? null,
+      tokenAddress: payload.tokenAddress ?? null,
+      timeframe: payload.timeframe ?? "minute",
+      aggregate: payload.aggregate ?? 5,
+      candles: [],
+      refreshQueued: queued,
+      coverage: {
+        state: "unavailable",
+        source: "chart-cache",
+        unavailableReason: "Chart candles are refreshing and no cached candles are available yet.",
       },
-    });
-  } catch (error) {
-    chartCandlesBackoffUntil.set(cacheKey, Date.now() + (isProviderRateLimitError(error) ? 2 * 60_000 : 30_000));
-    if (staleCachedResult) {
-      return c.json({
-        data: {
-          source: staleCachedResult.source,
-          network: staleCachedResult.network,
-          poolAddress: payload.poolAddress ?? null,
-          tokenAddress: payload.tokenAddress ?? null,
-          timeframe: payload.timeframe ?? "minute",
-          aggregate: payload.aggregate ?? 5,
-          candles: staleCachedResult.candles,
-        },
-      });
-    }
-    const message =
-      error instanceof Error ? error.message : "Failed to load chart candles";
-    console.warn("[posts/chart/candles] serving empty candle fallback after provider failure", {
-      cacheKey,
-      message,
-    });
-    return c.json({
-      data: {
-        source: "unknown",
-        network: null,
-        poolAddress: payload.poolAddress ?? null,
-        tokenAddress: payload.tokenAddress ?? null,
-        timeframe: payload.timeframe ?? "minute",
-        aggregate: payload.aggregate ?? 5,
-        candles: [],
-      },
-    });
-  } finally {
-    const current = chartCandlesInFlight.get(cacheKey);
-    if (current === request) {
-      chartCandlesInFlight.delete(cacheKey);
-    }
-  }
+    },
+  });
 });
 
 postsRouter.get("/chart/trades", zValidator("query", ChartTradesQuerySchema), async (c) => {
   const payload = c.req.valid("query");
-  try {
-    const trades = await loadChartTrades(payload);
-    return c.json({
-      data: {
-        trades,
-        source: hasBirdeyeTradeFeedConfig() ? "birdeye" : "unavailable",
-        liveSupported: hasBirdeyeTradeFeedConfig(),
-      },
-    });
-  } catch (error) {
-    console.warn("[posts/chart/trades] serving empty trade fallback after provider failure", {
-      message: getErrorMessage(error),
-    });
-    return c.json({
-      data: {
-        trades: [],
-        source: hasBirdeyeTradeFeedConfig() ? "birdeye" : "unavailable",
-        liveSupported: hasBirdeyeTradeFeedConfig(),
-      },
-    });
+  const cacheKey = buildChartTradesCacheKey(payload);
+  const now = Date.now();
+  const cached = chartTradesCache.get(cacheKey);
+  const trades =
+    cached && (cached.expiresAtMs > now || cached.staleUntilMs > now)
+      ? cached.trades.slice(0, payload.limit)
+      : [];
+  if (cached && cached.staleUntilMs <= now) {
+    chartTradesCache.delete(cacheKey);
   }
+  return c.json({
+    data: {
+      trades,
+      source: trades.length > 0 ? "cache" : "unavailable",
+      liveSupported: false,
+    },
+  });
 });
 
 postsRouter.get("/chart/live", zValidator("query", ChartLiveQuerySchema), async (c) => {
-  const payload = c.req.valid("query");
-  if (!hasBirdeyeTradeFeedConfig()) {
-    return c.json(
-      {
-        error: {
-          message: "Live stream is unavailable for this deployment",
-          code: "CHART_LIVE_UNAVAILABLE",
-        },
+  c.req.valid("query");
+  return c.json(
+    {
+      error: {
+        message: "Live chart streams are disabled; use cached chart data.",
+        code: "CHART_LIVE_DISABLED",
       },
-      503
-    );
-  }
-
-  const encoder = new TextEncoder();
-  const chainType = toBirdeyeTradeFeedChain(payload.chainType);
-
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      let closed = false;
-      let keepAliveInterval: ReturnType<typeof setInterval> | null = null;
-      let maxDurationTimeout: ReturnType<typeof setTimeout> | null = null;
-      let detachAbort: (() => void) | null = null;
-      let liveFeedCloser: (() => void) | null = null;
-
-      const writeChunk = (chunk: string) => {
-        if (closed) return;
-        controller.enqueue(encoder.encode(chunk));
-      };
-
-      const writeEvent = (event: string, data: unknown) => {
-        writeChunk(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-      };
-      const writeSnapshot = (snapshot: Pick<TradeFeedSnapshot, "recentTrades" | "latestPrice">) => {
-        if (snapshot.recentTrades.length > 0 || snapshot.latestPrice) {
-          writeEvent("snapshot", {
-            trades: snapshot.recentTrades,
-            latestPrice: snapshot.latestPrice,
-          });
-        }
-      };
-
-      const cleanup = () => {
-        if (closed) return;
-        closed = true;
-        if (keepAliveInterval) {
-          clearInterval(keepAliveInterval);
-          keepAliveInterval = null;
-        }
-        if (maxDurationTimeout) {
-          clearTimeout(maxDurationTimeout);
-          maxDurationTimeout = null;
-        }
-        detachAbort?.();
-        detachAbort = null;
-        liveFeedCloser?.();
-        liveFeedCloser = null;
-        try {
-          controller.close();
-        } catch {
-          // Ignore double-close races during disconnect.
-        }
-      };
-
-      writeChunk("retry: 1000\n\n");
-
-      keepAliveInterval = setInterval(() => {
-        writeChunk(`: keepalive ${Date.now()}\n\n`);
-      }, CHART_LIVE_STREAM_KEEPALIVE_MS);
-      maxDurationTimeout = setTimeout(() => {
-        writeEvent("status", {
-          connected: false,
-          mode: "fallback",
-          reason: "Live stream recycled",
-          timestampMs: Date.now(),
-        } satisfies TradeFeedStatus);
-        cleanup();
-      }, CHART_LIVE_STREAM_MAX_DURATION_MS);
-
-      const abortSignal = c.req.raw.signal;
-      const onAbort = () => cleanup();
-      abortSignal.addEventListener("abort", onAbort, { once: true });
-      detachAbort = () => abortSignal.removeEventListener("abort", onAbort);
-
-      const liveFeed = startBirdeyeLiveFeed({
-        chainType,
-        tokenAddress: payload.tokenAddress,
-        pairAddress: payload.pairAddress,
-        onSnapshot: (snapshot) => {
-          writeSnapshot(snapshot);
-        },
-        onPrice: (update) => {
-          writeEvent("price", update);
-        },
-        onTrade: (trade) => {
-          writeEvent("trade", trade);
-        },
-        onStatus: (status) => {
-          writeEvent("status", status);
-        },
-        onError: (error) => {
-          writeEvent("status", {
-            connected: false,
-            mode: "fallback",
-            reason: getErrorMessage(error),
-            timestampMs: Date.now(),
-          } satisfies TradeFeedStatus);
-        },
-      });
-
-      const initialSnapshot = liveFeed.snapshot;
-      writeSnapshot(initialSnapshot);
-      writeEvent("status", initialSnapshot.status);
-      if (initialSnapshot.recentTrades.length === 0) {
-        void loadChartTrades({
-          tokenAddress: payload.tokenAddress,
-          pairAddress: payload.pairAddress,
-          chainType,
-          limit: 24,
-        })
-          .then((trades) => {
-            if (trades.length > 0) {
-              writeEvent("snapshot", {
-                trades,
-                latestPrice: initialSnapshot.latestPrice,
-              });
-            }
-          })
-          .catch((error) => {
-            writeEvent("status", {
-              connected: false,
-              mode: "fallback",
-              reason: `Trade seed unavailable: ${getErrorMessage(error)}`,
-              timestampMs: Date.now(),
-            } satisfies TradeFeedStatus);
-          });
-      }
-
-      liveFeedCloser = liveFeed.close;
     },
-    cancel() {
-      // Request abort cleanup runs through the bound signal listener.
-    },
-  });
+    503
+  );
 
-  return new Response(stream, {
-    headers: {
-      "content-type": "text/event-stream; charset=utf-8",
-      "cache-control": "no-cache, no-transform",
-      connection: "keep-alive",
-      "x-accel-buffering": "no",
-    },
-  });
 });
 
 postsRouter.post("/prices", zValidator("json", BatchPostPricesSchema), async (c) => {

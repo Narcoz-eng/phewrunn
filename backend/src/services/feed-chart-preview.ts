@@ -1,4 +1,6 @@
 import { isPrismaPoolPressureActive, prisma } from "../prisma.js";
+import { cacheGetJson, cacheSetJson, redisGetString, redisSetString } from "../lib/redis.js";
+import { enqueueInternalJob, hasQStashPublishConfig } from "../lib/job-queue.js";
 
 type FeedChartPreviewCandle = {
   timestamp: number;
@@ -45,6 +47,7 @@ const FEED_CHART_PREVIEW_TIMEOUT_MS = 2_200;
 const FEED_CHART_PREVIEW_FRESH_MAX_AGE_MS = 10 * 60_000;
 const FEED_CHART_PROVIDER_COOLDOWN_MS = 2 * 60_000;
 const FEED_CHART_TOKEN_CONTEXT_TTL_MS = 5 * 60_000;
+const FEED_CHART_REFRESH_BUCKET_MS = 60_000;
 const BIRDEYE_API_KEY = process.env.BIRDEYE_API_KEY?.trim() || "";
 const feedChartPreviewCache = new Map<string, CacheEntry>();
 const feedChartPreviewLastGoodCache = new Map<string, CacheEntry>();
@@ -52,6 +55,117 @@ const feedChartPreviewInFlight = new Map<string, Promise<FeedChartPreviewResult>
 const storedTokenContextCache = new Map<string, StoredTokenContextCacheEntry>();
 let birdeyeChartPreviewCircuitOpenUntilMs = 0;
 let geckoChartPreviewCircuitOpenUntilMs = 0;
+
+function buildFeedChartPreviewCacheKeys(params: {
+  tokenAddress: string | null | undefined;
+  pairAddress: string | null | undefined;
+  chainType: string | null | undefined;
+}): string[] {
+  const network = params.chainType === "solana" ? "solana" : "eth";
+  const tokenAddress = params.tokenAddress?.trim().toLowerCase();
+  const pairAddress = params.pairAddress?.trim().toLowerCase();
+  return [
+    tokenAddress ? `chart:${tokenAddress}:preview` : null,
+    pairAddress ? `chart:${pairAddress}:preview` : null,
+    tokenAddress ? `chart:${network}:${tokenAddress}:minute:5` : null,
+    pairAddress ? `chart:${network}:${pairAddress}:minute:5` : null,
+  ].filter((key): key is string => Boolean(key));
+}
+
+function buildFeedChartPreviewProviderCooldownKey(provider: "birdeye" | "geckoterminal"): string {
+  return `chart:provider-cooldown:${provider}`;
+}
+
+function buildFeedChartRefreshIdempotencyKey(params: {
+  tokenAddress: string | null | undefined;
+  pairAddress: string | null | undefined;
+  chainType: string | null | undefined;
+}): string {
+  const cacheKey =
+    buildFeedChartPreviewCacheKeys(params)[0] ??
+    `${params.chainType ?? "any"}:${params.pairAddress ?? params.tokenAddress ?? "unknown"}`;
+  return `refresh-chart-preview:${cacheKey}:${Math.floor(Date.now() / FEED_CHART_REFRESH_BUCKET_MS)}`;
+}
+
+async function readFeedChartPreviewCacheByKeys(keys: string[]): Promise<FeedChartPreviewResult | null> {
+  for (const key of keys) {
+    const cached = feedChartPreviewCache.get(key);
+    if (cached && cached.expiresAtMs > Date.now()) {
+      return cached.value;
+    }
+    if (cached && cached.expiresAtMs <= Date.now()) {
+      feedChartPreviewCache.delete(key);
+    }
+
+    const redisCached = await cacheGetJson<{
+      cachedAtMs: number;
+      value: FeedChartPreviewResult;
+    }>(key);
+    if (!redisCached?.value || typeof redisCached.cachedAtMs !== "number") continue;
+    const ttlMs = redisCached.value.state === "live"
+      ? FEED_CHART_PREVIEW_STALE_FALLBACK_MS
+      : FEED_CHART_PREVIEW_UNAVAILABLE_TTL_MS;
+    if (Date.now() - redisCached.cachedAtMs > ttlMs) continue;
+    feedChartPreviewCache.set(key, {
+      value: redisCached.value,
+      expiresAtMs:
+        redisCached.cachedAtMs +
+        (redisCached.value.state === "live"
+          ? FEED_CHART_PREVIEW_CACHE_TTL_MS
+          : FEED_CHART_PREVIEW_UNAVAILABLE_TTL_MS),
+    });
+    if (redisCached.value.state === "live") {
+      feedChartPreviewLastGoodCache.set(key, {
+        value: redisCached.value,
+        expiresAtMs: redisCached.cachedAtMs + FEED_CHART_PREVIEW_STALE_FALLBACK_MS,
+      });
+    }
+    return redisCached.value;
+  }
+  return null;
+}
+
+function writeFeedChartPreviewCache(keys: string[], value: FeedChartPreviewResult): void {
+  const ttlMs = value.state === "live"
+    ? FEED_CHART_PREVIEW_STALE_FALLBACK_MS
+    : FEED_CHART_PREVIEW_UNAVAILABLE_TTL_MS;
+  for (const key of keys) {
+    const expiresAtMs = Date.now() + (
+      value.state === "live" ? FEED_CHART_PREVIEW_CACHE_TTL_MS : FEED_CHART_PREVIEW_UNAVAILABLE_TTL_MS
+    );
+    feedChartPreviewCache.set(key, { value, expiresAtMs });
+    if (value.state === "live") {
+      feedChartPreviewLastGoodCache.set(key, {
+        value,
+        expiresAtMs: Date.now() + FEED_CHART_PREVIEW_STALE_FALLBACK_MS,
+      });
+    }
+    void cacheSetJson(key, { cachedAtMs: Date.now(), value }, ttlMs);
+  }
+}
+
+function queueFeedChartPreviewRefresh(params: {
+  tokenAddress: string | null | undefined;
+  pairAddress: string | null | undefined;
+  chainType: string | null | undefined;
+}): boolean {
+  if (!hasQStashPublishConfig()) return false;
+  void enqueueInternalJob({
+    jobName: "chart_refresh",
+    idempotencyKey: buildFeedChartRefreshIdempotencyKey(params),
+    payload: {
+      tokenAddress: params.tokenAddress ?? null,
+      pairAddress: params.pairAddress ?? null,
+      chainType: params.chainType ?? null,
+      purpose: "feed-preview",
+    },
+  }).catch((error) => {
+    console.warn("[feed/chart-preview] refresh enqueue failed", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+  });
+  return true;
+}
 
 function finite(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -305,7 +419,7 @@ function getLastGoodPreview(cacheKey: string): FeedChartPreviewResult | null {
   return cached.value;
 }
 
-export async function getFeedChartPreview(params: {
+export async function refreshFeedChartPreview(params: {
   tokenAddress: string | null | undefined;
   pairAddress: string | null | undefined;
   chainType: string | null | undefined;
@@ -341,6 +455,11 @@ export async function getFeedChartPreview(params: {
   }
 
   const cacheKey = `${network}:${(pairAddress ?? tokenAddress ?? "").toLowerCase()}:minute:5`;
+  const persistentCacheKeys = buildFeedChartPreviewCacheKeys({
+    tokenAddress,
+    pairAddress: pairAddress ?? requestedPairAddress ?? null,
+    chainType: params.chainType ?? null,
+  });
   const cached = feedChartPreviewCache.get(cacheKey);
   if (cached && cached.expiresAtMs > Date.now()) {
     if (cached.value.state !== "live" || (cached.value.candles && isValidPreviewSeries(cached.value.candles))) {
@@ -367,6 +486,10 @@ export async function getFeedChartPreview(params: {
         };
       };
       try {
+        const birdeyeCooldown = await redisGetString(buildFeedChartPreviewProviderCooldownKey("birdeye"));
+        if (birdeyeCooldown) {
+          birdeyeChartPreviewCircuitOpenUntilMs = Math.max(birdeyeChartPreviewCircuitOpenUntilMs, Date.now() + 30_000);
+        }
         if (network === "solana" && tokenAddress && BIRDEYE_API_KEY && birdeyeChartPreviewCircuitOpenUntilMs <= Date.now()) {
           const timeTo = Math.floor(Date.now() / 1000);
           const timeFrom = timeTo - 5 * 60 * 54;
@@ -392,6 +515,11 @@ export async function getFeedChartPreview(params: {
           const birdeyeBodyText = await birdeyeResponse.text();
           if (isRateLimitResponse(birdeyeResponse.status, birdeyeBodyText)) {
             birdeyeChartPreviewCircuitOpenUntilMs = Date.now() + FEED_CHART_PROVIDER_COOLDOWN_MS;
+            void redisSetString(
+              buildFeedChartPreviewProviderCooldownKey("birdeye"),
+              String(birdeyeChartPreviewCircuitOpenUntilMs),
+              FEED_CHART_PROVIDER_COOLDOWN_MS
+            );
             const lastGood = getLastGoodPreview(cacheKey);
             if (lastGood) return lastGood;
             const stored = await storedFallback();
@@ -421,6 +549,11 @@ export async function getFeedChartPreview(params: {
           );
         }
 
+        const geckoCooldown = await redisGetString(buildFeedChartPreviewProviderCooldownKey("geckoterminal"));
+        if (geckoCooldown) {
+          geckoChartPreviewCircuitOpenUntilMs = Math.max(geckoChartPreviewCircuitOpenUntilMs, Date.now() + 30_000);
+        }
+
         if (geckoChartPreviewCircuitOpenUntilMs > Date.now()) {
           const lastGood = getLastGoodPreview(cacheKey);
           if (lastGood) return lastGood;
@@ -442,6 +575,11 @@ export async function getFeedChartPreview(params: {
         const geckoBodyText = await response.text();
         if (isRateLimitResponse(response.status, geckoBodyText)) {
           geckoChartPreviewCircuitOpenUntilMs = Date.now() + FEED_CHART_PROVIDER_COOLDOWN_MS;
+          void redisSetString(
+            buildFeedChartPreviewProviderCooldownKey("geckoterminal"),
+            String(geckoChartPreviewCircuitOpenUntilMs),
+            FEED_CHART_PROVIDER_COOLDOWN_MS
+          );
           const lastGood = getLastGoodPreview(cacheKey);
           if (lastGood) return lastGood;
           const stored = await storedFallback();
@@ -495,5 +633,21 @@ export async function getFeedChartPreview(params: {
     if (lastGood) return lastGood;
     feedChartPreviewCache.set(cacheKey, { value, expiresAtMs: Date.now() + FEED_CHART_PREVIEW_UNAVAILABLE_TTL_MS });
   }
+  writeFeedChartPreviewCache(persistentCacheKeys, value);
   return value;
+}
+
+export async function getFeedChartPreview(params: {
+  tokenAddress: string | null | undefined;
+  pairAddress: string | null | undefined;
+  chainType: string | null | undefined;
+}): Promise<FeedChartPreviewResult> {
+  const keys = buildFeedChartPreviewCacheKeys(params);
+  const cached = await readFeedChartPreviewCacheByKeys(keys);
+  if (cached) {
+    return cached;
+  }
+
+  queueFeedChartPreviewRefresh(params);
+  return unavailablePreview("chart-cache", "Chart preview is refreshing and no cached candles are available yet.");
 }

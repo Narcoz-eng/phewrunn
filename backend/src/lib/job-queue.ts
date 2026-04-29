@@ -10,6 +10,9 @@ import {
 } from "./redis.js";
 
 export const INTERNAL_JOB_NAMES = [
+  "feed_refresh",
+  "sidebar_refresh",
+  "chart_refresh",
   "post_fanout",
   "push_delivery",
   "settlement",
@@ -144,6 +147,39 @@ const LOCAL_JOB_STATE_MAX_ENTRIES = isProduction ? 20_000 : 2_000;
 const QSTASH_HEADER_LABEL_PREFIX = "internal-job";
 
 export const INTERNAL_JOB_DEFINITIONS: Record<InternalJobName, InternalJobDefinition> = {
+  feed_refresh: {
+    label: "refresh-feed",
+    timeout: "30s",
+    retries: 5,
+    retryDelayExpression: JOB_RETRY_DELAY_EXPRESSION,
+    flowControlKey: "job:refresh_feed",
+    flowControlValue: "parallelism=1, rate=30, period=1m",
+    localConcurrencyLimit: 1,
+    processingTtlMs: 30 * 60 * 1000,
+    completedTtlMs: 10 * 60 * 1000,
+  },
+  sidebar_refresh: {
+    label: "refresh-sidebar",
+    timeout: "30s",
+    retries: 5,
+    retryDelayExpression: JOB_RETRY_DELAY_EXPRESSION,
+    flowControlKey: "job:refresh_sidebar",
+    flowControlValue: "parallelism=1, rate=20, period=1m",
+    localConcurrencyLimit: 1,
+    processingTtlMs: 30 * 60 * 1000,
+    completedTtlMs: 5 * 60 * 1000,
+  },
+  chart_refresh: {
+    label: "refresh-chart",
+    timeout: "30s",
+    retries: 5,
+    retryDelayExpression: JOB_RETRY_DELAY_EXPRESSION,
+    flowControlKey: "job:refresh_chart",
+    flowControlValue: "parallelism=2, rate=60, period=1m",
+    localConcurrencyLimit: 2,
+    processingTtlMs: 30 * 60 * 1000,
+    completedTtlMs: 5 * 60 * 1000,
+  },
   post_fanout: {
     label: "post-fanout",
     timeout: "20s",

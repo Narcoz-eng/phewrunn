@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { cacheGetJson, cacheSetJson } from "../lib/redis.js";
+import { enqueueInternalJob, hasQStashPublishConfig } from "../lib/job-queue.js";
 import { prisma } from "../prisma.js";
 import {
   type EnrichedCall,
@@ -15,8 +16,8 @@ type MaterializedFeedEnvelope = {
 
 type MaterializedFeedRead = FeedListResult & {
   materialized: {
-    source: "memory" | "redis" | "stored-db" | "latest-cache" | "following-db";
-    cacheState: "fresh" | "stale" | "warming" | "direct";
+    source: "memory" | "redis" | "latest-cache" | "empty";
+    cacheState: "fresh" | "stale" | "warming" | "missing";
     refreshQueued: boolean;
     latencyMs: number;
   };
@@ -29,6 +30,8 @@ const MATERIALIZED_FEED_TTL_MS = 45_000;
 const MATERIALIZED_FEED_STALE_MS = 10 * 60_000;
 const MATERIALIZED_FEED_REFRESH_MIN_MS = 20_000;
 const MATERIALIZED_FEED_KINDS: FeedKind[] = ["latest", "hot-alpha", "early-runners", "high-conviction"];
+const MATERIALIZED_FEED_REFRESH_BUCKET_MS = 30_000;
+const MATERIALIZED_FEED_WORKER_ROLE = new Set(["worker", "jobs", "queue"]);
 
 const materializedFeedMemory = new Map<string, MaterializedFeedEnvelope>();
 const materializedFeedRefreshInFlight = new Map<string, Promise<MaterializedFeedEnvelope | null>>();
@@ -518,15 +521,39 @@ async function listLightweightFeed(args: FeedArgs, limit: number): Promise<FeedL
 }
 
 function canUseMaterializedFeed(args: FeedArgs): boolean {
-  return args.kind !== "following" && !args.search?.trim() && !args.postType;
+  return !args.search?.trim() && !args.postType;
 }
 
-function buildMaterializedFeedKey(kind: FeedKind): string {
-  return `feed:materialized:v3:${kind}:scope:public`;
+function isWorkerRuntime(): boolean {
+  const role =
+    process.env.PHEW_PROCESS_ROLE?.trim().toLowerCase() ||
+    process.env.PROCESS_ROLE?.trim().toLowerCase() ||
+    "";
+  return MATERIALIZED_FEED_WORKER_ROLE.has(role);
 }
 
-function buildRedisFeedKey(kind: FeedKind): string {
-  return `phew:${buildMaterializedFeedKey(kind)}`;
+function normalizeFeedKindForCache(kind: FeedKind): string {
+  return kind === "high-conviction" ? "top-calls" : kind;
+}
+
+function buildMaterializedFeedKey(kind: FeedKind, viewerId: string | null = null): string {
+  if (kind === "following") {
+    return `feed:following:${viewerId ?? "anonymous"}`;
+  }
+  return `feed:${normalizeFeedKindForCache(kind)}`;
+}
+
+function buildRedisFeedKey(kind: FeedKind, viewerId: string | null = null): string {
+  return buildMaterializedFeedKey(kind, viewerId);
+}
+
+function buildFeedRefreshBucket(nowMs = Date.now()): number {
+  return Math.floor(nowMs / MATERIALIZED_FEED_REFRESH_BUCKET_MS);
+}
+
+function buildFeedRefreshIdempotencyKey(kind: FeedKind, viewerId: string | null): string {
+  const scope = kind === "following" ? viewerId ?? "anonymous" : "public";
+  return `refresh-feed:${normalizeFeedKindForCache(kind)}:${scope}:${buildFeedRefreshBucket()}`;
 }
 
 function readMemoryEnvelope(key: string): MaterializedFeedEnvelope | null {
@@ -539,12 +566,15 @@ function readMemoryEnvelope(key: string): MaterializedFeedEnvelope | null {
   return clone(cached);
 }
 
-async function readMaterializedEnvelope(kind: FeedKind): Promise<{ envelope: MaterializedFeedEnvelope | null; source: "memory" | "redis" | null }> {
-  const key = buildMaterializedFeedKey(kind);
+async function readMaterializedEnvelope(
+  kind: FeedKind,
+  viewerId: string | null = null
+): Promise<{ envelope: MaterializedFeedEnvelope | null; source: "memory" | "redis" | null }> {
+  const key = buildMaterializedFeedKey(kind, viewerId);
   const memory = readMemoryEnvelope(key);
   if (memory && memory.result.items.length > 0) return { envelope: memory, source: "memory" };
 
-  const redisEnvelope = await cacheGetJson<MaterializedFeedEnvelope>(buildRedisFeedKey(kind));
+  const redisEnvelope = await cacheGetJson<MaterializedFeedEnvelope>(buildRedisFeedKey(kind, viewerId));
   if (redisEnvelope && redisEnvelope.result.items.length > 0 && Date.now() - redisEnvelope.cachedAtMs <= MATERIALIZED_FEED_STALE_MS) {
     materializedFeedMemory.set(key, clone(redisEnvelope));
     return { envelope: redisEnvelope, source: "redis" };
@@ -569,8 +599,67 @@ function sliceMaterializedResult(result: FeedListResult, args: FeedArgs, limit: 
   };
 }
 
-async function refreshMaterializedFeed(kind: FeedKind): Promise<MaterializedFeedEnvelope | null> {
-  const key = buildMaterializedFeedKey(kind);
+function matchesMaterializedSearch(item: EnrichedCall, search: string): boolean {
+  const needle = search.trim().replace(/^[$@]/, "").toLowerCase();
+  if (!needle) return true;
+  const record = item as unknown as {
+    content?: string | null;
+    contractAddress?: string | null;
+    tokenSymbol?: string | null;
+    tokenName?: string | null;
+    author?: {
+      username?: string | null;
+      name?: string | null;
+    } | null;
+    tokenContext?: {
+      address?: string | null;
+      symbol?: string | null;
+      name?: string | null;
+    } | null;
+  };
+  const candidates = [
+    record.content,
+    record.contractAddress,
+    record.tokenSymbol,
+    record.tokenName,
+    record.author?.username,
+    record.author?.name,
+    record.tokenContext?.address,
+    record.tokenContext?.symbol,
+    record.tokenContext?.name,
+  ];
+  return candidates.some((value) => value?.toLowerCase().includes(needle));
+}
+
+function filterMaterializedResult(result: FeedListResult, args: FeedArgs): FeedListResult {
+  const search = args.search?.trim() ?? "";
+  const filtered = result.items.filter((item) => {
+    if (args.postType && item.postType !== args.postType) return false;
+    if (search && !matchesMaterializedSearch(item, search)) return false;
+    return true;
+  });
+
+  return {
+    ...result,
+    items: filtered,
+    totalItems: filtered.length,
+    hasMore: false,
+    nextCursor: null,
+    debugCounts: result.debugCounts
+      ? {
+          ...result.debugCounts,
+          selected: filtered.length,
+          afterKindFilter: filtered.length,
+        }
+      : result.debugCounts,
+  };
+}
+
+async function refreshMaterializedFeed(
+  kind: FeedKind,
+  viewerId: string | null = null
+): Promise<MaterializedFeedEnvelope | null> {
+  const key = buildMaterializedFeedKey(kind, viewerId);
   const current = materializedFeedRefreshInFlight.get(key);
   if (current) return current;
 
@@ -586,7 +675,7 @@ async function refreshMaterializedFeed(kind: FeedKind): Promise<MaterializedFeed
       const result = await listLightweightFeed(
         {
           kind,
-          viewerId: null,
+          viewerId,
           limit: MATERIALIZED_FEED_LIMIT,
           cursor: null,
           search: null,
@@ -594,11 +683,12 @@ async function refreshMaterializedFeed(kind: FeedKind): Promise<MaterializedFeed
         },
         MATERIALIZED_FEED_LIMIT
       );
-      const existingRead = await readMaterializedEnvelope(kind);
+      const existingRead = await readMaterializedEnvelope(kind, viewerId);
       const existing = existingRead.envelope;
       if (result.items.length === 0) {
         console.warn("[feed/materialized] refresh produced no items; preserving last good", {
           kind,
+          scope: kind === "following" ? "user" : "public",
           latencyMs: Date.now() - startedAt,
           hadLastGood: Boolean(existing?.result.items.length),
           lastGoodSource: existingRead.source,
@@ -608,6 +698,7 @@ async function refreshMaterializedFeed(kind: FeedKind): Promise<MaterializedFeed
       if (existing && existing.result.items.length >= 5 && result.items.length < 5) {
         console.warn("[feed/materialized] refresh produced too few items; preserving last good", {
           kind,
+          scope: kind === "following" ? "user" : "public",
           itemCount: result.items.length,
           lastGoodItems: existing.result.items.length,
           lastGoodSource: existingRead.source,
@@ -623,9 +714,10 @@ async function refreshMaterializedFeed(kind: FeedKind): Promise<MaterializedFeed
         },
       };
       materializedFeedMemory.set(key, clone(envelope));
-      void cacheSetJson(buildRedisFeedKey(kind), envelope, MATERIALIZED_FEED_STALE_MS);
+      void cacheSetJson(buildRedisFeedKey(kind, viewerId), envelope, MATERIALIZED_FEED_STALE_MS);
       console.info("[feed/materialized] refresh complete", {
         kind,
+        scope: kind === "following" ? "user" : "public",
         itemCount: result.items.length,
         latencyMs: Date.now() - startedAt,
         selectedChartPreviews: result.debugCounts?.selectedChartPreviews ?? null,
@@ -634,6 +726,7 @@ async function refreshMaterializedFeed(kind: FeedKind): Promise<MaterializedFeed
     } catch (error) {
       console.warn("[feed/materialized] refresh failed", {
         kind,
+        scope: kind === "following" ? "user" : "public",
         latencyMs: Date.now() - startedAt,
         message: error instanceof Error ? error.message : String(error),
       });
@@ -647,11 +740,42 @@ async function refreshMaterializedFeed(kind: FeedKind): Promise<MaterializedFeed
   return request;
 }
 
-function queueMaterializedRefresh(kind: FeedKind): boolean {
-  const key = buildMaterializedFeedKey(kind);
+function queueMaterializedRefresh(kind: FeedKind, viewerId: string | null = null): boolean {
+  const key = buildMaterializedFeedKey(kind, viewerId);
   if (materializedFeedRefreshInFlight.has(key)) return false;
-  void refreshMaterializedFeed(kind);
-  return true;
+  if (Date.now() - (materializedFeedLastRefreshStartedAt.get(key) ?? 0) < MATERIALIZED_FEED_REFRESH_MIN_MS) {
+    return false;
+  }
+
+  if (hasQStashPublishConfig()) {
+    void enqueueInternalJob({
+      jobName: "feed_refresh",
+      idempotencyKey: buildFeedRefreshIdempotencyKey(kind, viewerId),
+      payload: {
+        kind,
+        viewerId: kind === "following" ? viewerId : null,
+      },
+    }).catch((error) => {
+      console.warn("[feed/materialized] refresh enqueue failed", {
+        kind,
+        scope: kind === "following" ? "user" : "public",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    });
+    materializedFeedLastRefreshStartedAt.set(key, Date.now());
+    return true;
+  }
+
+  if (isWorkerRuntime()) {
+    void refreshMaterializedFeed(kind, viewerId);
+    return true;
+  }
+
+  console.warn("[feed/materialized] refresh not queued; queue publish config missing", {
+    kind,
+    scope: kind === "following" ? "user" : "public",
+  });
+  return false;
 }
 
 async function readLatestRankedEnvelope(excludeKind?: FeedKind): Promise<{ envelope: MaterializedFeedEnvelope | null; source: "memory" | "redis" | null }> {
@@ -668,52 +792,25 @@ export async function listMaterializedFeedCalls(args: FeedArgs): Promise<Materia
   const startedAt = Date.now();
   const limit = Math.max(1, Math.min(40, args.limit ?? 10));
 
-  if (args.kind === "following") {
-    const result = await listLightweightFeed(args, limit);
-    console.info("[feed/materialized] following lightweight read", {
-      viewerId: args.viewerId,
-      selected: result.items.length,
-      hasMore: result.hasMore,
-      latencyMs: Date.now() - startedAt,
-    });
-    return {
-      ...result,
-      materialized: {
-        source: "following-db",
-        cacheState: "direct",
-        refreshQueued: false,
-        latencyMs: Date.now() - startedAt,
-      },
-    };
-  }
-
-  if (!canUseMaterializedFeed(args)) {
-    const result = await listLightweightFeed(args, limit);
-    return {
-      ...result,
-      materialized: {
-        source: "stored-db",
-        cacheState: "direct",
-        refreshQueued: false,
-        latencyMs: Date.now() - startedAt,
-      },
-    };
-  }
-
-  const { envelope, source } = await readMaterializedEnvelope(args.kind);
+  const readViewerId = args.kind === "following" ? args.viewerId : null;
+  const { envelope, source } = await readMaterializedEnvelope(args.kind, readViewerId);
   const ageMs = envelope ? Date.now() - envelope.cachedAtMs : null;
   const cacheState = envelope && ageMs !== null && ageMs <= MATERIALIZED_FEED_TTL_MS ? "fresh" : envelope ? "stale" : "missing";
   let refreshQueued = false;
 
   if (cacheState !== "fresh") {
-    refreshQueued = queueMaterializedRefresh(args.kind);
+    refreshQueued = queueMaterializedRefresh(args.kind, readViewerId);
   }
 
   if (envelope) {
-    const result = sliceMaterializedResult(envelope.result, args, limit);
+    const filteredEnvelopeResult = canUseMaterializedFeed(args)
+      ? envelope.result
+      : filterMaterializedResult(envelope.result, args);
+    const result = sliceMaterializedResult(filteredEnvelopeResult, args, limit);
     const envelopeSource = source ?? "memory";
     console.info("[feed/materialized] read", {
       kind: args.kind,
+      scope: args.kind === "following" ? "user" : "public",
       source: envelopeSource,
       cacheState: cacheState === "fresh" ? "fresh" : "stale",
       ageMs,
@@ -735,7 +832,10 @@ export async function listMaterializedFeedCalls(args: FeedArgs): Promise<Materia
 
   const latestRanked = await readLatestRankedEnvelope(args.kind);
   if (latestRanked.envelope) {
-    const result = sliceMaterializedResult(latestRanked.envelope.result, { ...args, cursor: null }, limit);
+    const fallbackResult = canUseMaterializedFeed(args)
+      ? latestRanked.envelope.result
+      : filterMaterializedResult(latestRanked.envelope.result, { ...args, cursor: null });
+    const result = sliceMaterializedResult(fallbackResult, { ...args, cursor: null }, limit);
     console.info("[feed/materialized] cold tab served latest ranked inventory while warming", {
       kind: args.kind,
       source: latestRanked.source ?? "memory",
@@ -755,35 +855,33 @@ export async function listMaterializedFeedCalls(args: FeedArgs): Promise<Materia
     };
   }
 
-  const direct = await listLightweightFeed({ ...args, limit }, limit);
-  if (direct.items.length > 0) {
-    console.info("[feed/materialized] cold cache served stored ranked feed while warming", {
-      kind: args.kind,
-      selected: direct.items.length,
-      refreshQueued,
-      latencyMs: Date.now() - startedAt,
-    });
-    return {
-      ...direct,
-      materialized: {
-        source: "stored-db",
-        cacheState: "warming",
-        refreshQueued,
-        latencyMs: Date.now() - startedAt,
-      },
-    };
-  }
-
   console.warn("[feed/materialized] no stored feed inventory available", {
     kind: args.kind,
     refreshQueued,
     latencyMs: Date.now() - startedAt,
   });
+  const empty: FeedListResult = {
+    items: [],
+    hasMore: false,
+    nextCursor: null,
+    totalItems: 0,
+    degraded: true,
+    debugCounts: {
+      backendReturned: 0,
+      afterKindFilter: 0,
+      afterRanking: 0,
+      selected: 0,
+      alphaCandidates: 0,
+      selectedCallCandidates: 0,
+      selectedChartPreviews: 0,
+      hidden: 0,
+    },
+  };
   return {
-    ...direct,
+    ...empty,
     materialized: {
-      source: "stored-db",
-      cacheState: "direct",
+      source: "empty",
+      cacheState: "missing",
       refreshQueued,
       latencyMs: Date.now() - startedAt,
     },
@@ -794,6 +892,37 @@ export function prewarmMaterializedFeeds(): void {
   for (const kind of MATERIALIZED_FEED_KINDS) {
     queueMaterializedRefresh(kind);
   }
+}
+
+export async function runMaterializedFeedRefreshJob(args: {
+  kind?: FeedKind | null;
+  viewerId?: string | null;
+}): Promise<{
+  refreshed: number;
+  skipped: number;
+  itemCount: number;
+}> {
+  const kinds = args.kind ? [args.kind] : MATERIALIZED_FEED_KINDS;
+  let refreshed = 0;
+  let skipped = 0;
+  let itemCount = 0;
+
+  for (const kind of kinds) {
+    const viewerId = kind === "following" ? args.viewerId ?? null : null;
+    if (kind === "following" && !viewerId) {
+      skipped += 1;
+      continue;
+    }
+    const envelope = await refreshMaterializedFeed(kind, viewerId);
+    if (envelope?.result.items.length) {
+      refreshed += 1;
+      itemCount += envelope.result.items.length;
+    } else {
+      skipped += 1;
+    }
+  }
+
+  return { refreshed, skipped, itemCount };
 }
 
 export function startMaterializedFeedPrewarmLoop(opts?: { canRun?: () => boolean }): void {

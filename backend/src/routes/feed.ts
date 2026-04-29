@@ -74,10 +74,13 @@ feedRouter.get("/:kind", zValidator("query", FeedQuerySchema), async (c) => {
   const kind =
     rawKind === "latest" ||
     rawKind === "hot-alpha" ||
+    rawKind === "top-calls" ||
     rawKind === "early-runners" ||
     rawKind === "high-conviction" ||
     rawKind === "following"
-      ? rawKind
+      ? rawKind === "top-calls"
+        ? "high-conviction"
+        : rawKind
       : null;
 
   if (!kind) {

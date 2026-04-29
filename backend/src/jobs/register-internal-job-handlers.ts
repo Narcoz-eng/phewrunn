@@ -5,11 +5,15 @@ import {
 } from "../lib/job-queue.js";
 import {
   runIntelligenceRefreshJob,
+  runChartRefreshJob,
   runMarketRefreshJob,
   runPostCreateFanout,
   runSettlementJob,
 } from "../routes/posts.js";
+import { runDiscoverySidebarRefreshJob } from "../routes/discovery.js";
 import { runLeaderboardStatsRefresh } from "../routes/leaderboard.js";
+import { runMaterializedFeedRefreshJob } from "../services/materialized-feed.js";
+import { refreshFeedChartPreview } from "../services/feed-chart-preview.js";
 import {
   sendPushToUserNow,
   sendPushToUsersNow,
@@ -39,6 +43,20 @@ const pushDeliveryPayloadSchema = z.object({
 const maintenanceReasonPayloadSchema = z.object({
   reason: z.string().min(1).max(160).optional(),
 });
+const feedRefreshPayloadSchema = maintenanceReasonPayloadSchema.extend({
+  kind: z.enum(["latest", "hot-alpha", "early-runners", "high-conviction", "following"]).nullable().optional(),
+  viewerId: z.string().min(1).nullable().optional(),
+});
+const chartRefreshPayloadSchema = maintenanceReasonPayloadSchema.extend({
+  purpose: z.enum(["feed-preview", "candles"]).optional(),
+  tokenAddress: z.string().min(1).nullable().optional(),
+  pairAddress: z.string().min(1).nullable().optional(),
+  poolAddress: z.string().min(1).nullable().optional(),
+  chainType: z.enum(["solana", "evm", "ethereum"]).nullable().optional(),
+  timeframe: z.enum(["minute", "hour", "day"]).optional(),
+  aggregate: z.number().int().min(1).max(240).optional(),
+  limit: z.number().int().min(20).max(720).optional(),
+});
 const settlementPayloadSchema = maintenanceReasonPayloadSchema.extend({
   postId: z.string().min(1).max(128).optional(),
 });
@@ -60,6 +78,56 @@ export function registerInternalJobHandlers(): void {
     return;
   }
   handlersRegistered = true;
+
+  registerInternalJobHandler("feed_refresh", async ({ envelope }) => {
+    const payload = feedRefreshPayloadSchema.parse(envelope.payload);
+    const result = await runMaterializedFeedRefreshJob({
+      kind: payload.kind ?? null,
+      viewerId: payload.viewerId ?? null,
+    });
+    return coerceResult(result);
+  });
+
+  registerInternalJobHandler("sidebar_refresh", async ({ envelope }) => {
+    maintenanceReasonPayloadSchema.parse(envelope.payload);
+    const data = await runDiscoverySidebarRefreshJob();
+    return coerceResult({
+      topGainers: data?.topGainers.length ?? 0,
+      trendingCalls: data?.trendingCalls.length ?? 0,
+      whaleRows: data?.whaleActivity.length ?? 0,
+    });
+  });
+
+  registerInternalJobHandler("chart_refresh", async ({ envelope }) => {
+    const payload = chartRefreshPayloadSchema.parse(envelope.payload);
+    if (payload.purpose === "feed-preview") {
+      const result = await refreshFeedChartPreview({
+        tokenAddress: payload.tokenAddress ?? null,
+        pairAddress: payload.pairAddress ?? payload.poolAddress ?? null,
+        chainType: payload.chainType ?? null,
+      });
+      return coerceResult({
+        state: result.state,
+        source: result.source,
+        candles: result.candles?.length ?? 0,
+      });
+    }
+
+    const result = await runChartRefreshJob({
+      tokenAddress: payload.tokenAddress ?? undefined,
+      poolAddress: payload.poolAddress ?? payload.pairAddress ?? undefined,
+      chainType: payload.chainType ?? undefined,
+      timeframe: payload.timeframe ?? "minute",
+      aggregate: payload.aggregate ?? 5,
+      limit: payload.limit ?? 260,
+    });
+    return coerceResult({
+      refreshed: result.refreshed,
+      source: result.source,
+      candles: result.candles,
+      skippedReason: result.skippedReason,
+    });
+  });
 
   registerInternalJobHandler("post_fanout", async ({ envelope }) => {
     const payload = postFanoutPayloadSchema.parse(envelope.payload);

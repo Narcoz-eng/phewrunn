@@ -11,6 +11,7 @@
  * instead of the current lazy update pattern on feed fetch.
  */
 import { dexscreenerCircuit } from "../lib/circuit-breaker.js";
+import { cacheGetJson, cacheSetJson } from "../lib/redis.js";
 
 // Tracking mode constants
 export const TRACKING_MODE_ACTIVE = 'active';
@@ -30,6 +31,7 @@ const BASE_DELAY_MS = 350;
 const MAX_DELAY_MS = 3000;
 const REQUEST_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 1400 : 1800;
 const MARKETCAP_SNAPSHOT_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 8_000 : 3_000;
+const MARKETCAP_SNAPSHOT_REDIS_TTL_MS = process.env.NODE_ENV === "production" ? 30_000 : 15_000;
 
 // Simple in-memory rate limiter
 let lastRequestTime = 0;
@@ -296,6 +298,10 @@ function buildMarketSnapshotCacheKey(address: string, chainType?: string | null)
   return `${normalizedChain}:${address.trim().toLowerCase()}`;
 }
 
+function buildMarketSnapshotRedisKey(address: string, chainType?: string | null): string {
+  return `market:${address.trim().toLowerCase()}:${normalizeDexChain(chainType) ?? inferDexChainFromAddress(address) ?? "unknown"}`;
+}
+
 function cloneMarketCapResult(result: MarketCapResult): MarketCapResult {
   return { ...result };
 }
@@ -452,6 +458,11 @@ export async function getCachedMarketCapSnapshot(
     };
   }
 
+  const redisCached = await readCachedMarketCapSnapshotOnly(address, chainType);
+  if (redisCached) {
+    return redisCached;
+  }
+
   const inFlight = marketSnapshotInFlight.get(cacheKey);
   if (inFlight) {
     const result = cloneMarketCapResult(await inFlight);
@@ -477,6 +488,11 @@ export async function getCachedMarketCapSnapshot(
         expiresAtMs: fetchedAtMs + MARKETCAP_SNAPSHOT_CACHE_TTL_MS,
         fetchedAtMs,
       });
+      void cacheSetJson(
+        buildMarketSnapshotRedisKey(address, chainType),
+        { fetchedAtMs, result: enriched },
+        MARKETCAP_SNAPSHOT_REDIS_TTL_MS
+      );
       return enriched;
     })
     .finally(() => {
@@ -485,6 +501,47 @@ export async function getCachedMarketCapSnapshot(
 
   marketSnapshotInFlight.set(cacheKey, request);
   return cloneMarketCapResult(await request);
+}
+
+export async function readCachedMarketCapSnapshotOnly(
+  address: string,
+  chainType?: string | null
+): Promise<MarketCapResult | null> {
+  const cacheKey = buildMarketSnapshotCacheKey(address, chainType);
+  const now = Date.now();
+  const cached = marketSnapshotCache.get(cacheKey);
+  if (cached && cached.expiresAtMs > now) {
+    return {
+      ...cloneMarketCapResult(cached.result),
+      source: cached.result.source ?? "dexscreener",
+      fetchedAt: new Date(cached.fetchedAtMs).toISOString(),
+      cacheStatus: "hit",
+    };
+  }
+
+  const redisCached = await cacheGetJson<{
+    fetchedAtMs: number;
+    result: MarketCapResult;
+  }>(buildMarketSnapshotRedisKey(address, chainType));
+  if (!redisCached?.result || typeof redisCached.fetchedAtMs !== "number") {
+    return null;
+  }
+  if (now - redisCached.fetchedAtMs > MARKETCAP_SNAPSHOT_REDIS_TTL_MS) {
+    return null;
+  }
+
+  setMarketSnapshotCacheEntry(cacheKey, {
+    result: redisCached.result,
+    expiresAtMs: redisCached.fetchedAtMs + MARKETCAP_SNAPSHOT_CACHE_TTL_MS,
+    fetchedAtMs: redisCached.fetchedAtMs,
+  });
+
+  return {
+    ...cloneMarketCapResult(redisCached.result),
+    source: redisCached.result.source ?? "dexscreener",
+    fetchedAt: new Date(redisCached.fetchedAtMs).toISOString(),
+    cacheStatus: "hit",
+  };
 }
 
 /**

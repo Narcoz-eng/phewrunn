@@ -4,7 +4,10 @@ import { z } from "zod";
 import { type AuthVariables, requireAuth, requireNotBanned } from "../auth.js";
 import { cacheGetJson, cacheSetJson, redisDelete } from "../lib/redis.js";
 import { isPrismaPoolPressureActive, isTransientPrismaError, prisma } from "../prisma.js";
-import { getCachedMarketCapSnapshot, type MarketCapResult } from "../services/marketcap.js";
+import {
+  readCachedMarketCapSnapshotOnly,
+  type MarketCapResult,
+} from "../services/marketcap.js";
 import {
   analyzeSolanaTokenDistribution,
   peekCachedSolanaTokenDistribution,
@@ -16,9 +19,8 @@ import {
 } from "../services/intelligence/engine.js";
 import { loadTokenSocialSignals } from "../services/token-social-signals.js";
 import {
-  buildTerminalDepthPayload,
-  fetchBestChartCandles,
-  loadChartTrades,
+  queueChartCandlesRefresh,
+  readCachedChartCandles,
 } from "./posts.js";
 import {
   computeStateAwareIntelligenceScores,
@@ -466,7 +468,7 @@ async function loadTokenChartHistory(
         },
         orderBy: { capturedAt: "asc" },
       }),
-      getCachedMarketCapSnapshot(token.address, token.chainType).catch(() => null),
+      readCachedMarketCapSnapshotOnly(token.address, token.chainType).catch(() => null),
     ]);
 
     const historyPoints: TokenRoutePayload["chart"] = snapshots.map((snapshot) => ({
@@ -1010,7 +1012,10 @@ tokensRouter.get(
           : !cachedDistribution && (!token || !hasStoredSolanaDistributionTelemetry(token)));
 
       const [marketSnapshot, distributionSnapshot, recentSignalCalls, snapshotHistory] = await Promise.all([
-        getCachedMarketCapSnapshot(tokenAddress, chainType),
+        readCachedMarketCapSnapshotOnly(tokenAddress, chainType).then(
+          (snapshot) => snapshot ?? terminalMarketFallback(new Error("Cached market snapshot is not ready.")),
+          (error) => terminalMarketFallback(error)
+        ),
         shouldRunLiveDistributionScan
           ? analyzeSolanaTokenDistribution(tokenAddress, token?.liquidity ?? null, {
               preferFresh: shouldPreferFreshDistribution,
@@ -1543,45 +1548,33 @@ tokensRouter.get(
 
     const token = overview.token;
     const chartRequest = toTerminalInterval(timeframe);
-    const normalizedChain = token.chainType === "solana" ? "solana" : "ethereum";
+    const normalizedChain: "solana" | "ethereum" = token.chainType === "solana" ? "solana" : "ethereum";
+    const chartPayload: Parameters<typeof readCachedChartCandles>[0] = {
+      tokenAddress: token.address,
+      poolAddress: token.pairAddress ?? undefined,
+      chainType: normalizedChain,
+      timeframe: chartRequest.timeframe,
+      aggregate: chartRequest.aggregate,
+      limit: chartRequest.limit,
+    };
 
     const [marketSnapshot, chartResultSettled, tradeResultSettled, depthResultSettled, marketStrip, activeRaids, community] =
       await Promise.all([
-        getCachedMarketCapSnapshot(token.address, token.chainType).catch((error) => terminalMarketFallback(error)),
-        fetchBestChartCandles({
-          tokenAddress: token.address,
-          poolAddress: token.pairAddress ?? undefined,
-          chainType: normalizedChain,
-          timeframe: chartRequest.timeframe,
-          aggregate: chartRequest.aggregate,
-          limit: chartRequest.limit,
-        }).then(
-          (result) => ({ ok: true as const, result }),
-          (error) => ({ ok: false as const, error: error instanceof Error ? error.message : String(error) })
+        readCachedMarketCapSnapshotOnly(token.address, token.chainType).then(
+          (snapshot) => snapshot ?? terminalMarketFallback(new Error("Cached market snapshot is not ready.")),
+          (error) => terminalMarketFallback(error)
         ),
-        loadChartTrades({
-          tokenAddress: token.address,
-          pairAddress: token.pairAddress ?? undefined,
-          chainType: normalizedChain,
-          limit: 40,
-        }).then(
-          (trades) => ({ ok: true as const, trades }),
-          (error) => ({ ok: false as const, error: error instanceof Error ? error.message : String(error), trades: [] })
-        ),
-        normalizedChain === "solana"
-          ? buildTerminalDepthPayload({
-              tokenMint: token.address,
-              chainType: "solana",
-              pairAddress: token.pairAddress ?? undefined,
-            }).then(
-              (depth) => ({ ok: true as const, depth }),
-              (error) => ({ ok: false as const, error: error instanceof Error ? error.message : String(error), depth: null })
-            )
-          : Promise.resolve({
-              ok: false as const,
-              error: "Depth approximation currently requires a Solana Jupiter route.",
-              depth: null,
-            }),
+        readCachedChartCandles(chartPayload, { allowStale: true }).then((result) => {
+          if (result) return { ok: true as const, result };
+          queueChartCandlesRefresh(chartPayload, "terminal-cache-miss");
+          return { ok: false as const, error: "Cached candles are not ready." };
+        }),
+        Promise.resolve({ ok: false as const, error: "Trade refresh runs in the worker.", trades: [] }),
+        Promise.resolve({
+          ok: false as const,
+          error: "Depth refresh runs in the worker.",
+          depth: null,
+        }),
         prisma.token.findMany({
           orderBy: [{ highConvictionScore: "desc" }, { volume24h: "desc" }, { updatedAt: "desc" }],
           take: 6,
@@ -1774,10 +1767,10 @@ tokensRouter.get(
           },
           marketFlow: {
             mode: depthMode,
-            bids: depthResultSettled.depth?.bids ?? [],
-            asks: depthResultSettled.depth?.asks ?? [],
-            spread: depthResultSettled.depth?.spread ?? null,
-            depthSeries: depthResultSettled.depth?.depthSeries ?? [],
+            bids: [],
+            asks: [],
+            spread: null,
+            depthSeries: [],
             recentTrades: trades,
             coverage: {
               depth: terminalCoverage(

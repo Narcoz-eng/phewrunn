@@ -144,17 +144,24 @@ const IS_SERVERLESS_RUNTIME =
   !!process.env.AWS_LAMBDA_FUNCTION_NAME ||
   !!process.env.K_SERVICE ||
   !!process.env.FUNCTIONS_WORKER_RUNTIME;
+const PROCESS_ROLE =
+  process.env.PHEW_PROCESS_ROLE?.trim().toLowerCase() ||
+  process.env.PROCESS_ROLE?.trim().toLowerCase() ||
+  "api";
+const IS_WORKER_PROCESS = PROCESS_ROLE === "worker" || PROCESS_ROLE === "jobs" || PROCESS_ROLE === "queue";
+const INTERNAL_JOBS_ON_API_ENABLED =
+  process.env.INTERNAL_JOBS_ON_API_ENABLED?.trim().toLowerCase() === "true";
 const INTELLIGENCE_PRIORITY_LOOP_ENABLED = (() => {
   const raw = process.env.INTELLIGENCE_PRIORITY_LOOP_ENABLED?.trim().toLowerCase();
   if (raw === "true") return true;
   if (raw === "false") return false;
-  return !(process.env.NODE_ENV === "production" && IS_SERVERLESS_RUNTIME);
+  return IS_WORKER_PROCESS && !(process.env.NODE_ENV === "production" && IS_SERVERLESS_RUNTIME);
 })();
 const BACKGROUND_MAINTENANCE_LOOP_ENABLED = (() => {
   const raw = process.env.BACKGROUND_MAINTENANCE_LOOP_ENABLED?.trim().toLowerCase();
   if (raw === "true") return true;
   if (raw === "false") return false;
-  return !(process.env.NODE_ENV === "production" && IS_SERVERLESS_RUNTIME);
+  return IS_WORKER_PROCESS && !(process.env.NODE_ENV === "production" && IS_SERVERLESS_RUNTIME);
 })();
 const INTELLIGENCE_PRIORITY_AUTH_QUIET_MS = process.env.NODE_ENV === "production" ? 10_000 : 5_000;
 let lastAuthSensitiveRequestAt = Date.now();
@@ -3808,7 +3815,21 @@ app.route("/api/announcements", announcementsRouter);
 app.route("/api/leaderboard", leaderboardRouter);
 app.route("/api/invites", invitesRouter);
 app.route("/api/admin", adminInvitesRouter);
-app.route("/api/internal/jobs", internalJobsRouter);
+if (IS_WORKER_PROCESS || INTERNAL_JOBS_ON_API_ENABLED) {
+  app.route("/api/internal/jobs", internalJobsRouter);
+} else {
+  app.all("/api/internal/jobs/*", (c) =>
+    c.json(
+      {
+        error: {
+          message: "Internal jobs are served by the worker process.",
+          code: "JOBS_RUN_ON_WORKER",
+        },
+      },
+      404
+    )
+  );
+}
 
 app.get("/api/realtime", (c) =>
   c.json(
@@ -3867,6 +3888,8 @@ console.log(`
 ====================================
   Port: ${port}
   Environment: ${process.env.NODE_ENV || "development"}
+  Process role: ${PROCESS_ROLE}
+  Internal jobs: ${IS_WORKER_PROCESS || INTERNAL_JOBS_ON_API_ENABLED ? "mounted" : "worker-only"}
   Database: ${databaseLabel}
   Auth: Better Auth (email/password)
 ====================================

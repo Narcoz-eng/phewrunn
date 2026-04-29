@@ -7,8 +7,8 @@ import { isRedisFastForHotPath, redisGetString, redisSetString } from "./lib/red
  * Production Recommendations:
  * - Use a connection pool (PgBouncer for PostgreSQL)
  * - For serverless runtimes, keep Prisma's application-side pool bounded.
- *   Use a small pool with Supabase transaction pooling; connection_limit=1
- *   serializes independent reads and causes request-path starvation.
+ *   This deployment can run against a Supabase pooler constrained to a single
+ *   connection, so request paths must avoid fan-out and heavy work.
  * - Use Supavisor/PgBouncer transaction mode for short-lived/serverless traffic.
  * - Enable SSL for production databases
  * - Use read replicas for read-heavy workloads
@@ -38,12 +38,12 @@ function getPositiveIntEnv(name: string): number | null {
 
 function resolveRuntimeConnectionLimit(configuredLimit: number | null): number {
   if (isServerlessRuntime) {
-    const requestedLimit = configuredLimit ?? 3;
+    const requestedLimit = configuredLimit ?? 1;
     const safeUpperBound = isProduction ? 5 : 5;
     return Math.max(1, Math.min(requestedLimit, safeUpperBound));
   }
 
-  return configuredLimit ?? (isProduction ? 10 : 5);
+  return configuredLimit ?? 1;
 }
 
 function normalizeDatabaseUrl(
