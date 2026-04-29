@@ -175,7 +175,18 @@ function compact(value: number | null | undefined): string {
   }).format(value);
 }
 
-const NOISY_FEED_REASONS = new Set(["Market freshness limited", "Age-decayed", "Alpha priority", "Drawdown adjusted", "Risk adjusted"]);
+const NOISY_FEED_REASONS = new Set([
+  "Market freshness limited",
+  "Age-decayed",
+  "Alpha priority",
+  "Drawdown adjusted",
+  "Risk adjusted",
+  "Cached social read",
+]);
+
+function isInternalFeedReason(reason: string): boolean {
+  return /cached|fallback|source|debug|provider|hydrating|async/i.test(reason);
+}
 
 function timeAgo(value: string): string {
   const timestamp = new Date(value).getTime();
@@ -214,10 +225,10 @@ function cardClass(kind: ReturnType<typeof payloadKind>, coverage?: FeedCoverage
     call: "",
     chart: "rounded-[18px] border border-cyan-300/14 bg-[radial-gradient(circle_at_top_right,rgba(34,211,238,0.10),transparent_28%),linear-gradient(180deg,rgba(5,13,18,0.98),rgba(3,8,11,0.99))] p-4",
     whale: "rounded-[18px] border border-cyan-300/16 bg-[linear-gradient(180deg,rgba(4,12,17,0.98),rgba(3,8,11,0.99))] p-4",
-    poll: "rounded-[18px] border border-violet-300/14 bg-[linear-gradient(180deg,rgba(9,8,18,0.98),rgba(4,5,11,0.99))] p-4",
+    poll: "rounded-[16px] border border-violet-300/12 bg-[linear-gradient(180deg,rgba(9,8,18,0.96),rgba(4,5,11,0.99))] p-3",
     raid: "rounded-[18px] border border-lime-300/16 bg-[linear-gradient(180deg,rgba(7,12,17,0.98),rgba(3,8,11,0.99))] p-4",
     news: "rounded-[18px] border border-amber-300/14 bg-[linear-gradient(180deg,rgba(12,10,6,0.98),rgba(7,7,5,0.99))] p-4",
-    discussion: "rounded-[18px] border border-white/8 bg-[linear-gradient(180deg,rgba(7,12,17,0.98),rgba(3,8,11,0.99))] p-4",
+    discussion: "rounded-[16px] border border-white/8 bg-[linear-gradient(180deg,rgba(7,12,17,0.96),rgba(3,8,11,0.99))] p-3",
     unavailable: "rounded-[18px] border border-white/8 bg-[linear-gradient(180deg,rgba(7,12,17,0.94),rgba(3,8,11,0.98))] p-4",
   };
   return byKind[kind];
@@ -269,7 +280,7 @@ function PostContextStrip({ post }: { post: Post }) {
   }
   for (const reason of post.scoreReasons ?? post.feedReasons ?? []) {
     if (context.length >= 3) break;
-    if (reason && !NOISY_FEED_REASONS.has(reason) && !context.includes(reason)) context.push(reason);
+    if (reason && !NOISY_FEED_REASONS.has(reason) && !isInternalFeedReason(reason) && !context.includes(reason)) context.push(reason);
   }
   if (!context.length) return null;
   return (
@@ -285,7 +296,7 @@ function PostContextStrip({ post }: { post: Post }) {
 
 function WhyShown({ post }: { post: Post }) {
   const reasons = Array.from(new Set(post.scoreReasons ?? post.feedReasons ?? []))
-    .filter((reason) => Boolean(reason) && !NOISY_FEED_REASONS.has(reason))
+    .filter((reason) => Boolean(reason) && !NOISY_FEED_REASONS.has(reason) && !isInternalFeedReason(reason))
     .slice(0, 3);
   if (!reasons.length) return null;
   return (
@@ -499,56 +510,6 @@ function AiDecisionPanel({ post, convictionLabel, confidence, compact = false }:
   );
 }
 
-function PlaceholderCandles({ id, dominant = false, className }: { id: string; dominant?: boolean; className?: string }) {
-  const width = 520;
-  const priceHeight = dominant ? 188 : 128;
-  const volumeHeight = dominant ? 42 : 28;
-  const gap = 10;
-  const height = priceHeight + volumeHeight + gap;
-  const candles = Array.from({ length: 28 }, (_, index) => {
-    const wave = Math.sin(index * 0.62) * 14 + Math.cos(index * 0.31) * 8;
-    const center = priceHeight * 0.56 - wave;
-    const body = 8 + (index % 5) * 3;
-    const high = Math.max(8, center - body - 9 - (index % 3) * 3);
-    const low = Math.min(priceHeight - 8, center + body + 10 + (index % 4) * 2);
-    const bullish = index % 3 !== 1;
-    return { high, low, open: center + (bullish ? body / 2 : -body / 2), close: center + (bullish ? -body / 2 : body / 2), bullish, volume: 0.2 + ((index * 17) % 11) / 12 };
-  });
-  const step = width / candles.length;
-  const bodyWidth = Math.max(4, Math.min(9, step * 0.52));
-  const gradientId = `placeholder-volume-${id}`;
-
-  return (
-    <svg viewBox={`0 0 ${width} ${height}`} className={cn("w-full", dominant ? "h-60" : "h-40", className)} role="img" aria-label="Candlestick chart preview">
-      <defs>
-        <linearGradient id={gradientId} x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%" stopColor="rgba(169,255,52,0.24)" />
-          <stop offset="100%" stopColor="rgba(18,215,170,0.05)" />
-        </linearGradient>
-      </defs>
-      {[0.18, 0.36, 0.54, 0.72, 0.9].map((ratio) => (
-        <line key={ratio} x1="0" x2={width} y1={priceHeight * ratio} y2={priceHeight * ratio} stroke="rgba(255,255,255,0.055)" strokeWidth="1" />
-      ))}
-      {Array.from({ length: 6 }, (_, index) => (
-        <line key={`v-${index}`} x1={(width / 5) * index} x2={(width / 5) * index} y1="0" y2={priceHeight} stroke="rgba(255,255,255,0.035)" strokeWidth="1" />
-      ))}
-      {candles.map((candle, index) => {
-        const x = index * step + step / 2;
-        const color = candle.bullish ? "rgba(169,255,52,0.26)" : "rgba(255,82,82,0.20)";
-        const bodyY = Math.min(candle.open, candle.close);
-        const bodyH = Math.max(3, Math.abs(candle.close - candle.open));
-        return (
-          <g key={index}>
-            <line x1={x} x2={x} y1={candle.high} y2={candle.low} stroke={color} strokeWidth="1.15" />
-            <rect x={x - bodyWidth / 2} y={bodyY} width={bodyWidth} height={bodyH} rx="1.4" fill={color} />
-            <rect x={x - bodyWidth / 2} y={priceHeight + gap + volumeHeight * (1 - candle.volume)} width={bodyWidth} height={Math.max(1, volumeHeight * candle.volume)} rx="1" fill={candle.bullish ? `url(#${gradientId})` : "rgba(255,82,82,0.10)"} />
-          </g>
-        );
-      })}
-    </svg>
-  );
-}
-
 function ChartPreviewState({ post, reason, dominant = false, compact = false }: { post: Post; reason: string; dominant?: boolean; compact?: boolean }) {
   const payloadPreview = post.payload?.call?.chartPreview ?? post.payload?.chart?.chartPreview ?? null;
   const token = post.payload?.call?.token ?? post.payload?.chart?.token ?? post.tokenContext ?? null;
@@ -628,7 +589,6 @@ function ChartPreviewState({ post, reason, dominant = false, compact = false }: 
             {movePct === null ? "live" : formatMetric(movePct, "pct")}
           </span>
         </div>
-        {!compact ? <PlaceholderCandles id={post.id.replace(/[^a-zA-Z0-9_-]/g, "")} dominant={dominant} className="absolute inset-x-3 bottom-3 opacity-45" /> : null}
         <svg viewBox={`0 0 ${width} ${height}`} className={cn("relative w-full animate-fade-in", dominant ? "h-60" : compact ? "h-28" : "h-40")} role="img" aria-label="Candlestick chart preview">
           <defs>
             <linearGradient id={`volume-${post.id}`} x1="0" x2="0" y1="0" y2="1">
@@ -679,21 +639,19 @@ function ChartPreviewState({ post, reason, dominant = false, compact = false }: 
       <div ref={containerRef} className="mt-0 flex items-center justify-between gap-3 bg-[#03080a] px-3 py-2">
         <div className="min-w-0">
           <div className="truncate text-xs font-semibold text-white/56">{post.tokenContext?.symbol ? `$${post.tokenContext.symbol}` : "Market"} preview</div>
-          <div className="mt-0.5 truncate text-[11px] text-white/34">{preview?.unavailableReason ?? post.coverage?.candles.unavailableReason ?? reason}</div>
+          <div className="mt-0.5 truncate text-[11px] text-white/34">Chart unavailable for this setup.</div>
         </div>
-        <span className="shrink-0 rounded-full border border-white/8 bg-white/[0.035] px-2 py-0.5 text-[10px] font-semibold text-white/40">Compact</span>
+        <span className="shrink-0 rounded-full border border-white/8 bg-white/[0.035] px-2 py-0.5 text-[10px] font-semibold text-white/40">No chart</span>
       </div>
     );
   }
   return (
-    <div ref={containerRef} className={cn("mt-0 overflow-hidden bg-[#03080a] px-3 pb-3 pt-2", dominant ? "min-h-[260px]" : "min-h-[172px]")}>
-      <div className="mb-2 flex items-center justify-between gap-3 text-xs">
-        <span className="font-semibold text-white/62">{post.tokenContext?.symbol ? `$${post.tokenContext.symbol}` : "Market"} / USD</span>
-        <span className="rounded-full border border-white/8 bg-white/[0.035] px-2 py-0.5 text-white/40">Early setup</span>
+    <div ref={containerRef} className="mt-0 flex items-center justify-between gap-3 bg-[#03080a] px-3 py-3">
+      <div className="min-w-0">
+        <div className="truncate text-xs font-semibold text-white/58">{post.tokenContext?.symbol ? `$${post.tokenContext.symbol}` : "Market"} preview</div>
+        <div className="mt-0.5 truncate text-[11px] text-white/36">Chart unavailable for this setup.</div>
       </div>
-      <div className="relative overflow-hidden bg-[linear-gradient(180deg,rgba(169,255,52,0.035),rgba(255,255,255,0.012))]" aria-label={post.coverage?.candles.unavailableReason || reason}>
-        <PlaceholderCandles id={post.id.replace(/[^a-zA-Z0-9_-]/g, "")} dominant={dominant} />
-      </div>
+      <span className="shrink-0 rounded-full border border-white/8 bg-white/[0.035] px-2 py-0.5 text-[10px] font-semibold text-white/40">No chart</span>
     </div>
   );
 }
@@ -843,13 +801,13 @@ function FeedPostPollCard(props: FeedV2PostCardProps) {
     <article className={cardClass("poll", post.coverage?.signal)}>
       <PostContextStrip post={post} />
       <PostHeader post={post} badge="Poll" />
-      <div className="mt-4 flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.18em] text-violet-200/72">
+      <div className="mt-3 flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.18em] text-violet-200/72">
         <Vote className="h-4 w-4" />
         Community poll
       </div>
-      <h2 className="mt-1 text-xl font-semibold text-white">{post.content}</h2>
+      <h2 className="mt-1 line-clamp-2 text-base font-semibold text-white">{post.content}</h2>
       {poll?.options.length ? (
-        <div className="mt-4 space-y-2">
+        <div className="mt-3 space-y-2">
           {poll.options.map((option) => {
             const selected = poll.viewerOptionId === option.id;
             return (
@@ -861,7 +819,7 @@ function FeedPostPollCard(props: FeedV2PostCardProps) {
                 }}
                 disabled={expired || selected}
                 className={cn(
-                  "relative w-full overflow-hidden rounded-[14px] border px-3 py-2.5 text-left transition",
+                  "relative w-full overflow-hidden rounded-[12px] border px-3 py-2 text-left transition",
                   selected ? "border-lime-300/32 bg-lime-300/[0.08]" : "border-white/8 bg-white/[0.03] hover:border-lime-300/20 hover:bg-white/[0.05]",
                   expired && "cursor-not-allowed opacity-70"
                 )}
@@ -932,8 +890,8 @@ function FeedPostDiscussionCard(props: FeedV2PostCardProps) {
     <article className={cardClass("discussion", post.coverage?.signal)}>
       <PostContextStrip post={post} />
       <PostHeader post={post} badge="Discussion" />
-      <div className="mt-3 rounded-[14px] bg-white/[0.026] px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]">
-        <p className="line-clamp-3 text-sm leading-6 text-white/72">{post.payload?.discussion?.body ?? post.content}</p>
+      <div className="mt-2 rounded-[12px] bg-white/[0.026] px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]">
+        <p className="line-clamp-2 text-sm leading-5 text-white/68">{post.payload?.discussion?.body ?? post.content}</p>
       </div>
       <EngagementFooter {...props} />
     </article>
@@ -957,7 +915,7 @@ function FeedPostNewsCard(props: FeedV2PostCardProps) {
       {payload?.publishedAt ? <div className="mt-2 text-xs text-white/38">{new Date(payload.publishedAt).toLocaleString()}</div> : null}
       {payload?.sourceUrl ? (
         <a href={payload.sourceUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-2 text-xs font-semibold text-amber-100 hover:text-amber-50">
-          Source <ExternalLink className="h-3.5 w-3.5" />
+          Read more <ExternalLink className="h-3.5 w-3.5" />
         </a>
       ) : null}
       <EngagementFooter {...props} />

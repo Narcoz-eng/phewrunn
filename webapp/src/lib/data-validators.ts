@@ -40,21 +40,36 @@ export function isValidGainer(item: DiscoverySidebarMover | null | undefined): i
 }
 
 export function isValidCandleSeries(candles: TerminalCandle[] | null | undefined): candles is TerminalCandle[] {
-  if (!Array.isArray(candles) || candles.length < 8) return false;
+  if (!Array.isArray(candles) || candles.length < 12) return false;
   const valid = candles.filter(
-    (candle) =>
-      finite(candle.timestamp) &&
-      finite(candle.open) &&
-      finite(candle.high) &&
-      finite(candle.low) &&
-      finite(candle.close) &&
-      candle.open > 0 &&
-      candle.high > 0 &&
-      candle.low > 0 &&
-      candle.close > 0 &&
-      candle.high >= candle.low
+    (candle) => {
+      if (
+        !finite(candle.timestamp) ||
+        !finite(candle.open) ||
+        !finite(candle.high) ||
+        !finite(candle.low) ||
+        !finite(candle.close) ||
+        candle.open <= 0 ||
+        candle.high <= 0 ||
+        candle.low <= 0 ||
+        candle.close <= 0 ||
+        candle.high < Math.max(candle.open, candle.close) ||
+        candle.low > Math.min(candle.open, candle.close)
+      ) {
+        return false;
+      }
+      const body = Math.abs(candle.close - candle.open);
+      const range = candle.high - candle.low;
+      if (range <= 0) return false;
+      const basis = Math.max(candle.open, candle.close, candle.low);
+      const rangeRatio = basis > 0 ? range / basis : 0;
+      if (rangeRatio > 0.95) return false;
+      if (body > 0 && range / body > 28 && rangeRatio > 0.18) return false;
+      if (body === 0 && rangeRatio > 0.08) return false;
+      return true;
+    }
   );
-  if (valid.length < 8) return false;
+  if (valid.length < Math.max(12, Math.ceil(candles.length * 0.9))) return false;
 
   const minLow = Math.min(...valid.map((candle) => candle.low));
   const maxHigh = Math.max(...valid.map((candle) => candle.high));
@@ -63,8 +78,20 @@ export function isValidCandleSeries(candles: TerminalCandle[] | null | undefined
   const rangePct = minLow > 0 ? ((maxHigh - minLow) / minLow) * 100 : 0;
   const movePct = firstOpen > 0 ? Math.abs(((lastClose - firstOpen) / firstOpen) * 100) : 0;
   const bodyCount = valid.filter((candle) => Math.abs(candle.close - candle.open) > candle.open * 0.0005).length;
+  const returns = valid.slice(1).map((candle, index) => {
+    const previous = valid[index]?.close ?? candle.open;
+    return previous > 0 ? Math.abs((candle.close - previous) / previous) : 0;
+  });
+  const extremeSingleBar = returns.some((value, index) => {
+    const current = valid[index + 1];
+    if (!current || value < 0.65) return false;
+    const previousValues = returns.slice(Math.max(0, index - 5), index);
+    const nextValues = returns.slice(index + 1, index + 6);
+    const neighborMax = Math.max(0, ...previousValues, ...nextValues);
+    return neighborMax < value / 8;
+  });
 
-  return rangePct >= 0.05 && (movePct >= 0.03 || bodyCount >= Math.ceil(valid.length * 0.25));
+  return !extremeSingleBar && rangePct >= 0.05 && rangePct <= 950 && (movePct >= 0.03 || bodyCount >= Math.ceil(valid.length * 0.25));
 }
 
 export function isValidSignalScore(value: number | null | undefined, coverageState?: string | null): value is number {

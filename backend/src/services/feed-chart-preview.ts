@@ -60,11 +60,12 @@ function normalizeCandle(row: unknown): FeedChartPreviewCandle | null {
     return null;
   }
   if (open <= 0 || high <= 0 || low <= 0 || close <= 0) return null;
+  if (high < Math.max(open, close) || low > Math.min(open, close)) return null;
   return {
     timestamp,
     open,
-    high: Math.max(high, low, open, close),
-    low: Math.min(high, low, open, close),
+    high,
+    low,
     close,
     volume: Math.max(0, volume),
   };
@@ -126,11 +127,12 @@ function normalizeObjectCandle(row: {
   const volume = finite(row.volume) ?? 0;
   if (timestamp === null || open === null || high === null || low === null || close === null) return null;
   if (open <= 0 || high <= 0 || low <= 0 || close <= 0) return null;
+  if (high < Math.max(open, close) || low > Math.min(open, close)) return null;
   return {
     timestamp,
     open,
-    high: Math.max(high, low, open, close),
-    low: Math.min(high, low, open, close),
+    high,
+    low,
     close,
     volume: Math.max(0, volume),
   };
@@ -138,6 +140,21 @@ function normalizeObjectCandle(row: {
 
 function isValidPreviewSeries(candles: FeedChartPreviewCandle[]): boolean {
   if (candles.length < 12) return false;
+  const sorted = [...candles].sort((a, b) => a.timestamp - b.timestamp);
+  const valid = sorted.filter((candle) => {
+    if (candle.open <= 0 || candle.high <= 0 || candle.low <= 0 || candle.close <= 0) return false;
+    if (candle.high < Math.max(candle.open, candle.close) || candle.low > Math.min(candle.open, candle.close)) return false;
+    const body = Math.abs(candle.close - candle.open);
+    const range = candle.high - candle.low;
+    if (range <= 0) return false;
+    const basis = Math.max(candle.open, candle.close, candle.low);
+    const rangePct = basis > 0 ? range / basis : 0;
+    if (rangePct > 0.95) return false;
+    if (body > 0 && range / body > 28 && rangePct > 0.18) return false;
+    if (body === 0 && rangePct > 0.08) return false;
+    return true;
+  });
+  if (valid.length < Math.max(12, Math.ceil(candles.length * 0.9))) return false;
   const minLow = Math.min(...candles.map((candle) => candle.low));
   const maxHigh = Math.max(...candles.map((candle) => candle.high));
   const firstOpen = candles[0]?.open ?? 0;
@@ -145,7 +162,19 @@ function isValidPreviewSeries(candles: FeedChartPreviewCandle[]): boolean {
   const bodyCount = candles.filter((candle) => Math.abs(candle.close - candle.open) > candle.open * 0.0005).length;
   const rangePct = minLow > 0 ? ((maxHigh - minLow) / minLow) * 100 : 0;
   const movePct = firstOpen > 0 ? Math.abs(((lastClose - firstOpen) / firstOpen) * 100) : 0;
-  return rangePct >= 0.05 && (movePct >= 0.03 || bodyCount >= Math.ceil(candles.length * 0.25));
+  const returns = candles.slice(1).map((candle, index) => {
+    const previous = candles[index]?.close ?? candle.open;
+    return previous > 0 ? Math.abs((candle.close - previous) / previous) : 0;
+  });
+  const extremeSingleBar = returns.some((value, index) => {
+    const current = candles[index + 1];
+    if (!current || value < 0.65) return false;
+    const previousValues = returns.slice(Math.max(0, index - 5), index);
+    const nextValues = returns.slice(index + 1, index + 6);
+    const neighborMax = Math.max(0, ...previousValues, ...nextValues);
+    return neighborMax < value / 8;
+  });
+  return !extremeSingleBar && rangePct >= 0.05 && rangePct <= 950 && (movePct >= 0.03 || bodyCount >= Math.ceil(candles.length * 0.25));
 }
 
 function newestCandleFresh(candles: FeedChartPreviewCandle[]): boolean {
@@ -216,6 +245,10 @@ function isRateLimitResponse(status: number, bodyText = ""): boolean {
 function getLastGoodPreview(cacheKey: string): FeedChartPreviewResult | null {
   const cached = feedChartPreviewLastGoodCache.get(cacheKey);
   if (!cached || cached.expiresAtMs <= Date.now()) return null;
+  if (cached.value.state === "live" && (!cached.value.candles || !isValidPreviewSeries(cached.value.candles))) {
+    feedChartPreviewLastGoodCache.delete(cacheKey);
+    return null;
+  }
   return cached.value;
 }
 
@@ -240,7 +273,12 @@ export async function getFeedChartPreview(params: {
   const network = params.chainType === "solana" ? "solana" : "eth";
   const cacheKey = `${network}:${(pairAddress ?? tokenAddress ?? "").toLowerCase()}:minute:5`;
   const cached = feedChartPreviewCache.get(cacheKey);
-  if (cached && cached.expiresAtMs > Date.now()) return cached.value;
+  if (cached && cached.expiresAtMs > Date.now()) {
+    if (cached.value.state !== "live" || (cached.value.candles && isValidPreviewSeries(cached.value.candles))) {
+      return cached.value;
+    }
+    feedChartPreviewCache.delete(cacheKey);
+  }
 
   let request = feedChartPreviewInFlight.get(cacheKey);
   if (!request) {

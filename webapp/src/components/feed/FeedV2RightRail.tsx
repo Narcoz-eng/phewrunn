@@ -117,37 +117,37 @@ export function FeedV2RightRail({ discovery, onFilterFeed }: FeedV2RightRailProp
 
   return (
     <aside className="space-y-3 xl:sticky xl:top-4 xl:self-start">
-      <section className="rounded-[16px] bg-[linear-gradient(180deg,rgba(8,13,18,0.97),rgba(4,8,11,0.99))] p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.045)]">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-[15px] font-semibold tracking-tight text-white">Signal Pulse</h2>
-          <span className="rounded-[8px] border border-lime-300/14 bg-lime-300/[0.08] px-2 py-1 text-[11px] font-semibold text-lime-200">Live</span>
-        </div>
-        {marketStats ? (
-        <div className="grid grid-cols-2 divide-x divide-white/8 overflow-hidden rounded-[12px] bg-white/[0.026] shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]">
-          {[
-            ["Tracked Cap", formatUsd(marketStats?.marketCap), formatPct(marketStats?.marketCapChangePct), "token universe"],
-            ["24h Flow", formatUsd(marketStats?.volume24h), formatPct(marketStats?.volume24hChangePct), "active volume"],
-          ].map(([label, value, delta, caption]) => (
-            <div key={label} className="px-3 py-2.5">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/38">{label}</div>
-              <div className="mt-1 text-[13px] font-bold text-white">{value}</div>
-              <div className={cn("mt-0.5 text-[11px] font-semibold", delta.startsWith("-") ? "text-rose-300" : delta === "Early setup" || delta === "Momentum unconfirmed" ? "text-white/34" : "text-lime-300")}>
-                {delta}
+      {trendingCalls.length ? (
+      <RailCard title="Active Calls" action={<span className="rounded-[8px] border border-amber-300/20 bg-amber-300/10 px-2 py-1 text-[11px] font-semibold text-amber-200">Fresh</span>}>
+          <div className="space-y-2">
+            {trendingCalls.slice(0, 5).map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => navigate(`/post/${item.id}`)}
+              className="flex w-full items-center gap-2 rounded-[12px] px-1.5 py-1.5 text-left transition hover:bg-white/[0.045]"
+            >
+              <TokenAvatar src={item.tokenImage} label={item.tokenSymbol || item.tokenName || "?"} />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-bold text-white">
+                  {item.tokenSymbol ? `$${item.tokenSymbol}` : item.title || "Call"} <span className="text-lime-300">{item.direction ?? ""}</span>
+                </div>
+                <div className="truncate text-[11px] text-white/40">by {item.authorHandle}{timeAgo(item.createdAt) ? ` - ${timeAgo(item.createdAt)}` : " - Live"}</div>
               </div>
-              <div className="mt-0.5 text-[10px] text-white/30">{caption}</div>
-            </div>
-          ))}
-        </div>
-        ) : signalBreadth > 0 ? (
-          <RailUnavailable message={`${signalBreadth} ranked signals active`} tone="positive" />
-        ) : null}
-      </section>
+              <div className={cn("text-sm font-bold", (item.roiCurrentPct ?? 0) >= 0 ? "text-lime-300" : "text-rose-300")}>
+                {formatPct(item.roiCurrentPct)}
+              </div>
+            </button>
+            ))}
+          </div>
+      </RailCard>
+      ) : null}
 
+      {topGainers.length ? (
       <RailCard
         title="Top Movers"
         action={<span className="rounded-[8px] border border-white/10 bg-white/[0.04] px-2 py-1 text-[11px] text-white/54">24h</span>}
       >
-        {topGainers.length ? (
           <div className="space-y-2">
             {topGainers.slice(0, 5).map((item, index) => (
             <button
@@ -171,10 +171,8 @@ export function FeedV2RightRail({ discovery, onFilterFeed }: FeedV2RightRailProp
             </button>
             ))}
           </div>
-        ) : (
-          <RailUnavailable message="No sharp movers right now" tone="positive" />
-        )}
       </RailCard>
+      ) : null}
 
       {liveRaids.length ? (
       <RailCard title="Live Raids" action={<V2StatusPill tone="live">Live</V2StatusPill>}>
@@ -219,32 +217,6 @@ export function FeedV2RightRail({ discovery, onFilterFeed }: FeedV2RightRailProp
       </RailCard>
       ) : null}
 
-      {trendingCalls.length ? (
-      <RailCard title="Active Calls" action={<span className="rounded-[8px] border border-amber-300/20 bg-amber-300/10 px-2 py-1 text-[11px] font-semibold text-amber-200">Fresh</span>}>
-          <div className="space-y-2">
-            {trendingCalls.slice(0, 5).map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => navigate(`/post/${item.id}`)}
-              className="flex w-full items-center gap-2 rounded-[12px] px-1.5 py-1.5 text-left transition hover:bg-white/[0.045]"
-            >
-              <TokenAvatar src={item.tokenImage} label={item.tokenSymbol || item.tokenName || "?"} />
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-bold text-white">
-                  {item.tokenSymbol ? `$${item.tokenSymbol}` : item.title || "Call"} <span className="text-lime-300">{item.direction ?? ""}</span>
-                </div>
-                <div className="truncate text-[11px] text-white/40">by {item.authorHandle}{timeAgo(item.createdAt) ? ` - ${timeAgo(item.createdAt)}` : " - Live"}</div>
-              </div>
-              <div className={cn("text-sm font-bold", (item.roiCurrentPct ?? 0) >= 0 ? "text-lime-300" : "text-rose-300")}>
-                {formatPct(item.roiCurrentPct)}
-              </div>
-            </button>
-            ))}
-          </div>
-      </RailCard>
-      ) : null}
-
       {aiWatchlist.length ? (
       <RailCard title="AI Watchlist">
           <div className="space-y-2">
@@ -272,8 +244,8 @@ export function FeedV2RightRail({ discovery, onFilterFeed }: FeedV2RightRailProp
       </RailCard>
       ) : null}
 
+      {whaleRows.length ? (
       <RailCard title="Whale Flow" action={<span className="rounded-[8px] border border-white/10 bg-white/[0.04] px-2 py-1 text-[11px] text-white/54">24h</span>}>
-        {whaleRows.length ? (
           <div className="space-y-2">
             {whaleRows.slice(0, 4).map((item) => {
               const direction = whaleDirection(item.action);
@@ -303,10 +275,39 @@ export function FeedV2RightRail({ discovery, onFilterFeed }: FeedV2RightRailProp
               );
             })}
           </div>
-        ) : (
-          <RailUnavailable message="No recent smart-money flow" />
-        )}
       </RailCard>
+      ) : null}
+
+      {(marketStats || signalBreadth > 0) ? (
+      <section className={cn(
+        "rounded-[16px] bg-[linear-gradient(180deg,rgba(8,13,18,0.97),rgba(4,8,11,0.99))] shadow-[inset_0_1px_0_rgba(255,255,255,0.045)]",
+        marketStats ? "p-3.5" : "px-3 py-2"
+      )}>
+        <div className={cn("flex items-center justify-between", marketStats && "mb-3")}>
+          <h2 className="text-[15px] font-semibold tracking-tight text-white">Signal Pulse</h2>
+          <span className="rounded-[8px] border border-lime-300/14 bg-lime-300/[0.08] px-2 py-1 text-[11px] font-semibold text-lime-200">
+            {marketStats ? "Live" : `${signalBreadth} active`}
+          </span>
+        </div>
+        {marketStats ? (
+        <div className="grid grid-cols-2 divide-x divide-white/8 overflow-hidden rounded-[12px] bg-white/[0.026] shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]">
+          {[
+            ["Tracked Cap", formatUsd(marketStats?.marketCap), formatPct(marketStats?.marketCapChangePct), "token universe"],
+            ["24h Flow", formatUsd(marketStats?.volume24h), formatPct(marketStats?.volume24hChangePct), "active volume"],
+          ].map(([label, value, delta, caption]) => (
+            <div key={label} className="px-3 py-2.5">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/38">{label}</div>
+              <div className="mt-1 text-[13px] font-bold text-white">{value}</div>
+              <div className={cn("mt-0.5 text-[11px] font-semibold", delta.startsWith("-") ? "text-rose-300" : delta === "Early setup" || delta === "Momentum unconfirmed" ? "text-white/34" : "text-lime-300")}>
+                {delta}
+              </div>
+              <div className="mt-0.5 text-[10px] text-white/30">{caption}</div>
+            </div>
+          ))}
+        </div>
+        ) : null}
+      </section>
+      ) : null}
 
       {discovery?.aiSpotlight &&
       (isValidSignalScore(discovery.aiSpotlight.confidenceScore) || isValidSignalScore(discovery.aiSpotlight.highConvictionScore)) ? (

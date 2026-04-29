@@ -15,8 +15,8 @@ type MaterializedFeedEnvelope = {
 
 type MaterializedFeedRead = FeedListResult & {
   materialized: {
-    source: "memory" | "redis" | "lightweight" | "passthrough";
-    cacheState: "fresh" | "stale" | "lightweight" | "passthrough";
+    source: "memory" | "redis" | "ranked" | "latest-cache" | "lightweight" | "passthrough";
+    cacheState: "fresh" | "stale" | "warming" | "lightweight" | "passthrough";
     refreshQueued: boolean;
     latencyMs: number;
   };
@@ -139,10 +139,10 @@ function signalCoverage(post: LightweightFeedPost) {
     toFinite(post.earlyRunnerScore) !== null;
   return {
     state: hasStoredSignal ? "partial" as const : "unavailable" as const,
-    source: hasStoredSignal ? "stored-post" : "unavailable",
+    source: hasStoredSignal ? "post-signal" : "unavailable",
     updatedAt: post.updatedAt.toISOString(),
     maxAgeMs: 10 * 60_000,
-    unavailableReason: hasStoredSignal ? null : "Feed intelligence is hydrating asynchronously.",
+    unavailableReason: hasStoredSignal ? null : "Signal coverage is still developing.",
   };
 }
 
@@ -167,6 +167,54 @@ function inferDirection(content: string): "LONG" | "SHORT" | null {
   if (normalized.includes(" short") || normalized.startsWith("short ") || normalized.includes(" bearish")) return "SHORT";
   if (normalized.includes(" long") || normalized.startsWith("long ") || normalized.includes(" bullish")) return "LONG";
   return null;
+}
+
+function lightweightEngagementScore(post: LightweightFeedPost): number {
+  return (
+    post._count.likes +
+    post._count.comments * 2 +
+    post._count.reposts * 3 +
+    post._count.reactions +
+    Math.min(40, post.viewCount / 20)
+  );
+}
+
+function postTypePriority(postType: string | null | undefined): number {
+  if (postType === "alpha" || postType === "chart") return 600;
+  if (postType === "raid" || postType === "news") return 320;
+  if (postType === "poll" || postType === "discussion") return -220;
+  return 0;
+}
+
+function lightweightProductScore(post: LightweightFeedPost, confidenceScore: number): number {
+  const signalScore = Math.max(
+    confidenceScore,
+    toFinite(post.hotAlphaScore) ?? 0,
+    toFinite(post.earlyRunnerScore) ?? 0,
+    toFinite(post.highConvictionScore) ?? 0
+  );
+  const tokenBoost = post.contractAddress || post.token?.address || post.tokenId ? 90 : 0;
+  const smartMoneyBoost = post.trustedTraderCount > 0 ? Math.min(90, post.trustedTraderCount * 12) : 0;
+  const socialPenalty =
+    post.postType === "poll" || post.postType === "discussion"
+      ? lightweightEngagementScore(post) >= 24
+        ? 60
+        : -260
+      : 0;
+  return postTypePriority(post.postType) + signalScore * 2.2 + tokenBoost + smartMoneyBoost + lightweightEngagementScore(post) + socialPenalty;
+}
+
+function productReasonsForLightweightPost(post: LightweightFeedPost, token: ReturnType<typeof tokenContext>): string[] {
+  const reasons: string[] = [];
+  if (post.postType === "alpha" || post.postType === "chart") reasons.push("Alpha setup");
+  if (post.trustedTraderCount > 0) reasons.push("Smart money detected");
+  if ((toFinite(post.highConvictionScore) ?? 0) >= 70) reasons.push("High conviction");
+  if ((toFinite(post.hotAlphaScore) ?? 0) >= 70) reasons.push("Hot alpha");
+  if (post.postType === "raid") reasons.push("Raid pressure");
+  if (post.postType === "news") reasons.push("Market update");
+  if ((post.postType === "poll" || post.postType === "discussion") && lightweightEngagementScore(post) >= 24) reasons.push("Community momentum");
+  if (!reasons.length && token?.address) reasons.push("Token setup");
+  return reasons.slice(0, 3);
 }
 
 function lightweightPayload(post: LightweightFeedPost, token: ReturnType<typeof tokenContext>, coverage: ReturnType<typeof signalCoverage>) {
@@ -246,6 +294,7 @@ function buildLightweightFeedItem(post: LightweightFeedPost): EnrichedCall {
   const signal = signalCoverage(post);
   const confidenceScore = toFinite(post.confidenceScore) ?? toFinite(post.highConvictionScore) ?? 0;
   const payload = lightweightPayload(post, token, signal);
+  const productReasons = productReasonsForLightweightPost(post, token);
   return {
     ...post,
     itemType: "post",
@@ -263,7 +312,7 @@ function buildLightweightFeedItem(post: LightweightFeedPost): EnrichedCall {
       smartMoneyScore: post.trustedTraderCount > 0 ? Math.min(100, post.trustedTraderCount * 12) : null,
       riskScore: post.token?.tokenRiskScore ?? null,
       riskLabel: post.token?.bundleRiskLabel ?? null,
-      scoreReasons: ["Cached social read"],
+      scoreReasons: productReasons,
     },
     engagement: {
       likes: post._count.likes,
@@ -277,15 +326,15 @@ function buildLightweightFeedItem(post: LightweightFeedPost): EnrichedCall {
       signal,
       candles: {
         state: token?.address ? "partial" : "unavailable",
-        source: token?.address ? "async-chart-preview" : "unavailable",
+        source: token?.address ? "chart-preview" : "unavailable",
         updatedAt: post.updatedAt.toISOString(),
         maxAgeMs: 10 * 60_000,
-        unavailableReason: token?.address ? "Chart preview hydrates after the social feed read." : "No token is attached.",
+        unavailableReason: token?.address ? "Chart preview is not ready for this setup." : "No token is attached.",
       },
     },
-    feedScore: Math.max(confidenceScore, toFinite(post.hotAlphaScore) ?? 0, toFinite(post.earlyRunnerScore) ?? 0),
-    feedReasons: ["Cached social read"],
-    scoreReasons: ["Cached social read"],
+    feedScore: lightweightProductScore(post, confidenceScore),
+    feedReasons: productReasons,
+    scoreReasons: productReasons,
     repostContext: null,
     currentReactionType: null,
     reactionCounts: {},
@@ -297,8 +346,8 @@ function buildLightweightFeedItem(post: LightweightFeedPost): EnrichedCall {
     setupQualityScore: 0,
     opportunityScore: 0,
     dataReliabilityScore: 0,
-    activityStatus: "cached",
-    activityStatusLabel: "Cached social read",
+    activityStatus: token?.address ? "active" : "developing",
+    activityStatusLabel: token?.address ? "Active setup" : "Developing",
     isTradable: Boolean(token?.address),
     bullishSignalsSuppressed: false,
     timingTier: post.timingTier,
@@ -362,14 +411,27 @@ async function listLightweightPosts(args: FeedArgs, limit: number) {
           ? [{ highConvictionScore: "desc" }, { createdAt: "desc" }]
           : args.kind === "early-runners"
             ? [{ earlyRunnerScore: "desc" }, { createdAt: "desc" }]
-            : [{ createdAt: "desc" }],
+            : args.kind === "latest"
+              ? [
+                  { highConvictionScore: "desc" },
+                  { hotAlphaScore: "desc" },
+                  { earlyRunnerScore: "desc" },
+                  { createdAt: "desc" },
+                ]
+              : [{ createdAt: "desc" }],
     take: limit + 1,
   });
 }
 
 async function listLightweightFeed(args: FeedArgs, limit: number): Promise<FeedListResult> {
   const rows = await listLightweightPosts(args, limit);
-  const items = rows.slice(0, limit).map(buildLightweightFeedItem);
+  const rankedRows = [...rows].sort((left, right) => {
+    const leftScore = lightweightProductScore(left, toFinite(left.confidenceScore) ?? toFinite(left.highConvictionScore) ?? 0);
+    const rightScore = lightweightProductScore(right, toFinite(right.confidenceScore) ?? toFinite(right.highConvictionScore) ?? 0);
+    if (rightScore !== leftScore) return rightScore - leftScore;
+    return right.createdAt.getTime() - left.createdAt.getTime();
+  });
+  const items = rankedRows.slice(0, limit).map(buildLightweightFeedItem);
   return {
     items,
     hasMore: rows.length > limit,
@@ -455,7 +517,7 @@ async function refreshMaterializedFeed(kind: FeedKind): Promise<MaterializedFeed
   materializedFeedLastRefreshStartedAt.set(key, startedAt);
   const request = (async () => {
     try {
-      const result = await listLightweightFeed(
+      const result = await listFeedCalls(
         {
           kind,
           viewerId: null,
@@ -463,8 +525,7 @@ async function refreshMaterializedFeed(kind: FeedKind): Promise<MaterializedFeed
           cursor: null,
           search: null,
           postType: undefined,
-        },
-        MATERIALIZED_FEED_LIMIT
+        }
       );
       const envelope: MaterializedFeedEnvelope = {
         cachedAtMs: Date.now(),
@@ -503,6 +564,16 @@ function queueMaterializedRefresh(kind: FeedKind): boolean {
   if (materializedFeedRefreshInFlight.has(key)) return false;
   void refreshMaterializedFeed(kind);
   return true;
+}
+
+async function readLatestRankedEnvelope(excludeKind?: FeedKind): Promise<{ envelope: MaterializedFeedEnvelope | null; source: "memory" | "redis" | null }> {
+  const preferredKinds: FeedKind[] = ["latest", "hot-alpha", "high-conviction", "early-runners"];
+  for (const kind of preferredKinds) {
+    if (kind === excludeKind) continue;
+    const read = await readMaterializedEnvelope(kind);
+    if (read.envelope && read.envelope.result.items.length > 0) return read;
+  }
+  return { envelope: null, source: null };
 }
 
 export async function listMaterializedFeedCalls(args: FeedArgs): Promise<MaterializedFeedRead> {
@@ -574,8 +645,49 @@ export async function listMaterializedFeedCalls(args: FeedArgs): Promise<Materia
     };
   }
 
+  const latestRanked = await readLatestRankedEnvelope(args.kind);
+  if (latestRanked.envelope) {
+    const result = sliceMaterializedResult(latestRanked.envelope.result, { ...args, cursor: null }, limit);
+    console.info("[feed/materialized] cold tab served latest ranked inventory while warming", {
+      kind: args.kind,
+      source: latestRanked.source ?? "memory",
+      selected: result.items.length,
+      totalItems: result.totalItems,
+      refreshQueued,
+      latencyMs: Date.now() - startedAt,
+    });
+    return {
+      ...result,
+      materialized: {
+        source: "latest-cache",
+        cacheState: "warming",
+        refreshQueued,
+        latencyMs: Date.now() - startedAt,
+      },
+    };
+  }
+
+  const ranked = await listFeedCalls({ ...args, limit });
+  if (ranked.items.length > 0) {
+    console.info("[feed/materialized] cold cache served ranked feed while warming", {
+      kind: args.kind,
+      selected: ranked.items.length,
+      refreshQueued,
+      latencyMs: Date.now() - startedAt,
+    });
+    return {
+      ...ranked,
+      materialized: {
+        source: "ranked",
+        cacheState: "warming",
+        refreshQueued,
+        latencyMs: Date.now() - startedAt,
+      },
+    };
+  }
+
   const lightweight = await listLightweightFeed(args, limit);
-  console.warn("[feed/materialized] materialized cache unavailable; serving lightweight social fallback", {
+  console.warn("[feed/materialized] ranked feed unavailable; serving compact alpha-first inventory", {
     kind: args.kind,
     selected: lightweight.items.length,
     refreshQueued,

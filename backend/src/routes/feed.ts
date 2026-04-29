@@ -29,7 +29,7 @@ const FeedChartPreviewQuerySchema = z.object({
 const FeedChartPreviewBatchSchema = z.object({
   tokens: z.array(FeedChartPreviewQuerySchema.extend({
     key: z.string().trim().min(1).max(180).optional(),
-  })).min(1).max(12),
+  })).min(1).max(24),
 });
 
 feedRouter.post("/chart-previews", zValidator("json", FeedChartPreviewBatchSchema), async (c) => {
@@ -63,6 +63,7 @@ feedRouter.post("/chart-previews", zValidator("json", FeedChartPreviewBatchSchem
   }
   console.info("[feed/chart-previews] batch complete", {
     requested: tokens.length,
+    batchSize: deduped.size,
     deduped: deduped.size,
     dedupeHits: Math.max(0, tokens.length - deduped.size),
     liveResults: Object.values(results).filter((preview) => preview.state === "live").length,

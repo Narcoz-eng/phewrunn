@@ -1,5 +1,6 @@
 import type { FeedChartPreview, Post } from "@/types";
 import { api } from "@/lib/api";
+import { isValidCandleSeries } from "@/lib/data-validators";
 
 type CachedFeedChart = {
   value: FeedChartPreview;
@@ -28,12 +29,12 @@ let feedChartBatchTimer: ReturnType<typeof setTimeout> | null = null;
 let feedChartBatchInFlightCount = 0;
 const FEED_CHART_BATCH_MAX_CONCURRENCY = 2;
 const FEED_CHART_MIN_REQUEST_INTERVAL_MS = 30_000;
-const FEED_CHART_BATCH_WINDOW_MS = 240;
+const FEED_CHART_BATCH_WINDOW_MS = 250;
 const FEED_CHART_UNAVAILABLE_SUPPRESS_MS = 5 * 60_000;
 const FEED_CHART_STORAGE_PREFIX = "phew.feed.chart-preview.";
 
 export function isLiveFeedChartPreview(preview: FeedChartPreview | null | undefined): preview is FeedChartPreview {
-  return Boolean(preview && preview.state === "live" && Array.isArray(preview.candles) && preview.candles.length >= 8);
+  return Boolean(preview && preview.state === "live" && isValidCandleSeries(preview.candles));
 }
 
 export function feedChartCacheKeys(post: Post, timeframe = "1h"): string[] {
@@ -144,7 +145,8 @@ function scheduleFeedChartBatchFlush(): void {
 async function flushFeedChartBatchQueue(): Promise<void> {
   if (feedChartBatchInFlightCount >= FEED_CHART_BATCH_MAX_CONCURRENCY || feedChartBatchQueue.size === 0) return;
   feedChartBatchInFlightCount += 1;
-  const rawBatch = [...feedChartBatchQueue.values()].slice(0, 12);
+  const queuedAtFlush = feedChartBatchQueue.size;
+  const rawBatch = [...feedChartBatchQueue.values()].slice(0, 24);
   const suppressedBatch = rawBatch.filter((item) => (feedChartPreviewSuppressedUntil.get(item.key) ?? 0) > Date.now());
   const suppressedKeys = new Set(suppressedBatch.map((item) => item.key));
   for (const item of suppressedBatch) {
@@ -153,8 +155,16 @@ async function flushFeedChartBatchQueue(): Promise<void> {
     if (stale) item.resolve(stale);
     else item.reject(new Error("Chart preview temporarily suppressed after unavailable provider responses"));
   }
-  const batch = rawBatch.filter((item) => !suppressedKeys.has(item.key) && item.tokenAddress.trim().length > 0 && item.cacheKeys.length > 0);
-  const invalidBatch = rawBatch.filter((item) => !suppressedKeys.has(item.key) && !batch.includes(item));
+  const freshBatch = rawBatch.filter((item) => !suppressedKeys.has(item.key) && Boolean(getCachedFeedChart(item.cacheKeys)));
+  const freshKeys = new Set(freshBatch.map((item) => item.key));
+  for (const item of freshBatch) {
+    feedChartBatchQueue.delete(item.key);
+    const cached = getCachedFeedChart(item.cacheKeys);
+    if (cached) item.resolve(cached);
+    else item.reject(new Error("Chart preview cache expired before batch flush"));
+  }
+  const batch = rawBatch.filter((item) => !suppressedKeys.has(item.key) && !freshKeys.has(item.key) && item.tokenAddress.trim().length > 0 && item.cacheKeys.length > 0);
+  const invalidBatch = rawBatch.filter((item) => !suppressedKeys.has(item.key) && !freshKeys.has(item.key) && !batch.includes(item));
   for (const item of batch) feedChartBatchQueue.delete(item.key);
   for (const item of invalidBatch) {
     feedChartBatchQueue.delete(item.key);
@@ -166,10 +176,13 @@ async function flushFeedChartBatchQueue(): Promise<void> {
     return;
   }
   try {
+    for (const item of batch) feedChartPreviewLastRequestedAt.set(item.key, Date.now());
     console.info("[feed-chart-cache] requesting batch", {
+      queued: queuedAtFlush,
+      skippedFresh: freshBatch.length,
+      skippedUnavailable: suppressedBatch.length,
       batchSize: batch.length,
-      queued: feedChartBatchQueue.size,
-      dedupeHits: Math.max(0, rawBatch.length - batch.length),
+      remainingQueued: feedChartBatchQueue.size,
     });
     const response = await api.post<{ results: Record<string, FeedChartPreview> }>("/api/feed/chart-previews", {
       tokens: batch.map((item) => ({
@@ -207,6 +220,9 @@ async function flushFeedChartBatchQueue(): Promise<void> {
       }
     }
     console.info("[feed-chart-cache] batch complete", {
+      queued: queuedAtFlush,
+      skippedFresh: freshBatch.length,
+      skippedUnavailable: suppressedBatch.length,
       batchSize: batch.length,
       cacheHits,
       liveResults: Object.values(response.results).filter(isLiveFeedChartPreview).length,
@@ -264,7 +280,6 @@ export function loadBatchedFeedChartPreview(params: {
     console.info("[feed-chart-cache] frequency suppressed miss", { key: params.key });
     return Promise.reject(new Error("Chart preview request suppressed by token/timeframe frequency guard"));
   }
-  feedChartPreviewLastRequestedAt.set(params.key, Date.now());
   const request = new Promise<FeedChartPreview>((resolve, reject) => {
     feedChartBatchQueue.set(params.key, {
       ...params,
