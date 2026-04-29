@@ -1,4 +1,4 @@
-import { prisma } from "../prisma.js";
+import { isPrismaPoolPressureActive, prisma } from "../prisma.js";
 
 type FeedChartPreviewCandle = {
   timestamp: number;
@@ -23,15 +23,35 @@ type CacheEntry = {
   value: FeedChartPreviewResult;
 };
 
+type StoredTokenChartContext = {
+  pairAddress: string | null;
+  snapshots: Array<{
+    capturedAt: Date;
+    priceUsd: number | null;
+    marketCap: number | null;
+    volume24h: number | null;
+  }>;
+};
+
+type StoredTokenContextCacheEntry = {
+  expiresAtMs: number;
+  value: StoredTokenChartContext | null;
+};
+
 const FEED_CHART_PREVIEW_CACHE_TTL_MS = 45_000;
 const FEED_CHART_PREVIEW_STALE_FALLBACK_MS = 5 * 60_000;
+const FEED_CHART_PREVIEW_UNAVAILABLE_TTL_MS = 60_000;
 const FEED_CHART_PREVIEW_TIMEOUT_MS = 2_200;
 const FEED_CHART_PREVIEW_FRESH_MAX_AGE_MS = 10 * 60_000;
+const FEED_CHART_PROVIDER_COOLDOWN_MS = 2 * 60_000;
+const FEED_CHART_TOKEN_CONTEXT_TTL_MS = 5 * 60_000;
 const BIRDEYE_API_KEY = process.env.BIRDEYE_API_KEY?.trim() || "";
 const feedChartPreviewCache = new Map<string, CacheEntry>();
 const feedChartPreviewLastGoodCache = new Map<string, CacheEntry>();
 const feedChartPreviewInFlight = new Map<string, Promise<FeedChartPreviewResult>>();
+const storedTokenContextCache = new Map<string, StoredTokenContextCacheEntry>();
 let birdeyeChartPreviewCircuitOpenUntilMs = 0;
+let geckoChartPreviewCircuitOpenUntilMs = 0;
 
 function finite(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -189,7 +209,19 @@ function newestCandleFresh(candles: FeedChartPreviewCandle[]): boolean {
   return Date.now() - newest * 1000 <= FEED_CHART_PREVIEW_FRESH_MAX_AGE_MS;
 }
 
-async function getStoredSnapshotCandles(tokenAddress: string, chainType: string): Promise<FeedChartPreviewCandle[]> {
+function buildStoredTokenContextKey(tokenAddress: string, chainType: string): string {
+  return `${chainType}:${tokenAddress.toLowerCase()}`;
+}
+
+async function getStoredTokenChartContext(tokenAddress: string, chainType: string): Promise<StoredTokenChartContext | null> {
+  const cacheKey = buildStoredTokenContextKey(tokenAddress, chainType);
+  const cached = storedTokenContextCache.get(cacheKey);
+  if (cached && cached.expiresAtMs > Date.now()) return cached.value;
+
+  if (await isPrismaPoolPressureActive()) {
+    return null;
+  }
+
   const token = await prisma.token.findUnique({
     where: {
       chainType_address: {
@@ -198,6 +230,7 @@ async function getStoredSnapshotCandles(tokenAddress: string, chainType: string)
       },
     },
     select: {
+      pairAddress: true,
       snapshots: {
         select: {
           capturedAt: true,
@@ -210,9 +243,23 @@ async function getStoredSnapshotCandles(tokenAddress: string, chainType: string)
       },
     },
   });
-  if (!token?.snapshots.length) return [];
+  const context = token
+    ? {
+        pairAddress: token.pairAddress?.trim() || null,
+        snapshots: token.snapshots,
+      }
+    : null;
+  storedTokenContextCache.set(cacheKey, {
+    value: context,
+    expiresAtMs: Date.now() + FEED_CHART_TOKEN_CONTEXT_TTL_MS,
+  });
+  return context;
+}
 
-  const rows = [...token.snapshots].reverse();
+function buildSnapshotCandlesFromContext(context: StoredTokenChartContext | null): FeedChartPreviewCandle[] {
+  if (!context?.snapshots.length) return [];
+
+  const rows = [...context.snapshots].reverse();
   return rows
     .map((snapshot, index) => {
       const close = finite(snapshot.priceUsd) ?? finite(snapshot.marketCap);
@@ -264,7 +311,24 @@ export async function getFeedChartPreview(params: {
   chainType: string | null | undefined;
 }): Promise<FeedChartPreviewResult> {
   const tokenAddress = params.tokenAddress?.trim();
-  const pairAddress = params.pairAddress?.trim();
+  const requestedPairAddress = params.pairAddress?.trim();
+  const network = params.chainType === "solana" ? "solana" : "eth";
+  const chainType = network === "solana" ? "solana" : "evm";
+  let storedContext: StoredTokenChartContext | null = null;
+  let storedContextLoaded = false;
+  const loadStoredContext = async (): Promise<StoredTokenChartContext | null> => {
+    if (!tokenAddress) return null;
+    if (!storedContextLoaded) {
+      storedContext = await getStoredTokenChartContext(tokenAddress, chainType);
+      storedContextLoaded = true;
+    }
+    return storedContext;
+  };
+  if (!requestedPairAddress && tokenAddress) {
+    storedContext = await loadStoredContext();
+  }
+  const pairAddress = requestedPairAddress || storedContext?.pairAddress || undefined;
+
   if (!pairAddress && !tokenAddress) {
     return {
       state: "unavailable",
@@ -276,7 +340,6 @@ export async function getFeedChartPreview(params: {
     };
   }
 
-  const network = params.chainType === "solana" ? "solana" : "eth";
   const cacheKey = `${network}:${(pairAddress ?? tokenAddress ?? "").toLowerCase()}:minute:5`;
   const cached = feedChartPreviewCache.get(cacheKey);
   if (cached && cached.expiresAtMs > Date.now()) {
@@ -291,6 +354,18 @@ export async function getFeedChartPreview(params: {
     request = (async () => {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), FEED_CHART_PREVIEW_TIMEOUT_MS);
+      const storedFallback = async (): Promise<FeedChartPreviewResult | null> => {
+        const storedCandles = buildSnapshotCandlesFromContext(await loadStoredContext());
+        if (!isValidPreviewSeries(storedCandles) || !newestCandleFresh(storedCandles)) return null;
+        return {
+          state: "live",
+          source: "token-snapshots",
+          fetchedAt: new Date().toISOString(),
+          maxAgeMs: FEED_CHART_PREVIEW_FRESH_MAX_AGE_MS,
+          unavailableReason: null,
+          candles: storedCandles,
+        };
+      };
       try {
         if (network === "solana" && tokenAddress && BIRDEYE_API_KEY && birdeyeChartPreviewCircuitOpenUntilMs <= Date.now()) {
           const timeTo = Math.floor(Date.now() / 1000);
@@ -316,9 +391,11 @@ export async function getFeedChartPreview(params: {
           );
           const birdeyeBodyText = await birdeyeResponse.text();
           if (isRateLimitResponse(birdeyeResponse.status, birdeyeBodyText)) {
-            birdeyeChartPreviewCircuitOpenUntilMs = Date.now() + 60_000;
+            birdeyeChartPreviewCircuitOpenUntilMs = Date.now() + FEED_CHART_PROVIDER_COOLDOWN_MS;
             const lastGood = getLastGoodPreview(cacheKey);
             if (lastGood) return lastGood;
+            const stored = await storedFallback();
+            if (stored) return stored;
           }
           if (birdeyeResponse.ok) {
             const candles = parseBirdeyeCandles(JSON.parse(birdeyeBodyText));
@@ -336,23 +413,20 @@ export async function getFeedChartPreview(params: {
         }
 
         if (!pairAddress) {
-          if (tokenAddress) {
-            const storedCandles = await getStoredSnapshotCandles(tokenAddress, network === "solana" ? "solana" : "evm");
-            if (isValidPreviewSeries(storedCandles) && newestCandleFresh(storedCandles)) {
-              return {
-                state: "live",
-                source: "token-snapshots",
-                fetchedAt: new Date().toISOString(),
-                maxAgeMs: FEED_CHART_PREVIEW_FRESH_MAX_AGE_MS,
-                unavailableReason: null,
-                candles: storedCandles,
-              } satisfies FeedChartPreviewResult;
-            }
-          }
+          const stored = await storedFallback();
+          if (stored) return stored;
           return unavailablePreview(
             network === "solana" ? "birdeye" : "geckoterminal",
             "No pair address is attached for fallback market candles."
           );
+        }
+
+        if (geckoChartPreviewCircuitOpenUntilMs > Date.now()) {
+          const lastGood = getLastGoodPreview(cacheKey);
+          if (lastGood) return lastGood;
+          const stored = await storedFallback();
+          if (stored) return stored;
+          return unavailablePreview("geckoterminal", "Chart provider is cooling down after rate limits.");
         }
 
         const params = new URLSearchParams({
@@ -365,24 +439,22 @@ export async function getFeedChartPreview(params: {
           `https://api.geckoterminal.com/api/v2/networks/${network}/pools/${pairAddress}/ohlcv/minute?${params.toString()}`,
           { headers: { accept: "application/json" }, signal: controller.signal }
         );
+        const geckoBodyText = await response.text();
+        if (isRateLimitResponse(response.status, geckoBodyText)) {
+          geckoChartPreviewCircuitOpenUntilMs = Date.now() + FEED_CHART_PROVIDER_COOLDOWN_MS;
+          const lastGood = getLastGoodPreview(cacheKey);
+          if (lastGood) return lastGood;
+          const stored = await storedFallback();
+          if (stored) return stored;
+          return unavailablePreview("geckoterminal", "Chart provider is cooling down after rate limits.");
+        }
         if (!response.ok) {
           return unavailablePreview("geckoterminal", `GeckoTerminal candles unavailable (${response.status}).`);
         }
-        const candles = parseGeckoCandles(await response.json());
+        const candles = parseGeckoCandles(JSON.parse(geckoBodyText));
         if (!isValidPreviewSeries(candles) || !newestCandleFresh(candles)) {
-          if (tokenAddress) {
-            const storedCandles = await getStoredSnapshotCandles(tokenAddress, network === "solana" ? "solana" : "evm");
-            if (isValidPreviewSeries(storedCandles) && newestCandleFresh(storedCandles)) {
-              return {
-                state: "live",
-                source: "token-snapshots",
-                fetchedAt: new Date().toISOString(),
-                maxAgeMs: FEED_CHART_PREVIEW_FRESH_MAX_AGE_MS,
-                unavailableReason: null,
-                candles: storedCandles,
-              } satisfies FeedChartPreviewResult;
-            }
-          }
+          const stored = await storedFallback();
+          if (stored) return stored;
           return unavailablePreview(
             "geckoterminal",
             !newestCandleFresh(candles)
@@ -421,7 +493,7 @@ export async function getFeedChartPreview(params: {
   } else {
     const lastGood = getLastGoodPreview(cacheKey);
     if (lastGood) return lastGood;
-    feedChartPreviewCache.set(cacheKey, { value, expiresAtMs: Date.now() + 5_000 });
+    feedChartPreviewCache.set(cacheKey, { value, expiresAtMs: Date.now() + FEED_CHART_PREVIEW_UNAVAILABLE_TTL_MS });
   }
   return value;
 }

@@ -6,8 +6,9 @@ import { isRedisFastForHotPath, redisGetString, redisSetString } from "./lib/red
  *
  * Production Recommendations:
  * - Use a connection pool (PgBouncer for PostgreSQL)
- * - For serverless runtimes, keep Prisma's application-side pool tiny.
- *   Start with connection_limit=1 and only increase after measuring pool pressure.
+ * - For serverless runtimes, keep Prisma's application-side pool bounded.
+ *   Use a small pool with Supabase transaction pooling; connection_limit=1
+ *   serializes independent reads and causes request-path starvation.
  * - Use Supavisor/PgBouncer transaction mode for short-lived/serverless traffic.
  * - Enable SSL for production databases
  * - Use read replicas for read-heavy workloads
@@ -37,8 +38,8 @@ function getPositiveIntEnv(name: string): number | null {
 
 function resolveRuntimeConnectionLimit(configuredLimit: number | null): number {
   if (isServerlessRuntime) {
-    const requestedLimit = configuredLimit ?? (isProduction ? 1 : 2);
-    const safeUpperBound = isProduction ? 1 : 3;
+    const requestedLimit = configuredLimit ?? 3;
+    const safeUpperBound = isProduction ? 5 : 5;
     return Math.max(1, Math.min(requestedLimit, safeUpperBound));
   }
 
@@ -67,7 +68,7 @@ function normalizeDatabaseUrl(
     const configuredConnectionLimit = getPositiveIntEnv("PRISMA_CONNECTION_LIMIT");
     const desiredConnectionLimit = resolveRuntimeConnectionLimit(configuredConnectionLimit);
     const configuredPoolTimeout = getPositiveIntEnv("PRISMA_POOL_TIMEOUT_SECONDS");
-    const desiredPoolTimeout = configuredPoolTimeout ?? (isServerlessRuntime ? (isProduction ? 10 : 8) : (isProduction ? 8 : 10));
+    const desiredPoolTimeout = configuredPoolTimeout ?? (isServerlessRuntime ? (isProduction ? 15 : 10) : (isProduction ? 8 : 10));
 
     const ensureSessionSafetyOptions = (target: URL, targetNotes: string[]) => {
       if (target.searchParams.has("options")) return;
@@ -206,13 +207,27 @@ if (datasourceRuntime) {
   }
 }
 
-const prisma = new PrismaClient({
-  ...(normalizedDb.url ? { datasources: { db: { url: normalizedDb.url } } } : {}),
-  log: logConfig.map((level) => ({
-    emit: "event" as const,
-    level,
-  })),
-});
+type PrismaClientWithEvents = PrismaClient<Prisma.PrismaClientOptions, "query" | "warn" | "error">;
+
+type PrismaGlobalState = {
+  client?: PrismaClientWithEvents;
+  listenersAttached?: boolean;
+};
+
+const prismaGlobal = globalThis as typeof globalThis & {
+  __phewPrisma?: PrismaGlobalState;
+};
+const prismaState = prismaGlobal.__phewPrisma ??= {};
+
+const prisma =
+  prismaState.client ??
+  (prismaState.client = new PrismaClient({
+    ...(normalizedDb.url ? { datasources: { db: { url: normalizedDb.url } } } : {}),
+    log: logConfig.map((level) => ({
+      emit: "event" as const,
+      level,
+    })),
+  }) as PrismaClientWithEvents);
 
 const isSqlite = (normalizedDb.url || process.env.DATABASE_URL || "").startsWith("file:");
 const isPostgres = !isSqlite;
@@ -308,60 +323,64 @@ function flushPrismaLatencySummaryIfDue(nowMs: number): void {
   prismaLatencyMetrics.clear();
 }
 
-prisma.$on("query", (e: Prisma.QueryEvent) => {
-  const nowMs = Date.now();
-  const label = inferPrismaQueryLabel(e.query);
-  const metric = prismaLatencyMetrics.get(label) ?? {
-    count: 0,
-    totalDurationMs: 0,
-    maxDurationMs: 0,
-    slowCount: 0,
-    lastDurationMs: 0,
-    lastSeenAt: new Date(nowMs).toISOString(),
-  };
+if (!prismaState.listenersAttached) {
+  prisma.$on("query", (e: Prisma.QueryEvent) => {
+    const nowMs = Date.now();
+    const label = inferPrismaQueryLabel(e.query);
+    const metric = prismaLatencyMetrics.get(label) ?? {
+      count: 0,
+      totalDurationMs: 0,
+      maxDurationMs: 0,
+      slowCount: 0,
+      lastDurationMs: 0,
+      lastSeenAt: new Date(nowMs).toISOString(),
+    };
 
-  metric.count += 1;
-  metric.totalDurationMs += e.duration;
-  metric.maxDurationMs = Math.max(metric.maxDurationMs, e.duration);
-  metric.lastDurationMs = e.duration;
-  metric.lastSeenAt = new Date(nowMs).toISOString();
-  if (e.duration >= PRISMA_QUERY_LATENCY_WARN_MS) {
-    metric.slowCount += 1;
-  }
-  prismaLatencyMetrics.set(label, metric);
-
-  if (isProduction) {
-    // In production, only log slow queries
+    metric.count += 1;
+    metric.totalDurationMs += e.duration;
+    metric.maxDurationMs = Math.max(metric.maxDurationMs, e.duration);
+    metric.lastDurationMs = e.duration;
+    metric.lastSeenAt = new Date(nowMs).toISOString();
     if (e.duration >= PRISMA_QUERY_LATENCY_WARN_MS) {
-      console.warn("[Prisma] Slow query", {
-        label,
-        timestamp: new Date(nowMs).toISOString(),
-        durationMs: e.duration,
-        target: e.target,
-        datasourceMode: datasourceRuntime?.mode ?? null,
-        query: normalizeQuerySnippet(e.query).substring(0, 200),
-      });
+      metric.slowCount += 1;
     }
-  } else {
-    // In development, log all queries
-    console.log(`[Prisma Query] ${e.query} - ${e.duration}ms`);
-  }
+    prismaLatencyMetrics.set(label, metric);
 
-  flushPrismaLatencySummaryIfDue(nowMs);
-});
+    if (isProduction) {
+      // In production, only log slow queries
+      if (e.duration >= PRISMA_QUERY_LATENCY_WARN_MS) {
+        console.warn("[Prisma] Slow query", {
+          label,
+          timestamp: new Date(nowMs).toISOString(),
+          durationMs: e.duration,
+          target: e.target,
+          datasourceMode: datasourceRuntime?.mode ?? null,
+          query: normalizeQuerySnippet(e.query).substring(0, 200),
+        });
+      }
+    } else {
+      // In development, log all queries
+      console.log(`[Prisma Query] ${e.query} - ${e.duration}ms`);
+    }
 
-// Log warnings
-prisma.$on("warn", (e: Prisma.LogEvent) => {
-  console.warn(`[Prisma Warning] ${e.message}`);
-});
+    flushPrismaLatencySummaryIfDue(nowMs);
+  });
 
-// Log errors
-prisma.$on("error", (e: Prisma.LogEvent) => {
-  console.error(`[Prisma Error] ${e.message}`);
-  if (e.message.toLowerCase().includes("prepared statement")) {
-    console.error("[Prisma] Hint: Supabase pooler URL should include pgbouncer=true and a suitable connection_limit/pool_timeout");
-  }
-});
+  // Log warnings
+  prisma.$on("warn", (e: Prisma.LogEvent) => {
+    console.warn(`[Prisma Warning] ${e.message}`);
+  });
+
+  // Log errors
+  prisma.$on("error", (e: Prisma.LogEvent) => {
+    console.error(`[Prisma Error] ${e.message}`);
+    if (e.message.toLowerCase().includes("prepared statement")) {
+      console.error("[Prisma] Hint: Supabase pooler URL should include pgbouncer=true and a suitable connection_limit/pool_timeout");
+    }
+  });
+
+  prismaState.listenersAttached = true;
+}
 
 // IMPORTANT: SQLite optimizations for local file databases only
 async function initSqlitePragmas(prisma: PrismaClient) {

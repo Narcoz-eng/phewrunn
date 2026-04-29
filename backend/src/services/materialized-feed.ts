@@ -374,16 +374,22 @@ function buildLightweightFeedItem(post: LightweightFeedPost): EnrichedCall {
 }
 
 async function listLightweightPosts(args: FeedArgs, limit: number) {
-  const followed =
-    args.kind === "following" && args.viewerId
-      ? await Promise.all([
-          prisma.follow.findMany({ where: { followerId: args.viewerId }, select: { followingId: true } }),
-          prisma.tokenFollow.findMany({ where: { userId: args.viewerId }, select: { tokenId: true } }),
-        ])
-      : null;
-  const followedTraderIds = followed?.[0].map((item) => item.followingId) ?? [];
-  const followedTokenIds = followed?.[1].map((item) => item.tokenId) ?? [];
-  if (args.kind === "following" && followedTraderIds.length === 0 && followedTokenIds.length === 0) return [];
+  let followedTraderIds: string[] = [];
+  let followedTokenIds: string[] = [];
+  if (args.kind === "following") {
+    if (!args.viewerId) return [];
+    const followedTraderRows = await prisma.follow.findMany({
+      where: { followerId: args.viewerId },
+      select: { followingId: true },
+    });
+    const followedTokenRows = await prisma.tokenFollow.findMany({
+      where: { userId: args.viewerId },
+      select: { tokenId: true },
+    });
+    followedTraderIds = followedTraderRows.map((item) => item.followingId);
+    followedTokenIds = followedTokenRows.map((item) => item.tokenId);
+    if (followedTraderIds.length === 0 && followedTokenIds.length === 0) return [];
+  }
 
   const whereClauses: Prisma.PostWhereInput[] = [];
   if (args.cursor) {
@@ -460,10 +466,30 @@ async function listLatestAlphaInventory(args: FeedArgs, limit: number): Promise<
   });
 }
 
+async function listAnyRecentInventory(args: FeedArgs, limit: number): Promise<LightweightFeedPost[]> {
+  if (args.kind === "following") return [];
+  return prisma.post.findMany({
+    where: {
+      ...(args.cursor ? { createdAt: { lt: new Date(Number.isFinite(Number(args.cursor)) ? Number(args.cursor) : Date.now()) } } : {}),
+    },
+    select: LIGHTWEIGHT_FEED_SELECT,
+    orderBy: [
+      { highConvictionScore: "desc" },
+      { hotAlphaScore: "desc" },
+      { earlyRunnerScore: "desc" },
+      { createdAt: "desc" },
+    ],
+    take: limit + 1,
+  });
+}
+
 async function listLightweightFeed(args: FeedArgs, limit: number): Promise<FeedListResult> {
   let rows = await listLightweightPosts(args, limit);
   if (args.kind !== "following" && !args.search?.trim() && !args.postType && rows.length === 0) {
     rows = await listLatestAlphaInventory(args, limit);
+  }
+  if (args.kind !== "following" && !args.search?.trim() && !args.postType && rows.length === 0) {
+    rows = await listAnyRecentInventory(args, limit);
   }
   const rankedRows = [...rows].sort((left, right) => {
     const leftScore = lightweightProductScore(left, toFinite(left.confidenceScore) ?? toFinite(left.highConvictionScore) ?? 0);
@@ -496,7 +522,7 @@ function canUseMaterializedFeed(args: FeedArgs): boolean {
 }
 
 function buildMaterializedFeedKey(kind: FeedKind): string {
-  return `feed:materialized:v2:${kind}`;
+  return `feed:materialized:v3:${kind}:scope:public`;
 }
 
 function buildRedisFeedKey(kind: FeedKind): string {
@@ -568,12 +594,24 @@ async function refreshMaterializedFeed(kind: FeedKind): Promise<MaterializedFeed
         },
         MATERIALIZED_FEED_LIMIT
       );
+      const existingRead = await readMaterializedEnvelope(kind);
+      const existing = existingRead.envelope;
       if (result.items.length === 0) {
-        const existing = readMemoryEnvelope(key);
         console.warn("[feed/materialized] refresh produced no items; preserving last good", {
           kind,
           latencyMs: Date.now() - startedAt,
           hadLastGood: Boolean(existing?.result.items.length),
+          lastGoodSource: existingRead.source,
+        });
+        return existing;
+      }
+      if (existing && existing.result.items.length >= 5 && result.items.length < 5) {
+        console.warn("[feed/materialized] refresh produced too few items; preserving last good", {
+          kind,
+          itemCount: result.items.length,
+          lastGoodItems: existing.result.items.length,
+          lastGoodSource: existingRead.source,
+          latencyMs: Date.now() - startedAt,
         });
         return existing;
       }

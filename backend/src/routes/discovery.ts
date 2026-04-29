@@ -1,5 +1,6 @@
 import { Hono } from "hono";
-import { prisma } from "../prisma.js";
+import { isPrismaPoolPressureActive, prisma } from "../prisma.js";
+import { cacheGetJson, cacheSetJson } from "../lib/redis.js";
 import { getCachedMarketCapSnapshot } from "../services/marketcap.js";
 
 export const discoveryRouter = new Hono();
@@ -12,7 +13,18 @@ const DISCOVERY_WHALE_MAX_AGE_MS = 24 * 60 * 60_000;
 const DISCOVERY_WHALE_ARCHIVE_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
 const DISCOVERY_SIDEBAR_CACHE_TTL_MS = 45_000;
 const DISCOVERY_SIDEBAR_STALE_MS = 5 * 60_000;
-const DISCOVERY_SIDEBAR_COLD_WAIT_MS = 180;
+const DISCOVERY_SIDEBAR_REDIS_KEY = "phew:discovery:feed-sidebar:v2";
+const DISCOVERY_SIDEBAR_REFRESH_MIN_MS = 60_000;
+
+const EMPTY_DISCOVERY_SIDEBAR_PAYLOAD = {
+  marketStats: null,
+  topGainers: [],
+  liveRaids: [],
+  trendingCalls: [],
+  trendingCommunities: [],
+  aiSpotlight: null,
+  whaleActivity: [],
+};
 
 type DiscoverySidebarPayload = Awaited<ReturnType<typeof buildDiscoveryFeedSidebarPayload>>;
 type DiscoverySidebarCacheEntry = {
@@ -22,6 +34,7 @@ type DiscoverySidebarCacheEntry = {
 
 let discoverySidebarCache: DiscoverySidebarCacheEntry | null = null;
 let discoverySidebarInFlight: Promise<DiscoverySidebarPayload | null> | null = null;
+let discoverySidebarLastRefreshStartedAt = 0;
 
 function toNumber(value: number | null | undefined, fallback = 0): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
@@ -93,10 +106,24 @@ function parseReactionSummary(value: unknown): { count: number; positiveBias: nu
 
 async function refreshDiscoverySidebar(): Promise<DiscoverySidebarPayload | null> {
   if (discoverySidebarInFlight) return discoverySidebarInFlight;
+  const now = Date.now();
+  const cached = await readDiscoverySidebarCache();
+  if (now - discoverySidebarLastRefreshStartedAt < DISCOVERY_SIDEBAR_REFRESH_MIN_MS) {
+    return cached?.entry.data ?? null;
+  }
+  if (await isPrismaPoolPressureActive()) {
+    console.warn("[discovery/feed-sidebar] refresh skipped during prisma pool pressure", {
+      hadCached: Boolean(cached?.entry.data),
+    });
+    return cached?.entry.data ?? null;
+  }
   const startedAt = Date.now();
+  discoverySidebarLastRefreshStartedAt = startedAt;
   discoverySidebarInFlight = buildDiscoveryFeedSidebarPayload()
     .then((data) => {
-      discoverySidebarCache = { cachedAtMs: Date.now(), data };
+      const entry = { cachedAtMs: Date.now(), data };
+      discoverySidebarCache = entry;
+      void cacheSetJson(DISCOVERY_SIDEBAR_REDIS_KEY, entry, DISCOVERY_SIDEBAR_STALE_MS);
       console.info("[discovery/feed-sidebar] refresh complete", {
         latencyMs: Date.now() - startedAt,
         topGainers: data.topGainers.length,
@@ -119,25 +146,33 @@ async function refreshDiscoverySidebar(): Promise<DiscoverySidebarPayload | null
   return discoverySidebarInFlight;
 }
 
-function queueDiscoverySidebarRefresh(): boolean {
+function queueDiscoverySidebarRefresh(reason = "request"): boolean {
   if (discoverySidebarInFlight) return false;
+  if (Date.now() - discoverySidebarLastRefreshStartedAt < DISCOVERY_SIDEBAR_REFRESH_MIN_MS) return false;
+  console.info("[discovery/feed-sidebar] refresh queued", { reason });
   void refreshDiscoverySidebar();
   return true;
 }
 
-function readDiscoverySidebarCache(): { entry: DiscoverySidebarCacheEntry; state: "fresh" | "stale" } | null {
-  if (!discoverySidebarCache) return null;
-  const ageMs = Date.now() - discoverySidebarCache.cachedAtMs;
-  if (ageMs > DISCOVERY_SIDEBAR_STALE_MS) {
+async function readDiscoverySidebarCache(): Promise<{ entry: DiscoverySidebarCacheEntry; state: "fresh" | "stale" } | null> {
+  if (discoverySidebarCache) {
+    const ageMs = Date.now() - discoverySidebarCache.cachedAtMs;
+    if (ageMs <= DISCOVERY_SIDEBAR_STALE_MS) {
+      return { entry: discoverySidebarCache, state: ageMs <= DISCOVERY_SIDEBAR_CACHE_TTL_MS ? "fresh" : "stale" };
+    }
     discoverySidebarCache = null;
-    return null;
   }
-  return { entry: discoverySidebarCache, state: ageMs <= DISCOVERY_SIDEBAR_CACHE_TTL_MS ? "fresh" : "stale" };
+
+  const redisEntry = await cacheGetJson<DiscoverySidebarCacheEntry>(DISCOVERY_SIDEBAR_REDIS_KEY);
+  if (!redisEntry?.data || typeof redisEntry.cachedAtMs !== "number") return null;
+  const ageMs = Date.now() - redisEntry.cachedAtMs;
+  if (ageMs > DISCOVERY_SIDEBAR_STALE_MS) return null;
+  discoverySidebarCache = redisEntry;
+  return { entry: redisEntry, state: ageMs <= DISCOVERY_SIDEBAR_CACHE_TTL_MS ? "fresh" : "stale" };
 }
 
 async function buildDiscoveryFeedSidebarPayload() {
-  const [topTokens, liveRaids, recentCalls, communities, whaleEvents] = await Promise.all([
-    prisma.token.findMany({
+  const topTokens = await prisma.token.findMany({
       select: {
         id: true,
         address: true,
@@ -165,8 +200,9 @@ async function buildDiscoveryFeedSidebarPayload() {
       },
       orderBy: [{ highConvictionScore: "desc" }, { confidenceScore: "desc" }, { updatedAt: "desc" }],
       take: 8,
-    }),
-    prisma.tokenRaidCampaign.findMany({
+    });
+
+  const liveRaids = await prisma.tokenRaidCampaign.findMany({
       where: { status: "active" },
       select: {
         id: true,
@@ -190,8 +226,9 @@ async function buildDiscoveryFeedSidebarPayload() {
       },
       orderBy: { openedAt: "desc" },
       take: 3,
-    }),
-    prisma.post.findMany({
+    });
+
+  const recentCalls = await prisma.post.findMany({
       where: {
         OR: [
           { confidenceScore: { not: null } },
@@ -227,8 +264,9 @@ async function buildDiscoveryFeedSidebarPayload() {
       },
       orderBy: [{ createdAt: "desc" }],
       take: 30,
-    }),
-    prisma.token.findMany({
+    });
+
+  const communities = await prisma.token.findMany({
       where: {
         communityProfile: { isNot: null },
       },
@@ -254,11 +292,12 @@ async function buildDiscoveryFeedSidebarPayload() {
         },
       },
       take: 8,
-    }),
-    prisma.tokenEvent.findMany({
+    });
+
+  const whaleEvents = await prisma.tokenEvent.findMany({
       where: {
         eventType: { in: ["whale_buy", "whale_sell", "whale_transfer_in", "whale_transfer_out", "whale_accumulation", "whale_distribution"] },
-        timestamp: { gte: new Date(Date.now() - DISCOVERY_WHALE_MAX_AGE_MS) },
+        timestamp: { gte: new Date(Date.now() - DISCOVERY_WHALE_ARCHIVE_MAX_AGE_MS) },
       },
       select: {
         id: true,
@@ -276,16 +315,13 @@ async function buildDiscoveryFeedSidebarPayload() {
       },
       orderBy: { timestamp: "desc" },
       take: 8,
-    }),
-  ]);
+    });
 
   const providerSnapshots = new Map<string, Awaited<ReturnType<typeof getCachedMarketCapSnapshot>>>();
-  await Promise.all(
-    topTokens.slice(0, 8).map(async (token) => {
-      const result = await withTimeout(getCachedMarketCapSnapshot(token.address, token.chainType), 1_600);
-      if (result) providerSnapshots.set(token.id, result);
-    })
-  );
+  for (const token of topTokens.slice(0, 8)) {
+    const result = await withTimeout(getCachedMarketCapSnapshot(token.address, token.chainType), 1_600);
+    if (result) providerSnapshots.set(token.id, result);
+  }
 
   const tokenRows = topTokens.map((token) => {
     const provider = providerSnapshots.get(token.id) ?? null;
@@ -509,39 +545,14 @@ async function buildDiscoveryFeedSidebarPayload() {
         (toNumber(a.highConvictionScore) + toNumber(a.confidenceScore)),
     )[0];
 
-  let effectiveWhaleEvents = whaleEvents;
-  let whaleCoverage: "live" | "recent" = "live";
-  if (effectiveWhaleEvents.length === 0) {
-    effectiveWhaleEvents = await prisma.tokenEvent.findMany({
-      where: {
-        eventType: { in: ["whale_buy", "whale_sell", "whale_transfer_in", "whale_transfer_out", "whale_accumulation", "whale_distribution"] },
-        timestamp: { gte: new Date(Date.now() - DISCOVERY_WHALE_ARCHIVE_MAX_AGE_MS) },
-      },
-      select: {
-        id: true,
-        eventType: true,
-        timestamp: true,
-        metadata: true,
-        token: {
-          select: {
-            address: true,
-            symbol: true,
-            name: true,
-            imageUrl: true,
-          },
-        },
-      },
-      orderBy: { timestamp: "desc" },
-      take: 8,
-    });
-    whaleCoverage = "recent";
-  }
+  const effectiveWhaleEvents = whaleEvents;
 
   const whaleActivity = effectiveWhaleEvents
     .map((event) => {
       const metadata = event.metadata && typeof event.metadata === "object" && !Array.isArray(event.metadata)
         ? event.metadata as Record<string, unknown>
         : {};
+      const whaleCoverage: "live" | "recent" = isFreshDate(event.timestamp, DISCOVERY_WHALE_MAX_AGE_MS) ? "live" : "recent";
       return {
         id: event.id,
         tokenAddress: event.token.address,
@@ -560,7 +571,7 @@ async function buildDiscoveryFeedSidebarPayload() {
         coverage: whaleCoverage,
       };
     })
-    .filter((event) => isFreshDate(event.asOf, whaleCoverage === "live" ? DISCOVERY_WHALE_MAX_AGE_MS : DISCOVERY_WHALE_ARCHIVE_MAX_AGE_MS));
+    .filter((event) => isFreshDate(event.asOf, event.coverage === "live" ? DISCOVERY_WHALE_MAX_AGE_MS : DISCOVERY_WHALE_ARCHIVE_MAX_AGE_MS));
 
   return {
       marketStats,
@@ -605,9 +616,9 @@ async function buildDiscoveryFeedSidebarPayload() {
 
 discoveryRouter.get("/feed-sidebar", async (c) => {
   const startedAt = Date.now();
-  const cached = readDiscoverySidebarCache();
+  const cached = await readDiscoverySidebarCache();
   if (cached) {
-    const refreshQueued = cached.state === "stale" ? queueDiscoverySidebarRefresh() : false;
+    const refreshQueued = cached.state === "stale" ? queueDiscoverySidebarRefresh("stale-cache") : false;
     c.header("X-Discovery-Cache", cached.state);
     console.info("[discovery/feed-sidebar] served cache", {
       cacheState: cached.state,
@@ -617,28 +628,11 @@ discoveryRouter.get("/feed-sidebar", async (c) => {
     return c.json({ data: cached.entry.data });
   }
 
-  const cold = await Promise.race([
-    refreshDiscoverySidebar(),
-    new Promise<null>((resolve) => setTimeout(() => resolve(null), DISCOVERY_SIDEBAR_COLD_WAIT_MS)),
-  ]);
-  if (cold) {
-    c.header("X-Discovery-Cache", "cold");
-    return c.json({ data: cold });
-  }
-
+  const refreshQueued = queueDiscoverySidebarRefresh("cold-cache");
   c.header("X-Discovery-Cache", "warming");
-  console.warn("[discovery/feed-sidebar] cold cache warming; returning compact empty payload", {
+  console.warn("[discovery/feed-sidebar] cold cache warming in background; request path stayed cache-only", {
+    refreshQueued,
     latencyMs: Date.now() - startedAt,
   });
-  return c.json({
-    data: {
-      marketStats: null,
-      topGainers: [],
-      liveRaids: [],
-      trendingCalls: [],
-      trendingCommunities: [],
-      aiSpotlight: null,
-      whaleActivity: [],
-    },
-  });
+  return c.json({ data: EMPTY_DISCOVERY_SIDEBAR_PAYLOAD });
 });
