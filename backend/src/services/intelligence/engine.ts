@@ -1798,6 +1798,173 @@ function readJsonNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+const WHALE_FEED_EVENT_TYPES = [
+  "whale_buy",
+  "whale_sell",
+  "whale_transfer_in",
+  "whale_transfer_out",
+  "whale_accumulation",
+  "whale_distribution",
+];
+
+function buildWhaleFeedItem(event: Prisma.TokenEventGetPayload<{ include: { token: { select: typeof TOKEN_SELECT } } }>): EnrichedCall {
+  const metadata = readJsonRecord(event.metadata);
+  const tokenContext: FeedTokenContext = {
+    address: event.token.address,
+    symbol: event.token.symbol,
+    name: event.token.name,
+    logo: event.token.imageUrl,
+    chain: event.token.chainType,
+    dexscreenerUrl: event.token.dexscreenerUrl,
+    pairAddress: event.token.pairAddress,
+  };
+  const symbol = tokenContext.symbol ? `$${tokenContext.symbol}` : tokenContext.name ?? "Tracked token";
+  const action =
+    readJsonString(metadata?.direction) ??
+    event.eventType.replace(/^whale_/, "").replaceAll("_", " ");
+  const valueUsd = readJsonNumber(metadata?.valueUsd) ?? event.volume ?? null;
+  const coverage = {
+    signal: feedCoverage("live", readJsonString(metadata?.source) ?? "token-event"),
+    candles: feedCoverage("partial", "token-event", "Whale event has no chart requirement."),
+  };
+  const author = {
+    id: "system-whale-flow",
+    name: "Whale Flow",
+    username: "whaleflow",
+    image: null,
+    level: 0,
+    xp: 0,
+    isVerified: true,
+    winRate7d: null,
+    winRate30d: null,
+    avgRoi7d: null,
+    avgRoi30d: null,
+    trustScore: 100,
+    reputationTier: "Verified",
+    firstCallCount: 0,
+    firstCallAvgRoi: null,
+    lastTraderMetricsAt: null,
+  } as AuthorRecord;
+
+  return {
+    id: `whale-${event.id}`,
+    content: `${symbol} ${action}`,
+    postType: "whale",
+    pollExpiresAt: null,
+    authorId: author.id,
+    tokenId: event.tokenId,
+    communityId: null,
+    contractAddress: event.token.address,
+    chainType: event.token.chainType,
+    tokenName: event.token.name,
+    tokenSymbol: event.token.symbol,
+    tokenImage: event.token.imageUrl,
+    dexscreenerUrl: event.token.dexscreenerUrl,
+    entryMcap: null,
+    currentMcap: event.marketCap,
+    mcap1h: null,
+    mcap6h: null,
+    lastMcapUpdate: null,
+    viewCount: 0,
+    settled: false,
+    settledAt: null,
+    isWin: null,
+    createdAt: event.timestamp,
+    updatedAt: event.createdAt,
+    author,
+    token: event.token,
+    community: null,
+    _count: { likes: 0, comments: 0, reposts: 0, reactions: 0 },
+    itemType: "whale",
+    payload: {
+      call: null,
+      chart: null,
+      poll: null,
+      raid: null,
+      news: null,
+      whale: {
+        status: "live",
+        unavailableReason: null,
+        eventId: event.id,
+        wallet: readJsonString(metadata?.wallet),
+        token: tokenContext,
+        action,
+        amount: readJsonNumber(metadata?.amount),
+        valueUsd,
+        txHash: readJsonString(metadata?.txHash) ?? readJsonString(metadata?.signature),
+        explorerUrl: readJsonString(metadata?.explorerUrl),
+        timestamp: event.timestamp.toISOString(),
+        source: readJsonString(metadata?.source) ?? "token-event",
+      },
+      discussion: null,
+    },
+    poll: null,
+    tokenContext,
+    signal: null,
+    isLiked: false,
+    isReposted: false,
+    isFollowingAuthor: false,
+    engagement: { likes: 0, comments: 0, reposts: 0, reactions: 0, views: 0, velocity: 0 },
+    coverage,
+    feedScore: 0,
+    feedReasons: ["Verified whale flow"],
+    scoreReasons: ["Verified whale flow"],
+    repostContext: null,
+    currentReactionType: null,
+    reactionCounts: {},
+    confidenceScore: 0,
+    hotAlphaScore: 0,
+    earlyRunnerScore: 0,
+    highConvictionScore: 0,
+    marketHealthScore: 0,
+    setupQualityScore: 0,
+    opportunityScore: 0,
+    dataReliabilityScore: 100,
+    activityStatus: "live",
+    activityStatusLabel: "Live",
+    isTradable: true,
+    bullishSignalsSuppressed: false,
+    timingTier: "Whale Flow",
+    firstCallerRank: null,
+    roiPeakPct: null,
+    roiCurrentPct: null,
+    threadCount: 0,
+    trustedTraderCount: 0,
+    entryQualityScore: 0,
+    bundlePenaltyScore: 0,
+    sentimentScore: 0,
+    lastIntelligenceAt: null,
+    tokenRiskScore: null,
+    bundleRiskLabel: null,
+    liquidity: event.liquidity,
+    volume24h: null,
+    holderCount: null,
+    largestHolderPct: null,
+    top10HolderPct: null,
+    bundledWalletCount: null,
+    estimatedBundledSupplyPct: null,
+    bundleClusters: [],
+    radarReasons: [],
+  } as unknown as EnrichedCall;
+}
+
+async function listRecentWhaleFeedItems(args: FeedArgs, followedTokenIds: string[], limit: number): Promise<EnrichedCall[]> {
+  if (args.cursor || args.search?.trim()) return [];
+  if (args.kind !== "latest" && args.kind !== "hot-alpha" && args.kind !== "following") return [];
+  if (args.kind === "following" && followedTokenIds.length === 0) return [];
+  const events = await prisma.tokenEvent.findMany({
+    where: {
+      eventType: { in: WHALE_FEED_EVENT_TYPES },
+      timestamp: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+      ...(args.kind === "following" ? { tokenId: { in: followedTokenIds } } : {}),
+    },
+    include: { token: { select: TOKEN_SELECT } },
+    orderBy: { timestamp: "desc" },
+    take: Math.min(4, Math.max(1, Math.ceil(limit / 3))),
+  }).catch(() => []);
+  return events.map(buildWhaleFeedItem);
+}
+
 async function enrichSelectedFeedPayloads(items: EnrichedCall[]): Promise<EnrichedCall[]> {
   if (items.length === 0) return items;
 
@@ -1811,6 +1978,14 @@ async function enrichSelectedFeedPayloads(items: EnrichedCall[]): Promise<Enrich
     .map((item) => item.tokenId!)
   ));
   const marketCandidates: EnrichedCall[] = [];
+  for (const item of items) {
+    if ((item.payload.call?.needsChart || item.payload.chart?.needsChart) && (item.token?.address || item.contractAddress)) {
+      chartCandidates.push(item);
+    }
+    if (item.payload.call && (item.token?.address || item.contractAddress)) {
+      marketCandidates.push(item);
+    }
+  }
   const whaleTokenIds = Array.from(new Set(items
     .filter((item) => (item.postType === "whale" || item.postType === "alpha" || item.postType === "chart") && item.tokenId)
     .map((item) => item.tokenId!)
@@ -5091,15 +5266,21 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
         args.kind,
         await applyFeedRankingContext(args.kind, hydratedBeforeRanking, followedTraderIds, followedTokenIds)
       );
+      const whaleFeedItems = await listRecentWhaleFeedItems(args, followedTokenIds, limit);
+      const rankedFeedItems = [...whaleFeedItems, ...hydrated].sort((left, right) => {
+        if (left.itemType === "whale" && right.itemType !== "whale") return -1;
+        if (right.itemType === "whale" && left.itemType !== "whale") return 1;
+        return right.createdAt.getTime() - left.createdAt.getTime();
+      });
       const alphaCandidates = hydrated.filter((item) => item.postType === "alpha" || item.postType === "chart").length;
       const startIndex =
         isDirectChronologicalFeed && cursorBoundary
           ? 0
           : args.cursor
-            ? Math.max(0, hydrated.findIndex((item) => item.id === args.cursor) + 1)
+            ? Math.max(0, rankedFeedItems.findIndex((item) => item.id === args.cursor) + 1)
             : 0;
       const items = await enrichSelectedFeedPayloads(
-        hydrated.slice(startIndex, startIndex + limit).map(sanitizeFeedItemForResponse)
+        rankedFeedItems.slice(startIndex, startIndex + limit).map(sanitizeFeedItemForResponse)
       );
       const selectedCallCandidates = items.filter((item) => item.payload.call || item.payload.chart).length;
       const selectedChartPreviews = items.filter((item) => {
@@ -5107,19 +5288,19 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
         return preview?.state === "live" && Array.isArray(preview.candles) && preview.candles.length >= 8;
       }).length;
       const nextCursor =
-        items.length === limit && hydrated[startIndex + limit]
+        items.length === limit && rankedFeedItems[startIndex + limit]
           ? items[items.length - 1]?.id ?? null
           : null;
 
       return {
         items,
-        hasMore: startIndex + limit < hydrated.length,
+        hasMore: startIndex + limit < rankedFeedItems.length,
         nextCursor,
-        totalItems: hydrated.length,
+        totalItems: rankedFeedItems.length,
         debugCounts: {
           backendReturned,
           afterKindFilter: baseHydrated.length,
-          afterRanking: hydrated.length,
+          afterRanking: rankedFeedItems.length,
           selected: items.length,
           alphaCandidates,
           selectedCallCandidates,

@@ -41,7 +41,7 @@ function timeAgo(value: string | null | undefined): string | null {
 }
 
 function convictionLabel(score: number | null): string {
-  if (score === null) return "Awaiting signal";
+  if (score === null) return "Early setup";
   if (score >= 75) return "Strong conviction";
   if (score >= 55) return "Medium conviction";
   return "Weak conviction";
@@ -61,7 +61,7 @@ function RailCard({ title, children, action }: { title: string; children: ReactN
 
 function RailUnavailable({ message }: { message: string }) {
   return (
-    <div className="rounded-[12px] border border-dashed border-white/10 bg-white/[0.02] px-3 py-3 text-sm leading-5 text-white/48">
+    <div className="rounded-[11px] border border-white/8 bg-white/[0.025] px-2.5 py-2 text-xs leading-5 text-white/48">
       {message}
     </div>
   );

@@ -1,10 +1,17 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { BarChart3, BrainCircuit, ExternalLink, Heart, LineChart, MessageSquare, MoreVertical, Newspaper, RadioTower, Repeat2, ShieldCheck, ShieldHalf, TrendingUp, Vote, Waves, Zap } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { isValidCandleSeries } from "@/lib/data-validators";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
+import {
+  feedChartCacheKeys,
+  getCachedFeedChart,
+  isLiveFeedChartPreview,
+  loadFeedChartOnce,
+  setCachedFeedChart,
+} from "@/lib/feed-chart-cache";
 import { getAvatarUrl, type FeedCoverage, type Post } from "@/types";
 import type { FeedChartPreview, FeedMarketValue } from "@/types";
 
@@ -16,31 +23,6 @@ type FeedV2PostCardProps = {
   onComment?: (postId: string, content: string) => Promise<void> | void;
   onPollVote?: (postId: string, optionId: string) => Promise<void> | void;
 };
-
-const feedChartPreviewCache = new Map<string, { value: FeedChartPreview; expiresAt: number }>();
-
-function feedChartCacheKey(token: Post["tokenContext"] | null | undefined, timeframe = "1h"): string | null {
-  if (!token?.address) return null;
-  return `${token.chain ?? "any"}:${token.address.toLowerCase()}:${timeframe}`;
-}
-
-function getCachedFeedChart(key: string | null): FeedChartPreview | null {
-  if (!key) return null;
-  const cached = feedChartPreviewCache.get(key);
-  if (!cached || cached.expiresAt <= Date.now()) {
-    if (cached) feedChartPreviewCache.delete(key);
-    return null;
-  }
-  return cached.value;
-}
-
-function setCachedFeedChart(key: string | null, value: FeedChartPreview): void {
-  if (!key) return;
-  const existing = getCachedFeedChart(key);
-  if (existing?.state === "live" && value.state !== "live") return;
-  const ttl = value.state === "live" ? value.maxAgeMs ?? 60_000 : 8_000;
-  feedChartPreviewCache.set(key, { value, expiresAt: Date.now() + ttl });
-}
 
 function formatUsd(value: number): string {
   if (Math.abs(value) >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(2)}B`;
@@ -72,6 +54,25 @@ function formatMarketValue(metric: FeedMarketValue): string | null {
   return formatMetric(metric.value, metric.unit);
 }
 
+function numericMarketValue(metric: FeedMarketValue | null | undefined): number | null {
+  if (!metric || metric.value === null || metric.valueType === "unavailable") return null;
+  return typeof metric.value === "number" && Number.isFinite(metric.value) ? metric.value : null;
+}
+
+function suggestedTradeLevels(payload: NonNullable<NonNullable<Post["payload"]>["call"]>) {
+  const entry = numericMarketValue(payload.market?.entry);
+  const current = numericMarketValue(payload.market?.current);
+  const liveMove = numericMarketValue(payload.market?.liveMove);
+  const base = entry ?? current;
+  const direction = payload.direction ?? "LONG";
+  const volatility = Math.max(0.05, Math.min(0.18, Math.abs((liveMove ?? 8) / 100) * 0.8));
+  if (!base || base <= 0) return { targets: [] as string[], stopLoss: null as string | null };
+  const sign = direction === "SHORT" ? -1 : 1;
+  const targets = [1, 2].map((step) => `${formatUsd(base * (1 + sign * volatility * step))} suggested`);
+  const stopLoss = `${formatUsd(base * (1 - sign * volatility * 0.72))} suggested`;
+  return { targets, stopLoss };
+}
+
 function riskMeaning(label: string | null | undefined): string | null {
   const normalized = label?.trim();
   if (!normalized || /unknown|neutral|clean|unavailable|pending/i.test(normalized)) return null;
@@ -79,7 +80,7 @@ function riskMeaning(label: string | null | undefined): string | null {
 }
 
 function convictionMeaning(value: string | number | null | undefined, coverage?: FeedCoverage | null): string {
-  if (coverage?.state === "unavailable") return "Awaiting confirmation";
+  if (coverage?.state === "unavailable") return "Early setup";
   if (typeof value === "string") {
     const normalized = value.toLowerCase();
     if (normalized.includes("high") || normalized.includes("strong")) return "Strong";
@@ -87,11 +88,11 @@ function convictionMeaning(value: string | number | null | undefined, coverage?:
     if (normalized.includes("low") || normalized.includes("weak")) return "Weak";
   }
   const numeric = typeof value === "number" && Number.isFinite(value) ? value : null;
-  if (numeric === null) return coverage?.state === "partial" ? "Medium" : "Awaiting confirmation";
+  if (numeric === null) return coverage?.state === "partial" ? "Medium" : "Early setup";
   if (numeric >= 78) return "Strong";
   if (numeric >= 58) return "Medium";
   if (numeric >= 35) return "Weak";
-  return "Awaiting confirmation";
+  return "Early setup";
 }
 
 function scoreMeaning(value: number | null | undefined): string | null {
@@ -103,8 +104,8 @@ function scoreMeaning(value: number | null | undefined): string | null {
 }
 
 function momentumMeaning(value: number | null | undefined, coverage?: FeedCoverage | null): string {
-  if (coverage?.state === "unavailable") return "Awaiting trend";
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return coverage?.state === "partial" || coverage?.state === "live" ? "Flat" : "Awaiting trend";
+  if (coverage?.state === "unavailable") return "Momentum unconfirmed";
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return coverage?.state === "partial" || coverage?.state === "live" ? "Flat" : "Momentum unconfirmed";
   if (value >= 82) return "Accelerating";
   if (value >= 58) return "Building";
   if (value >= 35) return "Flat";
@@ -115,13 +116,13 @@ function smartMoneyMeaning(value: number | null | undefined, trustedTraderCount:
   if (trustedTraderCount && trustedTraderCount > 0) {
     if (typeof value === "number" && Number.isFinite(value) && value >= 70) return "Accumulating";
     if (typeof value === "number" && Number.isFinite(value) && value > 0 && value < 40) return "Distributing";
-    return "No recent flow";
+    return "No recent smart-money flow";
   }
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return coverage?.state === "partial" || coverage?.state === "live" ? "No recent flow" : "Flow pending";
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return coverage?.state === "partial" || coverage?.state === "live" ? "No recent smart-money flow" : "No recent smart-money flow";
   if (value >= 70) return "Accumulating";
-  if (value >= 45) return "No recent flow";
-  if (value > 0) return "No recent flow";
-  return "Flow pending";
+  if (value >= 45) return "No recent smart-money flow";
+  if (value > 0) return "No recent smart-money flow";
+  return "No recent smart-money flow";
 }
 
 function aiPrimaryInsight(post: Post, items: Array<{ label: string; value: string }>, fallbackReason: string): string {
@@ -146,8 +147,8 @@ function aiPrimaryInsight(post: Post, items: Array<{ label: string; value: strin
   if (conviction === "Medium" && momentum === "Building") {
     return `${token} is developing, with momentum improving but not yet a full-strength signal.`;
   }
-  if (items.every((item) => item.value === "Awaiting confirmation" || item.value === "Awaiting trend" || item.value === "Flow pending" || item.value === "Unknown")) {
-    return `${token} is queued for confirmation as market, wallet, and risk coverage hydrates.`;
+  if (items.every((item) => item.value === "Early setup" || item.value === "Momentum unconfirmed" || item.value === "No recent smart-money flow" || item.value === "Risk not defined")) {
+    return `${token} is an early setup while market, wallet, and risk coverage forms.`;
   }
   return fallbackReason;
 }
@@ -155,7 +156,7 @@ function aiPrimaryInsight(post: Post, items: Array<{ label: string; value: strin
 function riskState(label: string | null | undefined, riskScore: number | null | undefined): string {
   const normalized = riskMeaning(label);
   if (normalized) return normalized;
-  if (typeof riskScore !== "number" || !Number.isFinite(riskScore)) return "Unknown";
+  if (typeof riskScore !== "number" || !Number.isFinite(riskScore)) return "Risk not defined";
   if (riskScore >= 70) return "High";
   if (riskScore >= 40) return "Medium";
   return "Low";
@@ -407,7 +408,7 @@ function AiReadStrip({ post, convictionLabel }: { post: Post; convictionLabel: s
   const dominantReason =
     (post.scoreReasons ?? post.feedReasons ?? post.signal?.scoreReasons ?? []).find((reason) => reason && !NOISY_FEED_REASONS.has(reason)) ??
     post.coverage?.signal.unavailableReason ??
-    "Awaiting stronger market confirmation.";
+    "Market conviction is still forming.";
   const smartMoney = smartMoneyMeaning(post.signal?.smartMoneyScore, post.trustedTraderCount, post.coverage?.signal);
   const items = [
     {
@@ -426,7 +427,7 @@ function AiReadStrip({ post, convictionLabel }: { post: Post; convictionLabel: s
       label: "Smart Money",
       value: smartMoney,
       icon: Waves,
-      tone: smartMoney === "Flow pending" ? "text-white/48" : "text-cyan-200",
+      tone: smartMoney === "No recent smart-money flow" ? "text-white/48" : "text-cyan-200",
     },
     {
       label: "Risk",
@@ -446,7 +447,7 @@ function AiReadStrip({ post, convictionLabel }: { post: Post; convictionLabel: s
         {items.map((item) => {
           const Icon = item.icon;
           return (
-            <div key={item.label} className={cn("flex items-center gap-2 px-3 py-2.5", (item.value === "Awaiting confirmation" || item.value === "Flow pending" || item.value === "Awaiting trend") && "bg-white/[0.012]")}>
+            <div key={item.label} className={cn("flex items-center gap-2 px-3 py-2.5", (item.value === "Early setup" || item.value === "No recent smart-money flow" || item.value === "Momentum unconfirmed" || item.value === "Risk not defined") && "bg-white/[0.012]")}>
               <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/8 bg-black/28">
                 <Icon className={cn("h-4 w-4", item.tone)} />
               </span>
@@ -467,12 +468,13 @@ function ChartPreviewState({ post, reason, dominant = false }: { post: Post; rea
   const payloadPreview = post.payload?.call?.chartPreview ?? post.payload?.chart?.chartPreview ?? null;
   const token = post.payload?.call?.token ?? post.payload?.chart?.token ?? post.tokenContext ?? null;
   const timeframe = post.payload?.chart?.timeframe ?? "1h";
-  const cacheKey = feedChartCacheKey(token, timeframe);
+  const cacheKeys = useMemo(() => feedChartCacheKeys(post, timeframe), [post, timeframe]);
+  const primaryCacheKey = cacheKeys[1] ?? cacheKeys[0] ?? null;
   const [preview, setPreview] = useState<FeedChartPreview | null>(() => {
-    const cached = getCachedFeedChart(cacheKey);
+    const cached = getCachedFeedChart(cacheKeys);
     if (cached) return cached;
-    if (payloadPreview?.state === "live") {
-      setCachedFeedChart(cacheKey, payloadPreview);
+    if (isLiveFeedChartPreview(payloadPreview)) {
+      setCachedFeedChart(cacheKeys, payloadPreview);
       return payloadPreview;
     }
     return null;
@@ -480,10 +482,10 @@ function ChartPreviewState({ post, reason, dominant = false }: { post: Post; rea
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (!token?.address || !cacheKey || preview?.state === "live") return;
+    if (!token?.address || !primaryCacheKey || preview?.state === "live") return;
     let cancelled = false;
     const load = async () => {
-      const cached = getCachedFeedChart(cacheKey);
+      const cached = getCachedFeedChart(cacheKeys);
       if (cached?.state === "live") {
         if (!cancelled) setPreview(cached);
         return;
@@ -491,9 +493,9 @@ function ChartPreviewState({ post, reason, dominant = false }: { post: Post; rea
       const params = new URLSearchParams({ tokenAddress: token.address! });
       if (token.pairAddress) params.set("pairAddress", token.pairAddress);
       if (token.chain) params.set("chainType", token.chain);
-      const result = await api.get<FeedChartPreview>(`/api/feed/chart-preview?${params.toString()}`);
-      setCachedFeedChart(cacheKey, result);
-      if (!cancelled) setPreview(getCachedFeedChart(cacheKey) ?? result);
+      const result = await loadFeedChartOnce(primaryCacheKey, () => api.get<FeedChartPreview>(`/api/feed/chart-preview?${params.toString()}`));
+      setCachedFeedChart(cacheKeys, result);
+      if (!cancelled) setPreview(getCachedFeedChart(cacheKeys) ?? result);
     };
 
     const node = containerRef.current;
@@ -512,7 +514,7 @@ function ChartPreviewState({ post, reason, dominant = false }: { post: Post; rea
       cancelled = true;
       observer.disconnect();
     };
-  }, [cacheKey, preview?.state, token?.address, token?.chain, token?.pairAddress]);
+  }, [cacheKeys, preview?.state, primaryCacheKey, token?.address, token?.chain, token?.pairAddress]);
 
   const candles = preview?.candles ?? null;
   if (isValidCandleSeries(candles) && candles.length >= 12) {
@@ -588,7 +590,7 @@ function ChartPreviewState({ post, reason, dominant = false }: { post: Post; rea
       <div className="mb-2 flex items-center justify-between gap-3 text-xs">
         <span className="font-semibold text-white/62">{post.tokenContext?.symbol ? `$${post.tokenContext.symbol}` : "Market"} / USD</span>
         <span className="rounded-full border border-white/8 bg-white/[0.035] px-2 py-0.5 text-white/40">
-          {preview?.state === "unavailable" ? "Market data loading" : "Hydrating"}
+          {preview?.state === "unavailable" ? "Targets forming" : "Price syncing"}
         </span>
       </div>
       <div className={cn("relative overflow-hidden rounded-[10px] border border-white/6 bg-[linear-gradient(180deg,rgba(169,255,52,0.035),rgba(255,255,255,0.012))]", dominant ? "h-52" : "h-32")} aria-label={post.coverage?.candles.unavailableReason || reason}>
@@ -597,7 +599,7 @@ function ChartPreviewState({ post, reason, dominant = false }: { post: Post; rea
         <div className="absolute inset-x-0 top-3/4 border-t border-white/5" />
         <div className="absolute bottom-3 left-4 right-4 h-10 rounded-full bg-[linear-gradient(90deg,rgba(169,255,52,0.04),rgba(169,255,52,0.15),rgba(18,215,170,0.06))] blur-sm" />
         <div className="absolute left-4 top-4 text-xs font-semibold text-white/42">
-          {token?.address ? "Loading candles and volume..." : "No active token pair attached yet."}
+          {token?.address ? "Price action syncing..." : "Early setup"}
         </div>
       </div>
     </div>
@@ -614,40 +616,49 @@ function FeedPostCallCard(props: FeedV2PostCardProps) {
   const convictionLabel = payload.signalLabel ?? payload.metrics.find((metric) => metric.unit === "score")?.value;
   const market = payload.market;
   const targetValues = Array.isArray(payload.targets) ? payload.targets.map(formatMarketValue).filter((value): value is string => Boolean(value)) : [];
+  const suggestedLevels = suggestedTradeLevels(payload);
+  const resolvedTargets = targetValues.length > 0 ? targetValues : suggestedLevels.targets;
+  const resolvedStopLoss = payload.stopLoss && formatMarketValue(payload.stopLoss) ? formatMarketValue(payload.stopLoss)! : suggestedLevels.stopLoss;
+  const confidenceValue =
+    typeof payload.confidence === "number" && Number.isFinite(payload.confidence)
+      ? payload.confidence
+      : typeof post.signal?.aiScore === "number" && Number.isFinite(post.signal.aiScore)
+        ? post.signal.aiScore
+        : null;
   const setupMetrics = [
-    { label: "Current", value: market?.current && formatMarketValue(market.current) ? formatMarketValue(market.current)! : "Market data loading", emphasis: true, tone: "neutral" as const },
+    { label: "Current", value: market?.current && formatMarketValue(market.current) ? formatMarketValue(market.current)! : "Price syncing", emphasis: true, tone: "neutral" as const },
     market?.liveMove && formatMarketValue(market.liveMove) ? {
       label: "Live Move",
       value: formatMarketValue(market.liveMove)!,
       emphasis: (market.liveMove.value ?? 0) > 0,
       tone: (market.liveMove.value ?? 0) >= 0 ? "positive" as const : "negative" as const,
-    } : { label: "Live Move", value: "Awaiting confirmation", emphasis: false, tone: "neutral" as const },
-    { label: "Entry", value: market?.entry && formatMarketValue(market.entry) ? formatMarketValue(market.entry)! : "Not set", emphasis: false, tone: "neutral" as const },
+    } : { label: "Live Move", value: "Momentum unconfirmed", emphasis: false, tone: "neutral" as const },
+    { label: "Entry", value: market?.entry && formatMarketValue(market.entry) ? formatMarketValue(market.entry)! : "Early setup", emphasis: false, tone: "neutral" as const },
     market?.peakMove && formatMarketValue(market.peakMove) ? {
       label: "Peak",
       value: formatMarketValue(market.peakMove)!,
       emphasis: (market.peakMove.value ?? 0) > 0,
       tone: (market.peakMove.value ?? 0) >= 0 ? "positive" as const : "negative" as const,
-    } : { label: "Peak", value: "Awaiting move", emphasis: false, tone: "neutral" as const },
+    } : { label: "Peak", value: "Targets forming", emphasis: false, tone: "neutral" as const },
     {
       label: "Targets",
-      value: targetValues.length > 0 ? targetValues.join(" / ") : "Not set",
+      value: resolvedTargets.length > 0 ? resolvedTargets.join(" / ") : "Targets forming",
       emphasis: false,
-      tone: targetValues.length > 0 ? "positive" as const : "neutral" as const,
+      tone: resolvedTargets.length > 0 ? "positive" as const : "neutral" as const,
     },
     {
       label: "Stop Loss",
-      value: payload.stopLoss && formatMarketValue(payload.stopLoss) ? formatMarketValue(payload.stopLoss)! : "Not set",
+      value: resolvedStopLoss ?? "Risk not defined",
       emphasis: false,
-      tone: payload.stopLoss && formatMarketValue(payload.stopLoss) ? "negative" as const : "neutral" as const,
+      tone: resolvedStopLoss ? "negative" as const : "neutral" as const,
     },
-    typeof payload.confidence === "number" && Number.isFinite(payload.confidence) ? {
+    confidenceValue !== null ? {
       label: "Confidence",
-      value: `${Math.round(payload.confidence)}%`,
-      emphasis: payload.confidence >= 70,
-      tone: payload.confidence >= 70 ? "positive" as const : "neutral" as const,
-    } : { label: "Confidence", value: "Awaiting signal", emphasis: false, tone: "neutral" as const },
-    { label: "Timeframe", value: post.timingTier ?? "Not set", emphasis: false, tone: "neutral" as const },
+      value: `${Math.round(confidenceValue)}%`,
+      emphasis: confidenceValue >= 70,
+      tone: confidenceValue >= 70 ? "positive" as const : "neutral" as const,
+    } : { label: "Confidence", value: "Early setup", emphasis: false, tone: "neutral" as const },
+    { label: "Mode", value: "Spot setup", emphasis: false, tone: "neutral" as const },
   ];
   const liveMove = market?.liveMove?.valueType === "live" ? formatSignedPct(market.liveMove.value) : null;
   const staleMarketReason = market?.current?.valueType === "stale" ? market.current.fallbackReason ?? "Current market data is stale." : null;
@@ -688,8 +699,8 @@ function FeedPostCallCard(props: FeedV2PostCardProps) {
         <div className="grid gap-2 sm:grid-cols-4 xl:grid-cols-7">
           {setupMetrics.map((metric) => <SetupMetric key={metric.label} {...metric} />)}
         </div>
+        <ChartPreviewState post={post} reason={payload.chartPreview?.unavailableReason ?? "Targets forming."} dominant />
       </div>
-      <ChartPreviewState post={post} reason={payload.chartPreview?.unavailableReason ?? "No valid chart preview."} dominant />
       {staleMarketReason ? (
         <CompactNotice title="Stale market data" reason={staleMarketReason} />
       ) : null}

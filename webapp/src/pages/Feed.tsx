@@ -8,6 +8,7 @@ import { useAuth, useSession } from "@/lib/auth-client";
 import { readSessionCache, writeSessionCache } from "@/lib/session-cache";
 import { applyPostPollVote } from "@/lib/post-poll";
 import { cn } from "@/lib/utils";
+import { stabilizePostChartPreview } from "@/lib/feed-chart-cache";
 import type { DiscoveryFeedSidebarResponse, FeedTab, Post, User } from "@/types";
 import { FeedV2PostCard } from "@/components/feed/FeedV2PostCard";
 import { FeedV2RightRail } from "@/components/feed/FeedV2RightRail";
@@ -67,40 +68,6 @@ const FEED_TAB_ITEMS: Array<{
   { id: "early-runners", label: "X Raids", icon: Radar },
 ];
 
-const chartPreviewCache = new Map<string, NonNullable<NonNullable<Post["payload"]>["call"]>["chartPreview"]>();
-
-function chartPreviewKeys(post: Post): string[] {
-  const payload = post.payload;
-  const token = payload?.call?.token ?? payload?.chart?.token ?? post.tokenContext ?? null;
-  return [
-    `post:${post.id}`,
-    token?.address ? `token:${token.chain ?? "any"}:${token.address.toLowerCase()}` : null,
-    token?.symbol ? `symbol:${token.symbol.toLowerCase()}` : null,
-  ].filter((key): key is string => Boolean(key));
-}
-
-function isLiveChartPreview(preview: NonNullable<NonNullable<Post["payload"]>["call"]>["chartPreview"] | null | undefined): boolean {
-  return Boolean(preview && preview.state === "live" && Array.isArray(preview.candles) && preview.candles.length >= 8);
-}
-
-function stabilizePostChartPreview(post: Post): Post {
-  const payload = post.payload;
-  const preview = payload?.call?.chartPreview ?? payload?.chart?.chartPreview ?? null;
-  if (isLiveChartPreview(preview)) {
-    for (const key of chartPreviewKeys(post)) chartPreviewCache.set(key, preview);
-    return post;
-  }
-  const cached = chartPreviewKeys(post).map((key) => chartPreviewCache.get(key)).find(isLiveChartPreview);
-  if (!cached || !isLiveChartPreview(cached) || !payload) return post;
-  if (payload.call) {
-    return { ...post, payload: { ...payload, call: { ...payload.call, chartPreview: cached } } };
-  }
-  if (payload.chart) {
-    return { ...post, payload: { ...payload, chart: { ...payload.chart, chartPreview: cached } } };
-  }
-  return post;
-}
-
 function normalizeFeedResponse(data: FeedApiPayload): FeedPage {
   if (!data || !Array.isArray(data.items)) {
     throw new ApiError("Feed payload was invalid. Please retry.", 500, data);
@@ -119,21 +86,22 @@ function feedQueryKey(tab: FeedTab, search: string, viewerScope: string) {
   return ["feed", tab, search, viewerScope] as const;
 }
 
-function updatePostInPages(
+function updatePostInAllFeedPages(
   queryClient: ReturnType<typeof useQueryClient>,
-  queryKey: ReturnType<typeof feedQueryKey>,
   updater: (post: Post) => Post
 ) {
-  queryClient.setQueryData<InfiniteData<FeedPage>>(queryKey, (oldData) => {
-    if (!oldData) return oldData;
-    return {
-      ...oldData,
-      pages: oldData.pages.map((page) => ({
-        ...page,
-        items: page.items.map(updater),
-      })),
-    };
-  });
+  for (const [queryKey] of queryClient.getQueriesData<InfiniteData<FeedPage>>({ queryKey: ["feed"] })) {
+    queryClient.setQueryData<InfiniteData<FeedPage>>(queryKey, (oldData) => {
+      if (!oldData) return oldData;
+      return {
+        ...oldData,
+        pages: oldData.pages.map((page) => ({
+          ...page,
+          items: page.items.map(updater),
+        })),
+      };
+    });
+  }
 }
 
 function isWriteAuthError(error: unknown): boolean {
@@ -154,6 +122,26 @@ function FeedError({ error, onRetry }: { error: Error; onRetry: () => void }) {
         <RefreshCw className="mr-2 h-4 w-4" />
         Try Again
       </Button>
+    </div>
+  );
+}
+
+function TabFeedSkeleton() {
+  return (
+    <div className="rounded-[16px] border border-white/8 bg-white/[0.025] p-3">
+      <div className="flex items-center gap-3">
+        <div className="h-9 w-9 rounded-full bg-white/[0.07]" />
+        <div className="min-w-0 flex-1 space-y-2">
+          <div className="h-3 w-40 max-w-full rounded-full bg-white/[0.08]" />
+          <div className="h-3 w-64 max-w-full rounded-full bg-white/[0.045]" />
+        </div>
+        <div className="h-7 w-24 rounded-[9px] bg-lime-300/[0.08]" />
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-4">
+        {[0, 1, 2, 3].map((index) => (
+          <div key={index} className="h-14 rounded-[12px] border border-white/7 bg-black/20" />
+        ))}
+      </div>
     </div>
   );
 }
@@ -249,16 +237,16 @@ export default function Feed() {
   }, [feedCurrentUserCacheKey, user]);
 
   const fetchFeedPage = useCallback(
-    async (pageParam?: string): Promise<FeedPage> => {
-      let endpoint = `/api/feed/${activeTab}`;
+    async (args: { tab: FeedTab; search: string; pageParam?: string }): Promise<FeedPage> => {
+      let endpoint = `/api/feed/${args.tab}`;
       const params = new URLSearchParams();
       params.set("limit", String(FEED_PAGE_SIZE));
-      if (effectiveSearchQuery) params.set("search", effectiveSearchQuery);
-      if (pageParam) params.set("cursor", pageParam);
+      if (args.search) params.set("search", args.search);
+      if (args.pageParam) params.set("cursor", args.pageParam);
       endpoint += `?${params.toString()}`;
       return normalizeFeedResponse(await api.get<FeedApiPayload>(endpoint, { cache: "no-store" }));
     },
-    [activeTab, effectiveSearchQuery]
+    []
   );
 
   const {
@@ -274,11 +262,10 @@ export default function Feed() {
   } = useInfiniteQuery({
     queryKey: activeFeedQueryKey,
     initialPageParam: undefined as string | undefined,
-    queryFn: ({ pageParam }) => fetchFeedPage(pageParam),
+    queryFn: ({ pageParam }) => fetchFeedPage({ tab: activeTab, search: effectiveSearchQuery, pageParam }),
     getNextPageParam: (lastPage) => (lastPage.hasMore ? lastPage.nextCursor ?? undefined : undefined),
     maxPages: FEED_MAX_PAGES,
     enabled: activeTab !== "following" || hasLiveSession,
-    placeholderData: (previousData) => previousData,
     staleTime: 30_000,
     gcTime: 5 * 60_000,
     retry: (failureCount, error) => {
@@ -296,6 +283,30 @@ export default function Feed() {
   const firstPageDebugCounts = postsPages?.pages[0]?.debugCounts ?? null;
   const showFeedDiagnostics = Boolean(import.meta.env.DEV || user?.isAdmin);
   const isAuthWritePending = Boolean(session?.user) && !canPerformAuthenticatedWrites;
+
+  useEffect(() => {
+    if (!isPostsFetched || effectiveSearchQuery) return;
+    const tabOrder = FEED_TAB_ITEMS.map((item) => item.id);
+    const activeIndex = tabOrder.indexOf(activeTab);
+    const neighborTabs = activeTab === "latest"
+      ? (["following", "hot-alpha"] as FeedTab[])
+      : [tabOrder[activeIndex - 1], tabOrder[activeIndex + 1]].filter((tab): tab is FeedTab => Boolean(tab));
+
+    for (const tab of neighborTabs) {
+      if (tab === activeTab) continue;
+      if (tab === "following" && !hasLiveSession) continue;
+      const queryKey = feedQueryKey(tab, "", viewerScope);
+      if (queryClient.getQueryData(queryKey)) continue;
+      void queryClient.prefetchInfiniteQuery({
+        queryKey,
+        initialPageParam: undefined as string | undefined,
+        queryFn: ({ pageParam }) => fetchFeedPage({ tab, search: "", pageParam }),
+        getNextPageParam: (lastPage) => (lastPage.hasMore ? lastPage.nextCursor ?? undefined : undefined),
+        pages: 1,
+        staleTime: 30_000,
+      });
+    }
+  }, [activeTab, effectiveSearchQuery, fetchFeedPage, hasLiveSession, isPostsFetched, queryClient, viewerScope]);
 
   useEffect(() => {
     if (!hasInitialFeedResult) return;
@@ -362,7 +373,7 @@ export default function Feed() {
       return { postId, isLiked };
     },
     onMutate: ({ postId, isLiked }) => {
-      updatePostInPages(queryClient, activeFeedQueryKey, (post) =>
+      updatePostInAllFeedPages(queryClient, (post) =>
         post.id === postId
           ? {
               ...post,
@@ -385,7 +396,7 @@ export default function Feed() {
       return { postId, isReposted };
     },
     onMutate: ({ postId, isReposted }) => {
-      updatePostInPages(queryClient, activeFeedQueryKey, (post) =>
+      updatePostInAllFeedPages(queryClient, (post) =>
         post.id === postId
           ? {
               ...post,
@@ -411,10 +422,10 @@ export default function Feed() {
       return { postId, poll };
     },
     onMutate: ({ postId, optionId }) => {
-      updatePostInPages(queryClient, activeFeedQueryKey, (post) => (post.id === postId ? applyPostPollVote(post, optionId) : post));
+      updatePostInAllFeedPages(queryClient, (post) => (post.id === postId ? applyPostPollVote(post, optionId) : post));
     },
     onSuccess: ({ postId, poll }) => {
-      updatePostInPages(queryClient, activeFeedQueryKey, (post) =>
+      updatePostInAllFeedPages(queryClient, (post) =>
         post.id === postId
           ? {
               ...post,
@@ -599,16 +610,7 @@ export default function Feed() {
             ) : null}
 
             {isLoadingPosts && !hasPosts ? (
-              <>
-                {[0, 1, 2].map((index) => (
-                  <PostCardSkeleton
-                    key={index}
-                    showMarketData={index < 2}
-                    className="animate-fade-in-up"
-                    style={{ animationDelay: `${index * 0.1}s` }}
-                  />
-                ))}
-              </>
+              <TabFeedSkeleton />
             ) : shouldShowFollowingSessionRecovery ? (
               <div className="app-empty-state">
                 <RefreshCw className="h-10 w-10 animate-spin text-muted-foreground" />
