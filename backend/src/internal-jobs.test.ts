@@ -78,7 +78,9 @@ describe("internal job control plane", () => {
     expect(headers.get("Authorization")).toBe("Bearer qstash_token");
     expect(headers.get("Upstash-Method")).toBe("POST");
     expect(headers.get("Upstash-Retries")).toBe("5");
-    expect(headers.get("Upstash-Deduplication-Id")).toContain("internal-job:post_fanout:");
+    const deduplicationId = headers.get("Upstash-Deduplication-Id");
+    expect(deduplicationId).toMatch(/^internal-job-post-fanout-[a-f0-9]{40}$/);
+    expect(deduplicationId).not.toContain(":");
     expect(headers.get("Upstash-Flow-Control-Key")).toBe("job:post_fanout");
     expect(headers.get("Upstash-Flow-Control-Value")).toBe("parallelism=6, rate=120, period=1m");
     expect(headers.get("Upstash-Not-Before")).toBe(

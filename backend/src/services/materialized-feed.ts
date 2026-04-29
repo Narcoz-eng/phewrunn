@@ -16,7 +16,7 @@ type MaterializedFeedEnvelope = {
 
 type MaterializedFeedRead = FeedListResult & {
   materialized: {
-    source: "memory" | "redis" | "latest-cache" | "empty";
+    source: "memory" | "redis" | "latest-cache" | "fallback-db" | "empty";
     cacheState: "fresh" | "stale" | "warming" | "missing";
     refreshQueued: boolean;
     latencyMs: number;
@@ -26,6 +26,9 @@ type MaterializedFeedRead = FeedListResult & {
 type LightweightFeedPost = Awaited<ReturnType<typeof listLightweightPosts>>[number];
 
 const MATERIALIZED_FEED_LIMIT = 40;
+const MATERIALIZED_FEED_MIN_CACHE_ITEMS = 10;
+const MATERIALIZED_FEED_DB_FALLBACK_MIN_LIMIT = 10;
+const MATERIALIZED_FEED_DB_FALLBACK_LIMIT = 20;
 const MATERIALIZED_FEED_TTL_MS = 45_000;
 const MATERIALIZED_FEED_STALE_MS = 10 * 60_000;
 const MATERIALIZED_FEED_REFRESH_MIN_MS = 20_000;
@@ -486,6 +489,28 @@ async function listAnyRecentInventory(args: FeedArgs, limit: number): Promise<Li
   });
 }
 
+async function supplementSparsePublicInventory(
+  args: FeedArgs,
+  rows: LightweightFeedPost[],
+  limit: number
+): Promise<LightweightFeedPost[]> {
+  if (args.kind === "following" || args.search?.trim() || args.postType) return rows;
+  if (rows.length >= Math.min(limit, MATERIALIZED_FEED_MIN_CACHE_ITEMS)) return rows;
+
+  const fallbackRows = await listAnyRecentInventory(args, limit);
+  if (fallbackRows.length === 0) return rows;
+
+  const seen = new Set(rows.map((row) => row.id));
+  const merged = [...rows];
+  for (const row of fallbackRows) {
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    merged.push(row);
+    if (merged.length >= limit + 1) break;
+  }
+  return merged;
+}
+
 async function listLightweightFeed(args: FeedArgs, limit: number): Promise<FeedListResult> {
   let rows = await listLightweightPosts(args, limit);
   if (args.kind !== "following" && !args.search?.trim() && !args.postType && rows.length === 0) {
@@ -494,6 +519,7 @@ async function listLightweightFeed(args: FeedArgs, limit: number): Promise<FeedL
   if (args.kind !== "following" && !args.search?.trim() && !args.postType && rows.length === 0) {
     rows = await listAnyRecentInventory(args, limit);
   }
+  rows = await supplementSparsePublicInventory(args, rows, limit);
   const rankedRows = [...rows].sort((left, right) => {
     const leftScore = lightweightProductScore(left, toFinite(left.confidenceScore) ?? toFinite(left.highConvictionScore) ?? 0);
     const rightScore = lightweightProductScore(right, toFinite(right.confidenceScore) ?? toFinite(right.highConvictionScore) ?? 0);
@@ -507,6 +533,48 @@ async function listLightweightFeed(args: FeedArgs, limit: number): Promise<FeedL
     nextCursor: rows.length > limit ? String(rows[limit - 1]?.createdAt.getTime() ?? "") : null,
     totalItems: rows.length,
     degraded: false,
+    debugCounts: {
+      backendReturned: rows.length,
+      afterKindFilter: rows.length,
+      afterRanking: rows.length,
+      selected: items.length,
+      alphaCandidates: items.filter((item) => item.payload.call || item.payload.chart).length,
+      selectedCallCandidates: items.filter((item) => item.payload.call || item.payload.chart).length,
+      selectedChartPreviews: 0,
+      hidden: 0,
+    },
+  };
+}
+
+async function listMinimalLatestPostsFromDb(args: FeedArgs, limit: number): Promise<FeedListResult> {
+  const fallbackLimit = Math.max(
+    MATERIALIZED_FEED_DB_FALLBACK_MIN_LIMIT,
+    Math.min(MATERIALIZED_FEED_DB_FALLBACK_LIMIT, limit)
+  );
+  const whereClauses: Prisma.PostWhereInput[] = [];
+  const cursorMs = args.cursor && Number.isFinite(Number(args.cursor)) ? Number(args.cursor) : null;
+  if (cursorMs) {
+    whereClauses.push({ createdAt: { lt: new Date(cursorMs) } });
+  }
+  if (args.postType) {
+    whereClauses.push({ postType: args.postType });
+  }
+  const where = whereClauses.length === 0 ? undefined : whereClauses.length === 1 ? whereClauses[0] : { AND: whereClauses };
+  const rows = await prisma.post.findMany({
+    where,
+    select: LIGHTWEIGHT_FEED_SELECT,
+    orderBy: { createdAt: "desc" },
+    take: fallbackLimit + 1,
+  });
+  const selectedRows = rows.slice(0, fallbackLimit);
+  const items = selectedRows.map(buildLightweightFeedItem);
+  const hasMore = rows.length > fallbackLimit;
+  return {
+    items,
+    hasMore,
+    nextCursor: hasMore ? String(selectedRows[selectedRows.length - 1]?.createdAt.getTime() ?? "") : null,
+    totalItems: rows.length,
+    degraded: true,
     debugCounts: {
       backendReturned: rows.length,
       afterKindFilter: rows.length,
@@ -695,16 +763,16 @@ async function refreshMaterializedFeed(
         });
         return existing;
       }
-      if (existing && existing.result.items.length >= 5 && result.items.length < 5) {
+      if (result.items.length < MATERIALIZED_FEED_MIN_CACHE_ITEMS) {
         console.warn("[feed/materialized] refresh produced too few items; preserving last good", {
           kind,
           scope: kind === "following" ? "user" : "public",
           itemCount: result.items.length,
-          lastGoodItems: existing.result.items.length,
+          lastGoodItems: existing?.result.items.length ?? 0,
           lastGoodSource: existingRead.source,
           latencyMs: Date.now() - startedAt,
         });
-        return existing;
+        return existing ?? null;
       }
       const envelope: MaterializedFeedEnvelope = {
         cachedAtMs: Date.now(),
@@ -853,6 +921,35 @@ export async function listMaterializedFeedCalls(args: FeedArgs): Promise<Materia
         latencyMs: Date.now() - startedAt,
       },
     };
+  }
+
+  try {
+    const fallbackResult = await listMinimalLatestPostsFromDb(args, limit);
+    if (fallbackResult.items.length > 0) {
+      console.warn("[feed/materialized] served lightweight DB fallback while cache warms", {
+        kind: args.kind,
+        selected: fallbackResult.items.length,
+        totalItems: fallbackResult.totalItems,
+        refreshQueued,
+        latencyMs: Date.now() - startedAt,
+      });
+      return {
+        ...fallbackResult,
+        materialized: {
+          source: "fallback-db",
+          cacheState: "missing",
+          refreshQueued,
+          latencyMs: Date.now() - startedAt,
+        },
+      };
+    }
+  } catch (error) {
+    console.warn("[feed/materialized] lightweight DB fallback failed", {
+      kind: args.kind,
+      refreshQueued,
+      latencyMs: Date.now() - startedAt,
+      message: error instanceof Error ? error.message : String(error),
+    });
   }
 
   console.warn("[feed/materialized] no stored feed inventory available", {

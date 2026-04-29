@@ -44,7 +44,11 @@ import {
   writeCachedMeResponse,
 } from "./lib/me-response-cache.js";
 import { cacheGetJson, cacheSetJson, redisDelete } from "./lib/redis.js";
-import { getInternalJobQueueHealthSummary } from "./lib/job-queue.js";
+import {
+  enqueueInternalJob,
+  getInternalJobQueueHealthSummary,
+  hasQStashPublishConfig,
+} from "./lib/job-queue.js";
 import { startIntelligencePriorityLoop } from "./services/intelligence/engine.js";
 import { startMaterializedFeedPrewarmLoop } from "./services/materialized-feed.js";
 import { handleRealtimeUpgrade, realtimeWebSocketHandlers } from "./lib/realtime.js";
@@ -163,10 +167,14 @@ const BACKGROUND_MAINTENANCE_LOOP_ENABLED = (() => {
   if (raw === "false") return false;
   return IS_WORKER_PROCESS && !(process.env.NODE_ENV === "production" && IS_SERVERLESS_RUNTIME);
 })();
+const STARTUP_CACHE_WARM_ENABLED =
+  process.env.STARTUP_CACHE_WARM_ENABLED?.trim().toLowerCase() !== "false";
+const STARTUP_CACHE_WARM_BUCKET_MS = 60_000;
 const INTELLIGENCE_PRIORITY_AUTH_QUIET_MS = process.env.NODE_ENV === "production" ? 10_000 : 5_000;
 let lastAuthSensitiveRequestAt = Date.now();
 let backgroundLoopsBootstrapped = false;
 let backgroundLoopsBootstrapTimer: ReturnType<typeof setTimeout> | null = null;
+let startupCacheWarmQueued = false;
 
 function isAuthSensitivePath(path: string): boolean {
   return path === "/api/me" || path === "/api/me/stats" || path.startsWith("/api/auth/");
@@ -213,6 +221,56 @@ function scheduleBackgroundLoopBootstrap(): void {
       startMaintenanceLoop({ canRun });
     }
   }, remainingQuietMs);
+}
+
+function queueStartupCacheWarm(): void {
+  if (!STARTUP_CACHE_WARM_ENABLED || startupCacheWarmQueued) {
+    return;
+  }
+  if (!hasQStashPublishConfig()) {
+    if (process.env.NODE_ENV === "production") {
+      console.warn("[startup/cache-warm] skipped; queue publish config missing");
+    }
+    return;
+  }
+
+  startupCacheWarmQueued = true;
+  const bucket = Math.floor(Date.now() / STARTUP_CACHE_WARM_BUCKET_MS);
+  const jobs = [
+    {
+      jobName: "feed_refresh" as const,
+      idempotencyKey: `startup-feed-latest-${bucket}`,
+      payload: { kind: "latest", viewerId: null, reason: "startup" },
+    },
+    {
+      jobName: "feed_refresh" as const,
+      idempotencyKey: `startup-feed-hot-alpha-${bucket}`,
+      payload: { kind: "hot-alpha", viewerId: null, reason: "startup" },
+    },
+    {
+      jobName: "sidebar_refresh" as const,
+      idempotencyKey: `startup-sidebar-v2-${bucket}`,
+      payload: { reason: "startup" },
+    },
+  ];
+
+  void Promise.allSettled(jobs.map((job) => enqueueInternalJob(job))).then((results) => {
+    const failures = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (failures.length > 0) {
+      console.warn("[startup/cache-warm] enqueue failed", {
+        queued: results.length - failures.length,
+        failed: failures.length,
+        errors: failures
+          .map((failure) => failure.reason instanceof Error ? failure.reason.message : String(failure.reason))
+          .slice(0, 3),
+      });
+    }
+    console.info("[startup/cache-warm] queued", {
+      queued: results.length - failures.length,
+      failed: failures.length,
+      jobs: jobs.map((job) => job.idempotencyKey),
+    });
+  });
 }
 
 function canBypassStrictPrismaReadiness(path: string): boolean {
@@ -3895,6 +3953,7 @@ console.log(`
 ====================================
 `);
 
+queueStartupCacheWarm();
 scheduleBackgroundLoopBootstrap();
 
 // =====================================================

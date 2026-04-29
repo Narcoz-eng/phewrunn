@@ -81,16 +81,39 @@ export function registerInternalJobHandlers(): void {
 
   registerInternalJobHandler("feed_refresh", async ({ envelope }) => {
     const payload = feedRefreshPayloadSchema.parse(envelope.payload);
+    console.info("[worker] feed_refresh started", {
+      jobId: envelope.jobId,
+      kind: payload.kind ?? null,
+      scope: payload.viewerId ? "user" : "public",
+      reason: payload.reason ?? null,
+    });
     const result = await runMaterializedFeedRefreshJob({
       kind: payload.kind ?? null,
       viewerId: payload.viewerId ?? null,
+    });
+    console.info("[worker] feed_refresh complete", {
+      jobId: envelope.jobId,
+      kind: payload.kind ?? null,
+      refreshed: result.refreshed,
+      skipped: result.skipped,
+      itemCount: result.itemCount,
     });
     return coerceResult(result);
   });
 
   registerInternalJobHandler("sidebar_refresh", async ({ envelope }) => {
-    maintenanceReasonPayloadSchema.parse(envelope.payload);
+    const payload = maintenanceReasonPayloadSchema.parse(envelope.payload);
+    console.info("[worker] sidebar_refresh started", {
+      jobId: envelope.jobId,
+      reason: payload.reason ?? null,
+    });
     const data = await runDiscoverySidebarRefreshJob();
+    console.info("[worker] sidebar_refresh complete", {
+      jobId: envelope.jobId,
+      topGainers: data?.topGainers.length ?? 0,
+      trendingCalls: data?.trendingCalls.length ?? 0,
+      whaleRows: data?.whaleActivity.length ?? 0,
+    });
     return coerceResult({
       topGainers: data?.topGainers.length ?? 0,
       trendingCalls: data?.trendingCalls.length ?? 0,

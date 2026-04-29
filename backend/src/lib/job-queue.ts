@@ -325,7 +325,8 @@ function hashValue(value: string): string {
 }
 
 function buildQueueDeduplicationId(jobName: InternalJobName, idempotencyKey: string): string {
-  return `${QSTASH_HEADER_LABEL_PREFIX}:${jobName}:${hashValue(idempotencyKey)}`;
+  const safeJobName = jobName.replaceAll("_", "-");
+  return `${QSTASH_HEADER_LABEL_PREFIX}-${safeJobName}-${hashValue(idempotencyKey)}`;
 }
 
 function buildInternalJobStateKey(jobName: InternalJobName, idempotencyKey: string): string {
