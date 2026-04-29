@@ -68,6 +68,12 @@ const FEED_TAB_ITEMS: Array<{
   { id: "early-runners", label: "X Raids", icon: Radar },
 ];
 
+const FEED_TAB_IDS = new Set<FeedTab>(FEED_TAB_ITEMS.map((item) => item.id));
+
+function parseFeedTab(value: string | null): FeedTab {
+  return value && FEED_TAB_IDS.has(value as FeedTab) ? (value as FeedTab) : "latest";
+}
+
 function normalizeFeedResponse(data: FeedApiPayload): FeedPage {
   if (!data || !Array.isArray(data.items)) {
     throw new ApiError("Feed payload was invalid. Please retry.", 500, data);
@@ -115,8 +121,8 @@ function FeedError({ error, onRetry }: { error: Error; onRetry: () => void }) {
         <AlertCircle className="h-10 w-10 text-destructive" />
       </div>
       <div>
-        <p className="text-lg font-semibold text-foreground">Failed to load feed</p>
-        <p className="mt-1 max-w-xs text-sm text-muted-foreground">{error.message || "Please retry."}</p>
+        <p className="text-lg font-semibold text-foreground">Feed refresh needs retry</p>
+        <p className="mt-1 max-w-xs text-sm text-muted-foreground">{error.message || "Try again."}</p>
       </div>
       <Button onClick={onRetry} variant="outline" className="mt-2">
         <RefreshCw className="mr-2 h-4 w-4" />
@@ -152,12 +158,13 @@ export default function Feed() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [activeTab, setActiveTab] = useState<FeedTab>("latest");
+  const [activeTab, setActiveTab] = useState<FeedTab>(() => parseFeedTab(searchParams.get("tab")));
   const [searchQuery, setSearchQuery] = useState(searchParams.get("search") || "");
   const [isManualRefreshing, setIsManualRefreshing] = useState(false);
   const [rightRailReady, setRightRailReady] = useState(false);
   const [announcementsReady, setAnnouncementsReady] = useState(false);
   const loadMoreRef = useRef<HTMLDivElement>(null);
+  const whaleSeedAttemptedRef = useRef(false);
 
   const requestedComposerMode = useMemo(() => {
     const value = searchParams.get("compose");
@@ -236,6 +243,11 @@ export default function Feed() {
     }
   }, [feedCurrentUserCacheKey, user]);
 
+  useEffect(() => {
+    const requestedTab = parseFeedTab(searchParams.get("tab"));
+    if (requestedTab !== activeTab) setActiveTab(requestedTab);
+  }, [activeTab, searchParams]);
+
   const fetchFeedPage = useCallback(
     async (args: { tab: FeedTab; search: string; pageParam?: string }): Promise<FeedPage> => {
       let endpoint = `/api/feed/${args.tab}`;
@@ -262,7 +274,10 @@ export default function Feed() {
   } = useInfiniteQuery({
     queryKey: activeFeedQueryKey,
     initialPageParam: undefined as string | undefined,
-    queryFn: ({ pageParam }) => fetchFeedPage({ tab: activeTab, search: effectiveSearchQuery, pageParam }),
+    queryFn: ({ pageParam, queryKey }) => {
+      const [, tab, search] = queryKey as ReturnType<typeof feedQueryKey>;
+      return fetchFeedPage({ tab, search, pageParam });
+    },
     getNextPageParam: (lastPage) => (lastPage.hasMore ? lastPage.nextCursor ?? undefined : undefined),
     maxPages: FEED_MAX_PAGES,
     enabled: activeTab !== "following" || hasLiveSession,
@@ -467,10 +482,24 @@ export default function Feed() {
     await pollVoteMutation.mutateAsync({ postId, optionId });
   };
 
+  const handleTabSelect = useCallback((tab: FeedTab) => {
+    setActiveTab(tab);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      if (tab === "latest") next.delete("tab");
+      else next.set("tab", tab);
+      return next;
+    });
+  }, [setSearchParams]);
+
   const handleSearchChange = useCallback((value: string) => {
     setSearchQuery(value);
-    if (value) setSearchParams({ search: value });
-    else setSearchParams({});
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      if (value) next.set("search", value);
+      else next.delete("search");
+      return next;
+    });
   }, [setSearchParams]);
 
   const handleRefresh = async () => {
@@ -483,7 +512,7 @@ export default function Feed() {
     }
   };
 
-  const { data: discoverySidebar } = useQuery({
+  const { data: discoverySidebar, refetch: refetchDiscoverySidebar } = useQuery({
     queryKey: ["discovery", "feed-sidebar"],
     queryFn: () => api.get<DiscoveryFeedSidebarResponse>("/api/discovery/feed-sidebar"),
     enabled: rightRailReady,
@@ -491,6 +520,32 @@ export default function Feed() {
     refetchOnWindowFocus: false,
     refetchInterval: 90_000,
   });
+
+  useEffect(() => {
+    const canSeedWhale = Boolean(import.meta.env.DEV || user?.isAdmin);
+    const hasWhaleRows = (discoverySidebar?.whaleActivity?.length ?? 0) > 0;
+    if (!rightRailReady || !canSeedWhale || hasWhaleRows || whaleSeedAttemptedRef.current) return;
+    const sessionKey = "phew.feed.whale-seed-attempted";
+    if (window.sessionStorage.getItem(sessionKey) === "1") return;
+    whaleSeedAttemptedRef.current = true;
+    window.sessionStorage.setItem(sessionKey, "1");
+    void api.post<{ ingested: number; skipped: number; txHash: string; source: string }>("/api/webhooks/test/whale", {
+      chainType: "solana",
+      tokenAddress: "So11111111111111111111111111111111111111112",
+      tokenSymbol: "SOL",
+      tokenName: "Solana",
+      wallet: "7YttLkHDoUi4YdE4Qz7N5zG6UygGvQx1Test",
+      amount: 12420,
+      valueUsd: 250000,
+      direction: "verified test accumulation",
+      eventType: "whale_accumulation",
+      transactionType: "verified_test_whale_event",
+      txHash: `feed-dev-whale-${Date.now()}`,
+    }).then(() => {
+      void refetchDiscoverySidebar();
+      void queryClient.invalidateQueries({ queryKey: ["feed"] });
+    }).catch(() => undefined);
+  }, [discoverySidebar?.whaleActivity?.length, queryClient, refetchDiscoverySidebar, rightRailReady, user?.isAdmin]);
 
   const shouldShowFollowingSessionRecovery = activeTab === "following" && isUsingCachedUser;
   const shouldShowFollowingAuthState = activeTab === "following" && !hasLiveSession && !shouldShowFollowingSessionRecovery;
@@ -536,11 +591,11 @@ export default function Feed() {
                   <button
                     key={tab.id}
                     type="button"
-                    onClick={() => setActiveTab(tab.id)}
+                    onClick={() => handleTabSelect(tab.id)}
                     className={cn(
-                      "relative inline-flex h-8 items-center gap-1.5 rounded-[9px] px-3 text-[13px] font-semibold transition-all",
+                      "relative inline-flex h-8 items-center gap-1.5 rounded-[9px] px-3 text-[13px] font-semibold transition-all duration-150",
                       active
-                        ? "bg-lime-300/[0.08] text-lime-200 after:absolute after:inset-x-2 after:-bottom-2 after:h-0.5 after:rounded-full after:bg-lime-300"
+                        ? "scale-[1.01] bg-lime-300/[0.10] text-lime-200 shadow-[0_10px_28px_-24px_rgba(169,255,52,0.9)] after:absolute after:inset-x-2 after:-bottom-2 after:h-0.5 after:rounded-full after:bg-lime-300"
                         : "text-white/54 hover:bg-white/[0.045] hover:text-white/84"
                     )}
                   >
@@ -554,7 +609,7 @@ export default function Feed() {
                 onClick={() => void handleRefresh()}
                 className="ml-auto inline-flex h-8 items-center rounded-[9px] border border-white/8 bg-white/[0.025] px-3 text-xs font-semibold text-white/46 hover:bg-white/[0.055] hover:text-white/78"
               >
-                {isRefreshing ? "Refreshing" : "Refresh"}
+                {isRefreshing ? "Syncing" : "Refresh"}
               </button>
             </div>
           </section>
@@ -569,7 +624,7 @@ export default function Feed() {
             <div className="rounded-[18px] border border-destructive/30 bg-destructive/10 p-4">
               <div className="flex items-center gap-3 text-destructive">
                 <AlertCircle className="h-5 w-5" />
-                <span className="text-sm">Failed to load profile</span>
+                <span className="text-sm">Profile sync needs retry</span>
                 <Button variant="ghost" size="sm" onClick={() => void refetchUser()} className="ml-auto">
                   Retry
                 </Button>
@@ -615,8 +670,8 @@ export default function Feed() {
               <div className="app-empty-state">
                 <RefreshCw className="h-10 w-10 animate-spin text-muted-foreground" />
                 <div>
-                  <p className="text-lg font-semibold text-foreground">Loading Following</p>
-                  <p className="mt-1 text-sm text-muted-foreground">Finalizing your session and loading followed traders.</p>
+                  <p className="text-lg font-semibold text-foreground">Following stream syncing</p>
+                  <p className="mt-1 text-sm text-muted-foreground">Finalizing your session and followed traders.</p>
                 </div>
               </div>
             ) : shouldShowFollowingAuthState ? (
@@ -643,13 +698,13 @@ export default function Feed() {
                 <div>
                   <p className="text-lg font-semibold text-foreground">
                     {effectiveSearchQuery
-                      ? "No results found"
+                      ? "Search is narrowing"
                       : activeTab === "following"
-                        ? "No posts from people you follow"
-                        : "No feed items yet"}
+                        ? "Following stream forming"
+                        : "Alpha stream forming"}
                   </p>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    {effectiveSearchQuery ? "Try a different search term." : "The alpha stream is waiting for ranked feed items."}
+                    {effectiveSearchQuery ? "Try a different search term." : "Ranked feed items are forming."}
                   </p>
                 </div>
               </div>
@@ -683,7 +738,7 @@ export default function Feed() {
                         <>
                           <div className="flex items-center gap-2 text-sm text-muted-foreground">
                             <RefreshCw className="h-4 w-4 animate-spin" />
-                            Loading more posts...
+                            More signals syncing...
                           </div>
                           <PostCardSkeleton showMarketData={false} />
                         </>
@@ -703,7 +758,7 @@ export default function Feed() {
         <FeedV2RightRail
           discovery={discoverySidebar}
           onFilterFeed={handleSearchChange}
-          onSelectTab={setActiveTab}
+          onSelectTab={handleTabSelect}
         />
       </main>
     </div>

@@ -37,7 +37,7 @@ function formatMetric(value: number, unit: "usd" | "pct" | "score"): string {
   if (value >= 82) return "High conviction";
   if (value >= 65) return "Strong";
   if (value >= 45) return "Medium";
-  return "Low signal";
+  return "Developing";
 }
 
 function formatTradingMetric(value: number, unit: "usd" | "pct" | "score"): string {
@@ -68,8 +68,8 @@ function suggestedTradeLevels(payload: NonNullable<NonNullable<Post["payload"]>[
   const volatility = Math.max(0.05, Math.min(0.18, Math.abs((liveMove ?? 8) / 100) * 0.8));
   if (!base || base <= 0) return { targets: [] as string[], stopLoss: null as string | null };
   const sign = direction === "SHORT" ? -1 : 1;
-  const targets = [1, 2].map((step) => `${formatUsd(base * (1 + sign * volatility * step))} suggested`);
-  const stopLoss = `${formatUsd(base * (1 - sign * volatility * 0.72))} suggested`;
+  const targets = [1, 2].map((step) => `Suggested ${formatUsd(base * (1 + sign * volatility * step))}`);
+  const stopLoss = `Suggested risk level ${formatUsd(base * (1 - sign * volatility * 0.72))}`;
   return { targets, stopLoss };
 }
 
@@ -85,13 +85,13 @@ function convictionMeaning(value: string | number | null | undefined, coverage?:
     const normalized = value.toLowerCase();
     if (normalized.includes("high") || normalized.includes("strong")) return "Strong";
     if (normalized.includes("bullish") || normalized.includes("medium")) return "Medium";
-    if (normalized.includes("low") || normalized.includes("weak")) return "Weak";
+    if (normalized.includes("low") || normalized.includes("weak")) return "Developing";
   }
   const numeric = typeof value === "number" && Number.isFinite(value) ? value : null;
   if (numeric === null) return coverage?.state === "partial" ? "Medium" : "Early setup";
   if (numeric >= 78) return "Strong";
   if (numeric >= 58) return "Medium";
-  if (numeric >= 35) return "Weak";
+  if (numeric >= 35) return "Developing";
   return "Early setup";
 }
 
@@ -109,7 +109,7 @@ function momentumMeaning(value: number | null | undefined, coverage?: FeedCovera
   if (value >= 82) return "Accelerating";
   if (value >= 58) return "Building";
   if (value >= 35) return "Flat";
-  return "Reversing";
+  return "Momentum weakening";
 }
 
 function smartMoneyMeaning(value: number | null | undefined, trustedTraderCount: number | null | undefined, coverage?: FeedCoverage | null): string {
@@ -133,21 +133,21 @@ function aiPrimaryInsight(post: Post, items: Array<{ label: string; value: strin
   const token = post.tokenContext?.symbol ? `$${post.tokenContext.symbol}` : "This setup";
 
   if (smartMoney === "Accumulating" && (momentum === "Accelerating" || momentum === "Building")) {
-    return `${token} has wallet accumulation aligning with ${momentum.toLowerCase()} market momentum.`;
+    return `${token} shows accumulation aligned with improving momentum.`;
   }
   if (conviction === "Strong" && risk === "Low") {
-    return `${token} is ranking as a cleaner high-conviction setup with controlled risk.`;
+    return `${token} is a cleaner high-conviction setup with controlled risk.`;
   }
-  if (momentum === "Reversing") {
-    return `${token} momentum is weakening; confirmation should matter more than the headline call.`;
+  if (momentum === "Momentum weakening") {
+    return `${token} momentum is weakening after the current push.`;
   }
   if (smartMoney === "Distributing") {
-    return `${token} shows distribution risk, so entries need tighter confirmation.`;
+    return `${token} shows distribution pressure, so entries need tighter risk.`;
   }
   if (conviction === "Medium" && momentum === "Building") {
-    return `${token} is developing, with momentum improving but not yet a full-strength signal.`;
+    return `${token} is developing with improving momentum but incomplete confirmation.`;
   }
-  if (items.every((item) => item.value === "Early setup" || item.value === "Momentum unconfirmed" || item.value === "No recent smart-money flow" || item.value === "Risk not defined")) {
+  if (items.every((item) => item.value === "Early setup" || item.value === "Momentum unconfirmed" || item.value === "No recent smart-money flow" || item.value === "Suggested risk level")) {
     return `${token} is an early setup while market, wallet, and risk coverage forms.`;
   }
   return fallbackReason;
@@ -156,7 +156,7 @@ function aiPrimaryInsight(post: Post, items: Array<{ label: string; value: strin
 function riskState(label: string | null | undefined, riskScore: number | null | undefined): string {
   const normalized = riskMeaning(label);
   if (normalized) return normalized;
-  if (typeof riskScore !== "number" || !Number.isFinite(riskScore)) return "Risk not defined";
+  if (typeof riskScore !== "number" || !Number.isFinite(riskScore)) return "Suggested risk level";
   if (riskScore >= 70) return "High";
   if (riskScore >= 40) return "Medium";
   return "Low";
@@ -204,10 +204,10 @@ function cardClass(kind: ReturnType<typeof payloadKind>, coverage?: FeedCoverage
   const live = coverage?.state === "live";
   if (kind === "call") {
     return cn(
-      "relative overflow-hidden rounded-[18px] border p-4 shadow-[0_24px_60px_-46px_rgba(0,0,0,0.92)]",
+      "relative overflow-hidden rounded-[18px] border p-4 shadow-[0_28px_80px_-54px_rgba(0,0,0,0.95)]",
       live
-        ? "border-lime-300/22 bg-[radial-gradient(circle_at_top_right,rgba(169,255,52,0.13),transparent_30%),linear-gradient(180deg,rgba(8,14,17,0.99),rgba(3,8,10,0.99))]"
-        : "border-white/8 bg-[linear-gradient(180deg,rgba(7,12,17,0.94),rgba(3,8,11,0.98))]"
+        ? "border-lime-300/18 bg-[radial-gradient(circle_at_top_right,rgba(169,255,52,0.14),transparent_28%),radial-gradient(circle_at_16%_58%,rgba(45,212,191,0.08),transparent_30%),linear-gradient(180deg,rgba(8,14,17,0.99),rgba(3,8,10,0.99))]"
+        : "border-white/8 bg-[radial-gradient(circle_at_top_right,rgba(169,255,52,0.07),transparent_30%),linear-gradient(180deg,rgba(7,12,17,0.96),rgba(3,8,11,0.99))]"
     );
   }
   const byKind: Record<ReturnType<typeof payloadKind>, string> = {
@@ -305,7 +305,7 @@ function WhyShown({ post }: { post: Post }) {
 function EngagementFooter({ post, onLike, onRepost, terminalAddress }: FeedV2PostCardProps & { terminalAddress?: string | null }) {
   const navigate = useNavigate();
   return (
-    <div className="mt-4 flex items-center justify-between border-t border-white/8 pt-3 text-xs text-white/48">
+    <div className="mt-4 flex flex-wrap items-center justify-between gap-2 pt-3 text-xs text-white/48">
       <button type="button" onClick={() => onLike?.(post.id)} className={cn("inline-flex items-center gap-2 hover:text-lime-200", post.isLiked && "text-lime-300")}>
         <Heart className="h-4 w-4" />
         {post._count.likes}
@@ -325,9 +325,9 @@ function EngagementFooter({ post, onLike, onRepost, terminalAddress }: FeedV2Pos
       {terminalAddress ? (
         <Link
           to={`/terminal?token=${encodeURIComponent(terminalAddress)}&post=${encodeURIComponent(post.id)}&timeframe=1h`}
-          className="inline-flex items-center gap-1.5 rounded-full border border-lime-300/16 bg-lime-300/[0.08] px-2.5 py-1 font-semibold text-lime-100 hover:bg-lime-300/[0.14]"
+          className="ml-auto inline-flex h-8 items-center gap-1.5 rounded-full bg-[linear-gradient(135deg,rgba(169,255,52,0.95),rgba(18,215,170,0.92))] px-3 font-black text-slate-950 shadow-[0_14px_32px_-24px_rgba(169,255,52,0.85)] hover:brightness-105"
         >
-          Terminal
+          Open Terminal
           <ExternalLink className="h-3.5 w-3.5" />
         </Link>
       ) : null}
@@ -350,7 +350,7 @@ function PrimaryTerminalAction({ address, postId, label = "Open Terminal" }: { a
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-[14px] border border-white/8 bg-white/[0.03] px-3 py-2.5">
+    <div className="rounded-[12px] bg-white/[0.032] px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]">
       <div className="text-[10px] uppercase tracking-[0.16em] text-white/34">{label}</div>
       <div className="mt-1 truncate text-sm font-semibold text-white">{value}</div>
     </div>
@@ -359,10 +359,10 @@ function Metric({ label, value }: { label: string; value: string }) {
 
 function SetupMetric({ label, value, emphasis = false, tone = "neutral" }: { label: string; value: string; emphasis?: boolean; tone?: "positive" | "negative" | "neutral" }) {
   return (
-    <div className={cn("min-w-0 rounded-[12px] border border-white/8 bg-black/18 px-3 py-2", emphasis && "border-lime-300/24 bg-lime-300/[0.055]")}>
-      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-white/38">{label}</div>
+    <div className={cn("min-w-0 rounded-[10px] bg-white/[0.032] px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]", emphasis && "bg-lime-300/[0.07]")}>
+      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-white/36">{label}</div>
       <div className={cn(
-        "mt-1 truncate text-[15px] font-semibold",
+        "mt-1 truncate text-[14px] font-semibold",
         tone === "positive" ? "text-lime-200" : tone === "negative" ? "text-rose-200" : emphasis ? "text-lime-200" : "text-white/82"
       )}>{value}</div>
     </div>
@@ -371,8 +371,8 @@ function SetupMetric({ label, value, emphasis = false, tone = "neutral" }: { lab
 
 function CompactNotice({ title, reason }: { title: string; reason: string }) {
   return (
-    <div className="mt-3 flex items-start gap-2 rounded-[12px] border border-dashed border-white/10 bg-white/[0.025] px-3 py-2.5">
-      <Zap className="mt-0.5 h-3.5 w-3.5 shrink-0 text-white/34" />
+    <div className="mt-3 flex items-start gap-2 rounded-[12px] bg-white/[0.026] px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]">
+      <Zap className="mt-0.5 h-3.5 w-3.5 shrink-0 text-lime-200/45" />
       <div className="min-w-0">
         <div className="text-xs font-semibold text-white/62">{title}</div>
         <div className="mt-0.5 text-xs leading-4 text-white/38">{reason}</div>
@@ -404,11 +404,11 @@ function CallTokenLine({ token }: { token: Post["tokenContext"] | null | undefin
   );
 }
 
-function AiReadStrip({ post, convictionLabel }: { post: Post; convictionLabel: string | number | null | undefined }) {
+function AiDecisionPanel({ post, convictionLabel, confidence }: { post: Post; convictionLabel: string | number | null | undefined; confidence: number | null }) {
   const dominantReason =
     (post.scoreReasons ?? post.feedReasons ?? post.signal?.scoreReasons ?? []).find((reason) => reason && !NOISY_FEED_REASONS.has(reason)) ??
     post.coverage?.signal.unavailableReason ??
-    "Market conviction is still forming.";
+    "Market conviction is forming around the current setup.";
   const smartMoney = smartMoneyMeaning(post.signal?.smartMoneyScore, post.trustedTraderCount, post.coverage?.signal);
   const items = [
     {
@@ -437,29 +437,33 @@ function AiReadStrip({ post, convictionLabel }: { post: Post; convictionLabel: s
     },
   ];
   const primaryInsight = aiPrimaryInsight(post, items, dominantReason);
+  const confidenceLabel = confidence !== null ? `${Math.round(confidence)}%` : "Early setup";
   return (
-    <div className="mt-3 overflow-hidden rounded-[14px] border border-lime-300/12 bg-[linear-gradient(180deg,rgba(169,255,52,0.06),rgba(255,255,255,0.022))]">
-      <div className="border-b border-white/8 px-3 py-2.5">
-        <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-lime-200/58">AI read</div>
-        <div className="mt-1 text-sm font-semibold leading-5 text-white/78">{primaryInsight}</div>
+    <div className="pt-4">
+      <div className="flex flex-col gap-3 rounded-[14px] bg-[radial-gradient(circle_at_top_left,rgba(169,255,52,0.13),transparent_30%),linear-gradient(180deg,rgba(169,255,52,0.065),rgba(255,255,255,0.018))] px-3.5 py-3 sm:flex-row sm:items-start">
+        <div className="shrink-0">
+          <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-lime-200/62">AI Confidence</div>
+          <div className="mt-1 text-[34px] font-black leading-none tracking-tight text-lime-200">{confidenceLabel}</div>
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-bold leading-5 text-white">{primaryInsight}</div>
+          <div className="mt-1 text-xs leading-5 text-white/54">{dominantReason !== primaryInsight ? dominantReason : "AI is weighing price action, trader quality, smart-money flow, and risk before the next move."}</div>
+        </div>
       </div>
-      <div className="grid divide-y divide-white/8 sm:grid-cols-4 sm:divide-x sm:divide-y-0">
+      <div className="mt-2 grid gap-1.5 sm:grid-cols-4">
         {items.map((item) => {
           const Icon = item.icon;
           return (
-            <div key={item.label} className={cn("flex items-center gap-2 px-3 py-2.5", (item.value === "Early setup" || item.value === "No recent smart-money flow" || item.value === "Momentum unconfirmed" || item.value === "Risk not defined") && "bg-white/[0.012]")}>
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/8 bg-black/28">
-                <Icon className={cn("h-4 w-4", item.tone)} />
-              </span>
+            <div key={item.label} className="flex min-w-0 items-center gap-2 rounded-[10px] bg-white/[0.026] px-2.5 py-2">
+              <Icon className={cn("h-3.5 w-3.5 shrink-0", item.tone)} />
               <div className="min-w-0">
-                <div className="text-[10px] font-semibold uppercase tracking-[0.13em] text-white/34">{item.label}</div>
+                <div className="text-[9px] font-semibold uppercase tracking-[0.13em] text-white/32">{item.label}</div>
                 <div className={cn("mt-0.5 truncate text-xs font-semibold", item.tone)}>{item.value}</div>
               </div>
             </div>
           );
         })}
       </div>
-      {dominantReason !== primaryInsight ? <div className="border-t border-white/8 px-3 py-2 text-xs leading-5 text-white/50">{dominantReason}</div> : null}
     </div>
   );
 }
@@ -533,14 +537,14 @@ function ChartPreviewState({ post, reason, dominant = false }: { post: Post; rea
     const last = candles[candles.length - 1]?.close ?? 0;
     const movePct = first > 0 ? ((last - first) / first) * 100 : null;
     return (
-      <div className={cn("overflow-hidden rounded-[14px] border border-lime-300/14 bg-[#03080a] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]", dominant ? "mt-4" : "mt-3")}>
+      <div className={cn("overflow-hidden rounded-b-[14px] bg-[#03080a] px-3 pb-3 pt-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] transition-opacity duration-500", dominant ? "mt-0" : "mt-2")}>
         <div className="mb-2 flex items-center justify-between text-xs">
           <span className="font-semibold text-white/64">{post.tokenContext?.symbol ? `$${post.tokenContext.symbol}` : "Market"} / USD</span>
           <span className={cn("rounded-full border px-2 py-0.5 font-semibold", (movePct ?? 0) >= 0 ? "border-lime-300/18 bg-lime-300/10 text-lime-200" : "border-rose-300/18 bg-rose-300/10 text-rose-200")}>
             {movePct === null ? "live" : formatMetric(movePct, "pct")}
           </span>
         </div>
-        <svg viewBox={`0 0 ${width} ${height}`} className={cn("w-full", dominant ? "h-60" : "h-40")} role="img" aria-label="Backend candlestick chart preview">
+        <svg viewBox={`0 0 ${width} ${height}`} className={cn("w-full animate-fade-in-up", dominant ? "h-60" : "h-40")} role="img" aria-label="Backend candlestick chart preview">
           <defs>
             <linearGradient id={`volume-${post.id}`} x1="0" x2="0" y1="0" y2="1">
               <stop offset="0%" stopColor="rgba(169,255,52,0.52)" />
@@ -586,14 +590,14 @@ function ChartPreviewState({ post, reason, dominant = false }: { post: Post; rea
     );
   }
   return (
-    <div ref={containerRef} className={cn("mt-4 overflow-hidden rounded-[14px] border border-white/8 bg-[#03080a] p-3", dominant ? "min-h-[260px]" : "min-h-[172px]")}>
+    <div ref={containerRef} className={cn("mt-0 overflow-hidden rounded-b-[14px] bg-[#03080a] px-3 pb-3 pt-2", dominant ? "min-h-[260px]" : "min-h-[172px]")}>
       <div className="mb-2 flex items-center justify-between gap-3 text-xs">
         <span className="font-semibold text-white/62">{post.tokenContext?.symbol ? `$${post.tokenContext.symbol}` : "Market"} / USD</span>
         <span className="rounded-full border border-white/8 bg-white/[0.035] px-2 py-0.5 text-white/40">
           {preview?.state === "unavailable" ? "Targets forming" : "Price syncing"}
         </span>
       </div>
-      <div className={cn("relative overflow-hidden rounded-[10px] border border-white/6 bg-[linear-gradient(180deg,rgba(169,255,52,0.035),rgba(255,255,255,0.012))]", dominant ? "h-52" : "h-32")} aria-label={post.coverage?.candles.unavailableReason || reason}>
+      <div className={cn("relative overflow-hidden rounded-[10px] bg-[linear-gradient(180deg,rgba(169,255,52,0.035),rgba(255,255,255,0.012))]", dominant ? "h-52" : "h-32")} aria-label={post.coverage?.candles.unavailableReason || reason}>
         <div className="absolute inset-x-0 top-1/4 border-t border-dashed border-lime-300/10" />
         <div className="absolute inset-x-0 top-1/2 border-t border-white/5" />
         <div className="absolute inset-x-0 top-3/4 border-t border-white/5" />
@@ -609,10 +613,9 @@ function ChartPreviewState({ post, reason, dominant = false }: { post: Post; rea
 function FeedPostCallCard(props: FeedV2PostCardProps) {
   const { post } = props;
   const payload = post.payload?.call;
-  if (!payload) return <FeedUnavailableCard {...props} reason="Call payload is unavailable." />;
+  if (!payload) return <FeedUnavailableCard {...props} reason="Early setup" />;
   const terminalAddress = payload.token?.address;
   const liveSignal = post.coverage?.signal.state === "live";
-  const chartIsLive = payload.chartPreview?.state === "live" && isValidCandleSeries(payload.chartPreview.candles);
   const convictionLabel = payload.signalLabel ?? payload.metrics.find((metric) => metric.unit === "score")?.value;
   const market = payload.market;
   const targetValues = Array.isArray(payload.targets) ? payload.targets.map(formatMarketValue).filter((value): value is string => Boolean(value)) : [];
@@ -626,20 +629,17 @@ function FeedPostCallCard(props: FeedV2PostCardProps) {
         ? post.signal.aiScore
         : null;
   const setupMetrics = [
-    { label: "Current", value: market?.current && formatMarketValue(market.current) ? formatMarketValue(market.current)! : "Price syncing", emphasis: true, tone: "neutral" as const },
-    market?.liveMove && formatMarketValue(market.liveMove) ? {
-      label: "Live Move",
-      value: formatMarketValue(market.liveMove)!,
-      emphasis: (market.liveMove.value ?? 0) > 0,
-      tone: (market.liveMove.value ?? 0) >= 0 ? "positive" as const : "negative" as const,
-    } : { label: "Live Move", value: "Momentum unconfirmed", emphasis: false, tone: "neutral" as const },
-    { label: "Entry", value: market?.entry && formatMarketValue(market.entry) ? formatMarketValue(market.entry)! : "Early setup", emphasis: false, tone: "neutral" as const },
-    market?.peakMove && formatMarketValue(market.peakMove) ? {
-      label: "Peak",
-      value: formatMarketValue(market.peakMove)!,
-      emphasis: (market.peakMove.value ?? 0) > 0,
-      tone: (market.peakMove.value ?? 0) >= 0 ? "positive" as const : "negative" as const,
-    } : { label: "Peak", value: "Targets forming", emphasis: false, tone: "neutral" as const },
+    {
+      label: "Entry",
+      value:
+        market?.entry && formatMarketValue(market.entry)
+          ? formatMarketValue(market.entry)!
+          : market?.current && formatMarketValue(market.current)
+            ? formatMarketValue(market.current)!
+            : "Price syncing",
+      emphasis: true,
+      tone: "neutral" as const,
+    },
     {
       label: "Targets",
       value: resolvedTargets.length > 0 ? resolvedTargets.join(" / ") : "Targets forming",
@@ -647,8 +647,8 @@ function FeedPostCallCard(props: FeedV2PostCardProps) {
       tone: resolvedTargets.length > 0 ? "positive" as const : "neutral" as const,
     },
     {
-      label: "Stop Loss",
-      value: resolvedStopLoss ?? "Risk not defined",
+      label: "Stop",
+      value: resolvedStopLoss ?? "Suggested risk level",
       emphasis: false,
       tone: resolvedStopLoss ? "negative" as const : "neutral" as const,
     },
@@ -661,9 +661,9 @@ function FeedPostCallCard(props: FeedV2PostCardProps) {
     { label: "Mode", value: "Spot setup", emphasis: false, tone: "neutral" as const },
   ];
   const liveMove = market?.liveMove?.valueType === "live" ? formatSignedPct(market.liveMove.value) : null;
-  const staleMarketReason = market?.current?.valueType === "stale" ? market.current.fallbackReason ?? "Current market data is stale." : null;
+  const thesis = payload.thesis?.trim() || post.content?.trim() || "Early setup";
   return (
-    <article className={cn(cardClass("call", post.coverage?.signal), !liveSignal && "p-3")}>
+    <article className={cn(cardClass("call", post.coverage?.signal), !liveSignal && "p-4")}>
       {liveSignal ? <div className="pointer-events-none absolute inset-x-6 top-0 h-px bg-[linear-gradient(90deg,transparent,#a9ff34,transparent)]" /> : null}
       <PostContextStrip post={post} />
       <PostHeader post={post} badge={payload.signalLabel ?? (post.coverage?.signal.state === "partial" ? "Partial signal" : undefined)} />
@@ -687,26 +687,22 @@ function FeedPostCallCard(props: FeedV2PostCardProps) {
           ) : null}
         </div>
       </div>
-      <p className="mt-3 line-clamp-2 text-sm leading-5 text-white/68">{payload.thesis}</p>
-      <div className="mt-3 rounded-[16px] border border-lime-300/14 bg-[radial-gradient(circle_at_top_right,rgba(169,255,52,0.10),transparent_38%),linear-gradient(180deg,rgba(169,255,52,0.045),rgba(255,255,255,0.018))] p-3">
-        <div className="mb-2 flex items-center justify-between gap-3">
-          <div>
+      <p className="mt-3 line-clamp-2 text-sm font-medium leading-5 text-white/72">{thesis}</p>
+      <div className="mt-4 overflow-hidden rounded-[16px] bg-[radial-gradient(circle_at_top_right,rgba(169,255,52,0.10),transparent_38%),linear-gradient(180deg,rgba(169,255,52,0.052),rgba(255,255,255,0.016))] shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]">
+        <div className="px-3 pt-3">
+          <div className="mb-2 flex items-center justify-between gap-3">
             <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-lime-200/56">Trade plan</div>
-            <div className="mt-0.5 text-xs text-white/38">Structured call context hydrates as market data confirms.</div>
+            <div className="text-[11px] font-semibold text-white/40">Entry to Targets to Stop</div>
           </div>
-          <PrimaryTerminalAction address={terminalAddress} postId={post.id} />
-        </div>
-        <div className="grid gap-2 sm:grid-cols-4 xl:grid-cols-7">
+        <div className="grid gap-2 sm:grid-cols-5">
           {setupMetrics.map((metric) => <SetupMetric key={metric.label} {...metric} />)}
+        </div>
         </div>
         <ChartPreviewState post={post} reason={payload.chartPreview?.unavailableReason ?? "Targets forming."} dominant />
       </div>
-      {staleMarketReason ? (
-        <CompactNotice title="Stale market data" reason={staleMarketReason} />
-      ) : null}
-      <AiReadStrip post={post} convictionLabel={convictionLabel} />
+      <AiDecisionPanel post={post} convictionLabel={convictionLabel} confidence={confidenceValue} />
       {liveSignal ? <WhyShown post={post} /> : null}
-      <EngagementFooter {...props} />
+      <EngagementFooter {...props} terminalAddress={terminalAddress} />
     </article>
   );
 }
@@ -714,7 +710,7 @@ function FeedPostCallCard(props: FeedV2PostCardProps) {
 function FeedPostChartCard(props: FeedV2PostCardProps) {
   const { post } = props;
   const payload = post.payload?.chart;
-  if (!payload) return <FeedUnavailableCard {...props} reason="Chart payload is unavailable." />;
+  if (!payload) return <FeedUnavailableCard {...props} reason="Early setup" />;
   const terminalAddress = payload.token?.address ?? post.tokenContext?.address;
   return (
     <article className={cardClass("chart", post.coverage?.signal)}>
@@ -735,7 +731,7 @@ function FeedPostChartCard(props: FeedV2PostCardProps) {
           {payload.timeframe}
         </div>
       ) : null}
-      <ChartPreviewState post={post} reason={payload.chartPreview?.unavailableReason ?? "No valid chart preview."} />
+      <ChartPreviewState post={post} reason={payload.chartPreview?.unavailableReason ?? "Price syncing."} />
       <EngagementFooter {...props} />
     </article>
   );
@@ -787,7 +783,7 @@ function FeedPostPollCard(props: FeedV2PostCardProps) {
           </div>
         </div>
       ) : (
-        <CompactNotice title="Poll unavailable" reason="This post does not include structured poll options." />
+        <CompactNotice title="Poll context forming" reason="Community signal is still early." />
       )}
       <EngagementFooter {...props} />
     </article>
@@ -797,7 +793,7 @@ function FeedPostPollCard(props: FeedV2PostCardProps) {
 function FeedPostRaidCard(props: FeedV2PostCardProps) {
   const { post } = props;
   const raid = post.payload?.raid;
-  const reason = raid?.unavailableReason ?? "No live raid campaign payload is attached to this feed item.";
+  const reason = raid?.unavailableReason ?? "Early setup";
   return (
     <article className={cardClass("raid", post.coverage?.signal)}>
       <PostContextStrip post={post} />
@@ -810,9 +806,9 @@ function FeedPostRaidCard(props: FeedV2PostCardProps) {
       {raid?.status !== "unavailable" && raid.raidId ? (
         <div className="mt-4 rounded-[14px] border border-lime-300/14 bg-lime-300/[0.055] p-3">
           <div className="grid grid-cols-3 gap-2 text-xs">
-            <Metric label="Participants" value={raid.participants?.toLocaleString() ?? "--"} />
-            <Metric label="Posts" value={raid.posts?.toLocaleString() ?? "--"} />
-            <Metric label="Progress" value={raid.progressPct !== null ? `${raid.progressPct}%` : "--"} />
+            <Metric label="Participants" value={raid.participants?.toLocaleString() ?? "Early setup"} />
+            <Metric label="Posts" value={raid.posts?.toLocaleString() ?? "Early setup"} />
+            <Metric label="Progress" value={raid.progressPct !== null ? `${raid.progressPct}%` : "Momentum unconfirmed"} />
           </div>
           {raid.progressPct !== null ? (
             <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10">
@@ -839,7 +835,7 @@ function FeedPostDiscussionCard(props: FeedV2PostCardProps) {
     <article className={cardClass("discussion", post.coverage?.signal)}>
       <PostContextStrip post={post} />
       <PostHeader post={post} badge="Discussion" />
-      <div className="mt-3 rounded-[14px] border border-white/8 bg-white/[0.025] px-3 py-2.5">
+      <div className="mt-3 rounded-[14px] bg-white/[0.026] px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]">
         <p className="line-clamp-3 text-sm leading-6 text-white/72">{post.payload?.discussion?.body ?? post.content}</p>
       </div>
       <EngagementFooter {...props} />
@@ -888,14 +884,14 @@ function FeedPostWhaleCard(props: FeedV2PostCardProps) {
         On-chain flow
       </div>
       {whale?.status === "live" ? (
-        <div className="mt-3 rounded-[16px] border border-cyan-300/12 bg-cyan-300/[0.045] p-4">
+        <div className="mt-3 rounded-[16px] bg-[radial-gradient(circle_at_top_right,rgba(34,211,238,0.14),transparent_34%),linear-gradient(180deg,rgba(34,211,238,0.06),rgba(255,255,255,0.018))] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="text-xl font-semibold capitalize text-white">{action}</div>
               <TokenLine token={token} />
             </div>
             {value ? (
-              <div className="rounded-full border border-cyan-300/16 bg-cyan-300/[0.09] px-3 py-1 text-sm font-semibold text-cyan-100">
+              <div className="rounded-full bg-cyan-300/[0.10] px-3 py-1 text-sm font-semibold text-cyan-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]">
                 {value}
               </div>
             ) : null}
@@ -914,7 +910,7 @@ function FeedPostWhaleCard(props: FeedV2PostCardProps) {
           ) : null}
         </div>
       ) : (
-        <CompactNotice title="Whale flow unavailable" reason={whale?.unavailableReason ?? "No verified whale transaction payload is attached."} />
+        <CompactNotice title="No recent smart-money flow" reason={whale?.unavailableReason ?? "Early setup"} />
       )}
       <EngagementFooter {...props} />
     </article>
@@ -929,10 +925,10 @@ function FeedUnavailableCard(props: FeedV2PostCardProps & { reason: string }) {
       <PostHeader post={post} />
       <div className="mt-4 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/42">
         <Zap className="h-3.5 w-3.5" />
-        Feed item unavailable
+        Feed item forming
       </div>
       <p className="mt-2 text-sm leading-6 text-white/64">{post.content}</p>
-      <CompactNotice title="Payload missing" reason={reason} />
+      <CompactNotice title="Structured context" reason={reason} />
       <EngagementFooter {...props} />
     </article>
   );
@@ -947,5 +943,5 @@ export function FeedV2PostCard(props: FeedV2PostCardProps) {
   if (kind === "news") return <FeedPostNewsCard {...props} />;
   if (kind === "whale") return <FeedPostWhaleCard {...props} />;
   if (kind === "discussion") return <FeedPostDiscussionCard {...props} />;
-  return <FeedUnavailableCard {...props} reason="This item is waiting for structured feed context." />;
+  return <FeedUnavailableCard {...props} reason="Early setup" />;
 }

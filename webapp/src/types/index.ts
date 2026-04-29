@@ -713,14 +713,18 @@ export interface DiscoveryFeedSidebarResponse {
   aiSpotlight: DiscoverySidebarAiSpotlight | null;
   whaleActivity?: Array<{
     id: string;
+    tokenAddress?: string | null;
     tokenSymbol: string | null;
     tokenImage: string | null;
     action: string;
     amount: string | null;
     valueUsd: number | null;
+    wallet?: string | null;
+    chainType?: string | null;
     explorerUrl: string | null;
     createdAt: string;
     source?: string | null;
+    isTest?: boolean;
     asOf?: string | null;
     coverage?: "live" | "recent" | string | null;
   }>;

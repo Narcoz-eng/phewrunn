@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
 import { ArrowUpRight, BrainCircuit, RadioTower, Waves } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { Button } from "@/components/ui/button";
 import { V2StatusPill } from "@/components/ui/v2/V2StatusPill";
 import { cn } from "@/lib/utils";
 import { isValidGainer, isValidMarketStats, isValidSignalScore, isValidTrendingCall } from "@/lib/data-validators";
@@ -13,8 +12,8 @@ type FeedV2RightRailProps = {
   onSelectTab?: (tab: FeedTab) => void;
 };
 
-function formatUsd(value: number | null | undefined): string {
-  if (typeof value !== "number" || !Number.isFinite(value)) return "--";
+function formatUsd(value: number | null | undefined, fallback = "Early setup"): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
   if (Math.abs(value) >= 1_000_000_000_000) return `$${(value / 1_000_000_000_000).toFixed(2)}T`;
   if (Math.abs(value) >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(2)}B`;
   if (Math.abs(value) >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
@@ -22,9 +21,15 @@ function formatUsd(value: number | null | undefined): string {
   return `$${value.toFixed(value < 1 ? 6 : 2)}`;
 }
 
-function formatPct(value: number | null | undefined): string {
-  if (typeof value !== "number" || !Number.isFinite(value)) return "--";
+function formatPct(value: number | null | undefined, fallback = "Momentum unconfirmed"): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+}
+
+function compactAddress(value: string | null | undefined): string {
+  if (!value) return "Verified wallet";
+  if (value.length <= 12) return value;
+  return `${value.slice(0, 5)}...${value.slice(-4)}`;
 }
 
 function timeAgo(value: string | null | undefined): string | null {
@@ -44,12 +49,12 @@ function convictionLabel(score: number | null): string {
   if (score === null) return "Early setup";
   if (score >= 75) return "Strong conviction";
   if (score >= 55) return "Medium conviction";
-  return "Weak conviction";
+  return "Conviction forming";
 }
 
 function RailCard({ title, children, action }: { title: string; children: ReactNode; action?: ReactNode }) {
   return (
-    <section className="rounded-[16px] border border-white/10 bg-[linear-gradient(180deg,rgba(8,13,18,0.97),rgba(4,8,11,0.99))] p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]">
+    <section className="rounded-[16px] bg-[linear-gradient(180deg,rgba(8,13,18,0.97),rgba(4,8,11,0.99))] p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.045),0_20px_55px_-44px_rgba(0,0,0,0.9)]">
       <div className="mb-3 flex items-center justify-between gap-3">
         <h2 className="text-[15px] font-semibold tracking-tight text-white">{title}</h2>
         {action}
@@ -59,10 +64,11 @@ function RailCard({ title, children, action }: { title: string; children: ReactN
   );
 }
 
-function RailUnavailable({ message }: { message: string }) {
+function RailUnavailable({ message, tone = "neutral" }: { message: string; tone?: "neutral" | "positive" | "negative" }) {
   return (
-    <div className="rounded-[11px] border border-white/8 bg-white/[0.025] px-2.5 py-2 text-xs leading-5 text-white/48">
-      {message}
+    <div className="flex items-center justify-between gap-3 rounded-[11px] bg-white/[0.028] px-2.5 py-2 text-xs leading-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]">
+      <span className="truncate text-white/54">{message}</span>
+      <span className={cn("h-2 w-2 shrink-0 rounded-full", tone === "positive" ? "bg-lime-300" : tone === "negative" ? "bg-rose-300" : "bg-cyan-300")} />
     </div>
   );
 }
@@ -77,7 +83,7 @@ function TokenAvatar({ src, label }: { src?: string | null; label: string }) {
   );
 }
 
-export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2RightRailProps) {
+export function FeedV2RightRail({ discovery, onFilterFeed }: FeedV2RightRailProps) {
   const navigate = useNavigate();
   const topGainers = (discovery?.topGainers ?? []).filter(isValidGainer);
   const liveRaids = (discovery?.liveRaids ?? []).filter((raid) => raid.participantCount > 0 || raid.postedCount > 0);
@@ -102,22 +108,22 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
 
   return (
     <aside className="space-y-3 xl:sticky xl:top-4 xl:self-start">
-      <section className="rounded-[16px] border border-white/10 bg-[linear-gradient(180deg,rgba(8,13,18,0.97),rgba(4,8,11,0.99))] p-3.5">
+      <section className="rounded-[16px] bg-[linear-gradient(180deg,rgba(8,13,18,0.97),rgba(4,8,11,0.99))] p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.045)]">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-[15px] font-semibold tracking-tight text-white">Signal Pulse</h2>
           <span className="rounded-[8px] border border-lime-300/14 bg-lime-300/[0.08] px-2 py-1 text-[11px] font-semibold text-lime-200">Live</span>
         </div>
         {marketStats ? (
-        <div className="grid grid-cols-3 divide-x divide-white/8 overflow-hidden rounded-[12px] border border-white/8 bg-white/[0.025]">
+        <div className="grid grid-cols-3 divide-x divide-white/8 overflow-hidden rounded-[12px] bg-white/[0.026] shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]">
           {[
             ["Tracked Cap", formatUsd(marketStats?.marketCap), formatPct(marketStats?.marketCapChangePct), "token universe"],
             ["24h Flow", formatUsd(marketStats?.volume24h), formatPct(marketStats?.volume24hChangePct), "active volume"],
-            ["Signal Breadth", String(signalBreadth), signalBreadth > 0 ? "active" : "no signal", "ranked items"],
+            ["Signal Breadth", String(signalBreadth), signalBreadth > 0 ? "active" : "Early setup", "ranked items"],
           ].map(([label, value, delta, caption]) => (
             <div key={label} className="px-3 py-2.5">
               <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/38">{label}</div>
               <div className="mt-1 text-[15px] font-bold text-white">{value}</div>
-              <div className={cn("mt-0.5 text-[11px] font-semibold", delta.startsWith("-") ? "text-rose-300" : delta === "--" || delta === "no signal" ? "text-white/30" : "text-lime-300")}>
+              <div className={cn("mt-0.5 text-[11px] font-semibold", delta.startsWith("-") ? "text-rose-300" : delta === "Early setup" || delta === "Momentum unconfirmed" ? "text-white/34" : "text-lime-300")}>
                 {delta}
               </div>
               <div className="mt-0.5 text-[10px] text-white/30">{caption}</div>
@@ -125,7 +131,7 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
           ))}
         </div>
         ) : (
-          <RailUnavailable message="Signal pulse is waiting for fresh tracked-token coverage." />
+          <RailUnavailable message="Price syncing across tracked tokens" />
         )}
       </section>
 
@@ -153,11 +159,12 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
               <div className={cn("text-sm font-bold", (item.change24hPct ?? 0) >= 0 ? "text-lime-300" : "text-rose-300")}>
                 {formatPct(item.change24hPct)}
               </div>
+              <ArrowUpRight className="h-3.5 w-3.5 text-white/34" />
             </button>
             ))}
           </div>
         ) : (
-          <RailUnavailable message="No fresh 24h movers are ready yet." />
+          <RailUnavailable message="Top movers forming" tone="positive" />
         )}
       </RailCard>
 
@@ -167,7 +174,7 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
             {liveRaids.slice(0, 2).map((raid) => {
             const progress = Math.max(8, Math.min(100, (raid.postedCount / Math.max(raid.participantCount, 1)) * 100));
             return (
-              <div key={raid.id} className="rounded-[14px] border border-white/8 bg-white/[0.025] p-3">
+              <button key={raid.id} type="button" onClick={() => navigate(`/raids/${raid.tokenAddress}/${raid.id}`)} className="w-full rounded-[14px] bg-white/[0.026] p-3 text-left shadow-[inset_0_1px_0_rgba(255,255,255,0.025)] transition hover:bg-white/[0.045]">
                 <div className="flex items-start gap-3">
                   <span className="flex h-9 w-9 items-center justify-center rounded-full border border-lime-300/20 bg-black/30">
                     <RadioTower className="h-4 w-4 text-lime-300" />
@@ -175,6 +182,7 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-bold text-white">{raid.tokenSymbol ? `$${raid.tokenSymbol} RAID` : "Live raid"}</div>
                     <div className="mt-0.5 truncate text-[11px] text-white/44">Target: {raid.objective}</div>
+                    <div className="mt-0.5 text-[10px] text-lime-200/58">{timeAgo(raid.openedAt) ?? "Live"}</div>
                   </div>
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
@@ -193,29 +201,15 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
                   </div>
                   <span className="text-[11px] text-white/54">{progress.toFixed(0)}%</span>
                 </div>
-                <Button
-                  type="button"
-                  onClick={() => navigate(`/raids/${raid.tokenAddress}/${raid.id}`)}
-                  className="mt-3 h-8 w-full rounded-[10px] bg-[linear-gradient(135deg,#a9ff34,#12d7aa)] text-xs font-bold text-slate-950 hover:brightness-105"
-                >
-                  Join Raid
-                </Button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    filterByToken(raid.tokenSymbol, raid.tokenAddress);
-                    onSelectTab?.("early-runners");
-                  }}
-                  className="mt-2 h-7 w-full rounded-[9px] border border-white/8 bg-white/[0.035] text-[11px] font-semibold text-white/58 hover:border-lime-300/18 hover:text-lime-100"
-                >
-                  Filter raid activity
-                </button>
-              </div>
+                <div className="mt-2 flex h-7 items-center justify-center rounded-[9px] bg-white/[0.035] text-[11px] font-semibold text-white/58">
+                  Open raid room
+                </div>
+              </button>
             );
             })}
           </div>
         ) : (
-          <RailUnavailable message="No active raid rooms are moving right now." />
+          <RailUnavailable message="Live raids forming" tone="positive" />
         )}
       </RailCard>
 
@@ -234,7 +228,7 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
                 <div className="truncate text-sm font-bold text-white">
                   {item.tokenSymbol ? `$${item.tokenSymbol}` : item.title || "Call"} <span className="text-lime-300">{item.direction ?? ""}</span>
                 </div>
-                <div className="truncate text-[11px] text-white/40">by {item.authorHandle}{timeAgo(item.createdAt) ? ` - ${timeAgo(item.createdAt)}` : ""}</div>
+                <div className="truncate text-[11px] text-white/40">by {item.authorHandle}{timeAgo(item.createdAt) ? ` - ${timeAgo(item.createdAt)}` : " - Live"}</div>
               </div>
               <div className={cn("text-sm font-bold", (item.roiCurrentPct ?? 0) >= 0 ? "text-lime-300" : "text-rose-300")}>
                 {formatPct(item.roiCurrentPct)}
@@ -243,7 +237,7 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
             ))}
           </div>
         ) : (
-          <RailUnavailable message="Active calls need fresh performance or conviction before surfacing." />
+          <RailUnavailable message="Active calls forming" tone="positive" />
         )}
       </RailCard>
 
@@ -272,7 +266,7 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
             })}
           </div>
         ) : (
-          <RailUnavailable message="Watchlist is waiting for stronger token intelligence." />
+          <RailUnavailable message="AI watchlist forming" tone="positive" />
         )}
       </RailCard>
 
@@ -285,7 +279,7 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
               type="button"
               onClick={() => {
                 if (item.tokenSymbol) {
-                  filterByToken(item.tokenSymbol, null);
+                  filterByToken(item.tokenSymbol, item.tokenAddress ?? null);
                 } else if (item.explorerUrl) {
                   window.open(item.explorerUrl, "_blank", "noopener,noreferrer");
                 }
@@ -296,15 +290,17 @@ export function FeedV2RightRail({ discovery, onFilterFeed, onSelectTab }: FeedV2
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-bold text-white">{item.tokenSymbol ? `$${item.tokenSymbol}` : "Tracked token"}</div>
                 <div className="truncate text-[11px] text-white/40">
-                  {item.action}{item.amount ? ` - ${item.amount}` : ""}{timeAgo(item.createdAt) ? ` - ${timeAgo(item.createdAt)}` : ""}
+                  {compactAddress(item.wallet)}{item.amount ? ` - ${item.amount}` : ""}{timeAgo(item.createdAt) ? ` - ${timeAgo(item.createdAt)}` : " - Live"}
                 </div>
+                {item.isTest ? <div className="mt-0.5 text-[10px] font-semibold text-cyan-200/62">Verified test event</div> : null}
               </div>
               <div className="text-right text-xs text-white/62">{formatUsd(item.valueUsd)}</div>
+              <ArrowUpRight className="h-3.5 w-3.5 text-cyan-200/50" />
             </button>
             ))}
           </div>
         ) : (
-          <RailUnavailable message="No verified whale flow is active right now." />
+          <RailUnavailable message="No recent smart-money flow" />
         )}
       </RailCard>
 

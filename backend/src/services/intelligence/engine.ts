@@ -5331,11 +5331,14 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
         timeoutMs: FEED_LIST_SOFT_TIMEOUT_MS,
       });
       notePrismaPoolPressure(`intelligence/feed_soft_timeout:${args.kind}`);
+      const whaleFallback = await listRecentWhaleFeedItems(args, [], Math.min(4, limit))
+        .then((items) => items.map(sanitizeFeedItemForResponse))
+        .catch(() => []);
       return {
-        items: [],
+        items: whaleFallback,
         hasMore: false,
         nextCursor: null,
-        totalItems: 0,
+        totalItems: whaleFallback.length,
         degraded: true,
       };
     } catch (error) {
@@ -5357,11 +5360,14 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
         viewerId: args.viewerId,
         message: error instanceof Error ? error.message : String(error),
       });
+      const whaleFallback = await listRecentWhaleFeedItems(args, [], Math.min(4, limit))
+        .then((items) => items.map(sanitizeFeedItemForResponse))
+        .catch(() => []);
       return {
-        items: [],
+        items: whaleFallback,
         hasMore: false,
         nextCursor: null,
-        totalItems: 0,
+        totalItems: whaleFallback.length,
         degraded: true,
       };
     }

@@ -488,14 +488,18 @@ discoveryRouter.get("/feed-sidebar", async (c) => {
         : {};
       return {
         id: event.id,
+        tokenAddress: event.token.address,
         tokenSymbol: normalizeTokenLabel(event.token),
         tokenImage: event.token.imageUrl,
         action: String(metadata.direction ?? event.eventType.replace(/^whale_/, "").replaceAll("_", " ")),
         amount: typeof metadata.amount === "string" ? metadata.amount : metadata.amount === null || metadata.amount === undefined ? null : String(metadata.amount),
         valueUsd: nullableNumber(metadata.valueUsd as number | null | undefined),
+        wallet: typeof metadata.wallet === "string" ? metadata.wallet : null,
+        chainType: typeof metadata.chainType === "string" ? metadata.chainType : null,
         explorerUrl: typeof metadata.explorerUrl === "string" ? metadata.explorerUrl : null,
         createdAt: event.timestamp.toISOString(),
         source: typeof metadata.source === "string" ? metadata.source : whaleCoverage === "live" ? "token-event" : "token-event-archive",
+        isTest: typeof metadata.source === "string" ? metadata.source.startsWith("test-") : false,
         asOf: event.timestamp.toISOString(),
         coverage: whaleCoverage,
       };

@@ -117,11 +117,11 @@ export function V2Sidebar() {
           <BrandLogo size="md" className="gap-3" />
         </div>
 
-        <nav className="mt-7 flex flex-col gap-1.5">
+        <nav className="mt-8 flex flex-col gap-2">
           <SidebarNavItems />
         </nav>
 
-        <div className="mt-7 space-y-4 border-t border-white/[0.07] pt-4">
+        <div className="mt-8 space-y-5 border-t border-white/[0.07] pt-5">
           <div className="flex items-center gap-3">
             <Avatar className="h-12 w-12 border border-lime-300/20">
               <AvatarImage src={user ? getAvatarUrl(user.id, user.image) : undefined} />
@@ -154,7 +154,7 @@ export function V2Sidebar() {
             <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-200/78">AI Trader Score</div>
             <div className="mt-2 flex items-end gap-1">
               <span className="text-3xl font-semibold text-[#19e6a7]">
-                {typeof aiScore === "number" ? aiScore.toFixed(1) : "--"}
+                {typeof aiScore === "number" ? aiScore.toFixed(1) : "Early"}
               </span>
               <span className="pb-1 text-xs text-white/44">/100</span>
             </div>
@@ -179,7 +179,7 @@ export function V2Sidebar() {
                     type="button"
                     onClick={item.disabled ? undefined : item.onClick}
                     disabled={item.disabled}
-                    title={item.disabled ? "Wallet tracker requires a wallet-flow endpoint before it can be enabled." : undefined}
+                    title={item.disabled ? "Wallet tracker activates with verified smart-money flow." : undefined}
                     className="flex items-center gap-2.5 rounded-[12px] border border-white/[0.07] bg-white/[0.03] px-2.5 py-2 text-left transition hover:border-lime-300/20 hover:bg-white/[0.055] disabled:cursor-not-allowed disabled:opacity-45"
                   >
                     <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] border border-white/[0.07] bg-black/20">
@@ -202,7 +202,7 @@ export function V2Sidebar() {
             <button type="button" onClick={() => navigate("/profile")} className="rounded-xl p-2 hover:bg-white/[0.05] hover:text-white" aria-label="Wallet security">
               <ShieldCheck className="h-4 w-4" />
             </button>
-            <button type="button" disabled title="Language preferences require a localization settings endpoint." className="cursor-not-allowed rounded-xl p-2 opacity-45" aria-label="Language unavailable">
+            <button type="button" disabled title="Language preferences are forming." className="cursor-not-allowed rounded-xl p-2 opacity-45" aria-label="Language preferences">
               <Globe2 className="h-4 w-4" />
             </button>
             <button type="button" onClick={signOut} className="rounded-xl p-2 hover:bg-white/[0.05] hover:text-white" aria-label="Sign out">

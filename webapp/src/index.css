@@ -635,6 +635,7 @@
     @apply flex w-full flex-col overflow-y-auto overflow-x-hidden px-4 py-4;
     height: 100%;
     min-height: 0;
+    padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
     overscroll-behavior: contain;
     scrollbar-gutter: stable;
     scroll-behavior: smooth;
