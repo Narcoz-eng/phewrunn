@@ -1,0 +1,208 @@
+import { createHotContext as __vite__createHotContext } from "/@vite/client";import.meta.hot = __vite__createHotContext("/src/components/PrivyWalletProvider.tsx");import.meta.env = {"BASE_URL": "/", "DEV": true, "MODE": "development", "PROD": false, "SSR": false, "VITE_BACKEND_URL": "http://localhost:3000", "VITE_PRIVY_APP_ID": "cmkij22oz00xwju0cu1m876bz"};import * as RefreshRuntime from "/@react-refresh";
+const inWebWorker = typeof WorkerGlobalScope !== 'undefined' && self instanceof WorkerGlobalScope;
+
+let prevRefreshReg;
+let prevRefreshSig;
+
+if (import.meta.hot && !inWebWorker) {
+  if (!window.$RefreshReg$) {
+    throw new Error(
+      "@vitejs/plugin-react-swc can't detect preamble. Something is wrong."
+    );
+  }
+
+  prevRefreshReg = window.$RefreshReg$;
+  prevRefreshSig = window.$RefreshSig$;
+  window.$RefreshReg$ = RefreshRuntime.getRefreshReg("C:/Users/renga/Documents/phewrunn/webapp/src/components/PrivyWalletProvider.tsx");
+  window.$RefreshSig$ = RefreshRuntime.createSignatureFunctionForTransform;
+}
+
+function _define_property(obj, key, value) {
+    if (key in obj) {
+        Object.defineProperty(obj, key, {
+            value: value,
+            enumerable: true,
+            configurable: true,
+            writable: true
+        });
+    } else {
+        obj[key] = value;
+    }
+    return obj;
+}
+import { jsxDEV as _jsxDEV } from "/@id/__x00__vibecode-jsx-source/jsx-dev-runtime";
+var _s = $RefreshSig$();
+import __vite__cjsImport3_react from "/node_modules/.vite/deps/react.js?v=730f480c"; const Component = __vite__cjsImport3_react["Component"]; const useEffect = __vite__cjsImport3_react["useEffect"]; const useRef = __vite__cjsImport3_react["useRef"];
+import { PrivyProvider } from "/node_modules/@privy-io/react-auth/dist/esm/index.mjs?v=730f480c";
+import { PrivyAvailableContext, PrivyProviderInstanceContext } from "/src/components/PrivyContext.tsx";
+const SHOULD_LOG_PRIVY_PROVIDER = import.meta.env.DEV;
+const PRIVY_PROVIDER_CONFIG = {
+    appearance: {
+        theme: "dark"
+    },
+    loginMethods: [
+        "email",
+        "twitter"
+    ],
+    embeddedWallets: {
+        showWalletUIs: false,
+        ethereum: {
+            createOnLogin: "off"
+        },
+        solana: {
+            createOnLogin: "off"
+        }
+    }
+};
+function createPrivyProviderInstanceId() {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+        return crypto.randomUUID();
+    }
+    return `privy_provider_${Math.random().toString(36).slice(2, 12)}_${Date.now().toString(36)}`;
+}
+class PrivyErrorBoundary extends Component {
+    static getDerivedStateFromError(error) {
+        return {
+            hasError: true,
+            error
+        };
+    }
+    componentDidCatch(error, info) {
+        console.error("[PrivyWalletProvider] Privy init error:", error.message, info);
+    }
+    render() {
+        if (this.state.hasError) {
+            console.warn("[PrivyWalletProvider] Privy failed to initialize, falling back to non-Privy mode");
+            return /*#__PURE__*/ _jsxDEV(PrivyProviderInstanceContext.Provider, {
+                value: null,
+                children: /*#__PURE__*/ _jsxDEV(PrivyAvailableContext.Provider, {
+                    value: false,
+                    children: this.props.children
+                }, void 0, false, {
+                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/PrivyWalletProvider.tsx",
+                    lineNumber: 53,
+                    columnNumber: 11
+                }, this)
+            }, void 0, false, {
+                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/PrivyWalletProvider.tsx",
+                lineNumber: 52,
+                columnNumber: 9
+            }, this);
+        }
+        return this.props.children;
+    }
+    constructor(...args){
+        super(...args), _define_property(this, "state", {
+            hasError: false,
+            error: undefined
+        });
+    }
+}
+function PrivyProviderInner({ children }) {
+    _s();
+    const appId = import.meta.env.VITE_PRIVY_APP_ID;
+    const clientId = import.meta.env.VITE_PRIVY_CLIENT_ID;
+    const providerInstanceIdRef = useRef(createPrivyProviderInstanceId());
+    const providerInstanceId = providerInstanceIdRef.current;
+    useEffect(()=>{
+        if (!appId || !SHOULD_LOG_PRIVY_PROVIDER) {
+            return;
+        }
+        console.info("[PrivyWalletProvider] mounted", {
+            providerInstanceId,
+            appId,
+            href: typeof window !== "undefined" ? window.location.href : null
+        });
+        return ()=>{
+            console.info("[PrivyWalletProvider] unmounted", {
+                providerInstanceId
+            });
+        };
+    }, [
+        appId,
+        providerInstanceId
+    ]);
+    if (!appId) {
+        console.warn("[PrivyWalletProvider] Missing VITE_PRIVY_APP_ID - Privy login disabled");
+        return /*#__PURE__*/ _jsxDEV(PrivyProviderInstanceContext.Provider, {
+            value: null,
+            children: /*#__PURE__*/ _jsxDEV(PrivyAvailableContext.Provider, {
+                value: false,
+                children: children
+            }, void 0, false, {
+                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/PrivyWalletProvider.tsx",
+                lineNumber: 91,
+                columnNumber: 9
+            }, this)
+        }, void 0, false, {
+            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/PrivyWalletProvider.tsx",
+            lineNumber: 90,
+            columnNumber: 7
+        }, this);
+    }
+    return /*#__PURE__*/ _jsxDEV(PrivyProviderInstanceContext.Provider, {
+        value: providerInstanceId,
+        children: /*#__PURE__*/ _jsxDEV(PrivyProvider, {
+            appId: appId,
+            clientId: clientId,
+            config: PRIVY_PROVIDER_CONFIG,
+            children: /*#__PURE__*/ _jsxDEV(PrivyAvailableContext.Provider, {
+                value: true,
+                children: children
+            }, void 0, false, {
+                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/PrivyWalletProvider.tsx",
+                lineNumber: 105,
+                columnNumber: 9
+            }, this)
+        }, void 0, false, {
+            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/PrivyWalletProvider.tsx",
+            lineNumber: 100,
+            columnNumber: 7
+        }, this)
+    }, void 0, false, {
+        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/PrivyWalletProvider.tsx",
+        lineNumber: 99,
+        columnNumber: 5
+    }, this);
+}
+_s(PrivyProviderInner, "Bjy8jqCgPG0MYHDet6BfenLfZuU=");
+_c = PrivyProviderInner;
+export function PrivyWalletProvider({ children }) {
+    return /*#__PURE__*/ _jsxDEV(PrivyErrorBoundary, {
+        children: /*#__PURE__*/ _jsxDEV(PrivyProviderInner, {
+            children: children
+        }, void 0, false, {
+            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/PrivyWalletProvider.tsx",
+            lineNumber: 116,
+            columnNumber: 7
+        }, this)
+    }, void 0, false, {
+        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/PrivyWalletProvider.tsx",
+        lineNumber: 115,
+        columnNumber: 5
+    }, this);
+}
+_c1 = PrivyWalletProvider;
+var _c, _c1;
+$RefreshReg$(_c, "PrivyProviderInner");
+$RefreshReg$(_c1, "PrivyWalletProvider");
+
+
+if (import.meta.hot && !inWebWorker) {
+  window.$RefreshReg$ = prevRefreshReg;
+  window.$RefreshSig$ = prevRefreshSig;
+}
+
+
+if (import.meta.hot && !inWebWorker) {
+  RefreshRuntime.__hmr_import(import.meta.url).then((currentExports) => {
+    RefreshRuntime.registerExportsForReactRefresh("C:/Users/renga/Documents/phewrunn/webapp/src/components/PrivyWalletProvider.tsx", currentExports);
+    import.meta.hot.accept((nextExports) => {
+      if (!nextExports) return;
+      const invalidateMessage = RefreshRuntime.validateRefreshBoundaryAndEnqueueUpdate("C:/Users/renga/Documents/phewrunn/webapp/src/components/PrivyWalletProvider.tsx", currentExports, nextExports);
+      if (invalidateMessage) import.meta.hot.invalidate(invalidateMessage);
+    });
+  });
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIlByaXZ5V2FsbGV0UHJvdmlkZXIudHN4Il0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCB7IENvbXBvbmVudCwgdXNlRWZmZWN0LCB1c2VSZWYsIHR5cGUgRXJyb3JJbmZvLCB0eXBlIFJlYWN0Tm9kZSB9IGZyb20gXCJyZWFjdFwiO1xuaW1wb3J0IHsgUHJpdnlQcm92aWRlciB9IGZyb20gXCJAcHJpdnktaW8vcmVhY3QtYXV0aFwiO1xuaW1wb3J0IHtcbiAgUHJpdnlBdmFpbGFibGVDb250ZXh0LFxuICBQcml2eVByb3ZpZGVySW5zdGFuY2VDb250ZXh0LFxufSBmcm9tIFwiQC9jb21wb25lbnRzL1ByaXZ5Q29udGV4dFwiO1xuXG5pbnRlcmZhY2UgUHJpdnlXYWxsZXRQcm92aWRlclByb3BzIHtcbiAgY2hpbGRyZW46IFJlYWN0Tm9kZTtcbn1cblxuaW50ZXJmYWNlIEVycm9yQm91bmRhcnlTdGF0ZSB7XG4gIGhhc0Vycm9yOiBib29sZWFuO1xuICBlcnJvcj86IEVycm9yO1xufVxuXG5jb25zdCBTSE9VTERfTE9HX1BSSVZZX1BST1ZJREVSID0gaW1wb3J0Lm1ldGEuZW52LkRFVjtcbmNvbnN0IFBSSVZZX1BST1ZJREVSX0NPTkZJRyA9IHtcbiAgYXBwZWFyYW5jZToge1xuICAgIHRoZW1lOiBcImRhcmtcIiBhcyBjb25zdCxcbiAgfSxcbiAgbG9naW5NZXRob2RzOiBbXCJlbWFpbFwiLCBcInR3aXR0ZXJcIl0gYXMgY29uc3QsXG4gIGVtYmVkZGVkV2FsbGV0czoge1xuICAgIHNob3dXYWxsZXRVSXM6IGZhbHNlLFxuICAgIGV0aGVyZXVtOiB7IGNyZWF0ZU9uTG9naW46IFwib2ZmXCIgYXMgY29uc3QgfSxcbiAgICBzb2xhbmE6IHsgY3JlYXRlT25Mb2dpbjogXCJvZmZcIiBhcyBjb25zdCB9LFxuICB9LFxufTtcblxuZnVuY3Rpb24gY3JlYXRlUHJpdnlQcm92aWRlckluc3RhbmNlSWQoKTogc3RyaW5nIHtcbiAgaWYgKHR5cGVvZiBjcnlwdG8gIT09IFwidW5kZWZpbmVkXCIgJiYgdHlwZW9mIGNyeXB0by5yYW5kb21VVUlEID09PSBcImZ1bmN0aW9uXCIpIHtcbiAgICByZXR1cm4gY3J5cHRvLnJhbmRvbVVVSUQoKTtcbiAgfVxuICByZXR1cm4gYHByaXZ5X3Byb3ZpZGVyXyR7TWF0aC5yYW5kb20oKS50b1N0cmluZygzNikuc2xpY2UoMiwgMTIpfV8ke0RhdGUubm93KCkudG9TdHJpbmcoMzYpfWA7XG59XG5cbmNsYXNzIFByaXZ5RXJyb3JCb3VuZGFyeSBleHRlbmRzIENvbXBvbmVudDxQcml2eVdhbGxldFByb3ZpZGVyUHJvcHMsIEVycm9yQm91bmRhcnlTdGF0ZT4ge1xuICBzdGF0ZTogRXJyb3JCb3VuZGFyeVN0YXRlID0geyBoYXNFcnJvcjogZmFsc2UsIGVycm9yOiB1bmRlZmluZWQgfTtcblxuICBzdGF0aWMgZ2V0RGVyaXZlZFN0YXRlRnJvbUVycm9yKGVycm9yOiBFcnJvcik6IEVycm9yQm91bmRhcnlTdGF0ZSB7XG4gICAgcmV0dXJuIHsgaGFzRXJyb3I6IHRydWUsIGVycm9yIH07XG4gIH1cblxuICBjb21wb25lbnREaWRDYXRjaChlcnJvcjogRXJyb3IsIGluZm86IEVycm9ySW5mbykge1xuICAgIGNvbnNvbGUuZXJyb3IoXCJbUHJpdnlXYWxsZXRQcm92aWRlcl0gUHJpdnkgaW5pdCBlcnJvcjpcIiwgZXJyb3IubWVzc2FnZSwgaW5mbyk7XG4gIH1cblxuICByZW5kZXIoKSB7XG4gICAgaWYgKHRoaXMuc3RhdGUuaGFzRXJyb3IpIHtcbiAgICAgIGNvbnNvbGUud2FybihcIltQcml2eVdhbGxldFByb3ZpZGVyXSBQcml2eSBmYWlsZWQgdG8gaW5pdGlhbGl6ZSwgZmFsbGluZyBiYWNrIHRvIG5vbi1Qcml2eSBtb2RlXCIpO1xuICAgICAgcmV0dXJuIChcbiAgICAgICAgPFByaXZ5UHJvdmlkZXJJbnN0YW5jZUNvbnRleHQuUHJvdmlkZXIgdmFsdWU9e251bGx9PlxuICAgICAgICAgIDxQcml2eUF2YWlsYWJsZUNvbnRleHQuUHJvdmlkZXIgdmFsdWU9e2ZhbHNlfT5cbiAgICAgICAgICAgIHt0aGlzLnByb3BzLmNoaWxkcmVufVxuICAgICAgICAgIDwvUHJpdnlBdmFpbGFibGVDb250ZXh0LlByb3ZpZGVyPlxuICAgICAgICA8L1ByaXZ5UHJvdmlkZXJJbnN0YW5jZUNvbnRleHQuUHJvdmlkZXI+XG4gICAgICApO1xuICAgIH1cbiAgICByZXR1cm4gdGhpcy5wcm9wcy5jaGlsZHJlbjtcbiAgfVxufVxuXG5mdW5jdGlvbiBQcml2eVByb3ZpZGVySW5uZXIoeyBjaGlsZHJlbiB9OiBQcml2eVdhbGxldFByb3ZpZGVyUHJvcHMpIHtcbiAgY29uc3QgYXBwSWQgPSBpbXBvcnQubWV0YS5lbnYuVklURV9QUklWWV9BUFBfSUQgYXMgc3RyaW5nIHwgdW5kZWZpbmVkO1xuICBjb25zdCBjbGllbnRJZCA9IGltcG9ydC5tZXRhLmVudi5WSVRFX1BSSVZZX0NMSUVOVF9JRCBhcyBzdHJpbmcgfCB1bmRlZmluZWQ7XG4gIGNvbnN0IHByb3ZpZGVySW5zdGFuY2VJZFJlZiA9IHVzZVJlZjxzdHJpbmc+KGNyZWF0ZVByaXZ5UHJvdmlkZXJJbnN0YW5jZUlkKCkpO1xuICBjb25zdCBwcm92aWRlckluc3RhbmNlSWQgPSBwcm92aWRlckluc3RhbmNlSWRSZWYuY3VycmVudDtcblxuICB1c2VFZmZlY3QoKCkgPT4ge1xuICAgIGlmICghYXBwSWQgfHwgIVNIT1VMRF9MT0dfUFJJVllfUFJPVklERVIpIHtcbiAgICAgIHJldHVybjtcbiAgICB9XG5cbiAgICBjb25zb2xlLmluZm8oXCJbUHJpdnlXYWxsZXRQcm92aWRlcl0gbW91bnRlZFwiLCB7XG4gICAgICBwcm92aWRlckluc3RhbmNlSWQsXG4gICAgICBhcHBJZCxcbiAgICAgIGhyZWY6IHR5cGVvZiB3aW5kb3cgIT09IFwidW5kZWZpbmVkXCIgPyB3aW5kb3cubG9jYXRpb24uaHJlZiA6IG51bGwsXG4gICAgfSk7XG5cbiAgICByZXR1cm4gKCkgPT4ge1xuICAgICAgY29uc29sZS5pbmZvKFwiW1ByaXZ5V2FsbGV0UHJvdmlkZXJdIHVubW91bnRlZFwiLCB7XG4gICAgICAgIHByb3ZpZGVySW5zdGFuY2VJZCxcbiAgICAgIH0pO1xuICAgIH07XG4gIH0sIFthcHBJZCwgcHJvdmlkZXJJbnN0YW5jZUlkXSk7XG5cbiAgaWYgKCFhcHBJZCkge1xuICAgIGNvbnNvbGUud2FybihcIltQcml2eVdhbGxldFByb3ZpZGVyXSBNaXNzaW5nIFZJVEVfUFJJVllfQVBQX0lEIC0gUHJpdnkgbG9naW4gZGlzYWJsZWRcIik7XG4gICAgcmV0dXJuIChcbiAgICAgIDxQcml2eVByb3ZpZGVySW5zdGFuY2VDb250ZXh0LlByb3ZpZGVyIHZhbHVlPXtudWxsfT5cbiAgICAgICAgPFByaXZ5QXZhaWxhYmxlQ29udGV4dC5Qcm92aWRlciB2YWx1ZT17ZmFsc2V9PlxuICAgICAgICAgIHtjaGlsZHJlbn1cbiAgICAgICAgPC9Qcml2eUF2YWlsYWJsZUNvbnRleHQuUHJvdmlkZXI+XG4gICAgICA8L1ByaXZ5UHJvdmlkZXJJbnN0YW5jZUNvbnRleHQuUHJvdmlkZXI+XG4gICAgKTtcbiAgfVxuXG4gIHJldHVybiAoXG4gICAgPFByaXZ5UHJvdmlkZXJJbnN0YW5jZUNvbnRleHQuUHJvdmlkZXIgdmFsdWU9e3Byb3ZpZGVySW5zdGFuY2VJZH0+XG4gICAgICA8UHJpdnlQcm92aWRlclxuICAgICAgICBhcHBJZD17YXBwSWR9XG4gICAgICAgIGNsaWVudElkPXtjbGllbnRJZH1cbiAgICAgICAgY29uZmlnPXtQUklWWV9QUk9WSURFUl9DT05GSUd9XG4gICAgICA+XG4gICAgICAgIDxQcml2eUF2YWlsYWJsZUNvbnRleHQuUHJvdmlkZXIgdmFsdWU9e3RydWV9PlxuICAgICAgICAgIHtjaGlsZHJlbn1cbiAgICAgICAgPC9Qcml2eUF2YWlsYWJsZUNvbnRleHQuUHJvdmlkZXI+XG4gICAgICA8L1ByaXZ5UHJvdmlkZXI+XG4gICAgPC9Qcml2eVByb3ZpZGVySW5zdGFuY2VDb250ZXh0LlByb3ZpZGVyPlxuICApO1xufVxuXG5leHBvcnQgZnVuY3Rpb24gUHJpdnlXYWxsZXRQcm92aWRlcih7IGNoaWxkcmVuIH06IFByaXZ5V2FsbGV0UHJvdmlkZXJQcm9wcykge1xuICByZXR1cm4gKFxuICAgIDxQcml2eUVycm9yQm91bmRhcnk+XG4gICAgICA8UHJpdnlQcm92aWRlcklubmVyPntjaGlsZHJlbn08L1ByaXZ5UHJvdmlkZXJJbm5lcj5cbiAgICA8L1ByaXZ5RXJyb3JCb3VuZGFyeT5cbiAgKTtcbn1cbiJdLCJuYW1lcyI6WyJDb21wb25lbnQiLCJ1c2VFZmZlY3QiLCJ1c2VSZWYiLCJQcml2eVByb3ZpZGVyIiwiUHJpdnlBdmFpbGFibGVDb250ZXh0IiwiUHJpdnlQcm92aWRlckluc3RhbmNlQ29udGV4dCIsIlNIT1VMRF9MT0dfUFJJVllfUFJPVklERVIiLCJlbnYiLCJERVYiLCJQUklWWV9QUk9WSURFUl9DT05GSUciLCJhcHBlYXJhbmNlIiwidGhlbWUiLCJsb2dpbk1ldGhvZHMiLCJlbWJlZGRlZFdhbGxldHMiLCJzaG93V2FsbGV0VUlzIiwiZXRoZXJldW0iLCJjcmVhdGVPbkxvZ2luIiwic29sYW5hIiwiY3JlYXRlUHJpdnlQcm92aWRlckluc3RhbmNlSWQiLCJjcnlwdG8iLCJyYW5kb21VVUlEIiwiTWF0aCIsInJhbmRvbSIsInRvU3RyaW5nIiwic2xpY2UiLCJEYXRlIiwibm93IiwiUHJpdnlFcnJvckJvdW5kYXJ5IiwiZ2V0RGVyaXZlZFN0YXRlRnJvbUVycm9yIiwiZXJyb3IiLCJoYXNFcnJvciIsImNvbXBvbmVudERpZENhdGNoIiwiaW5mbyIsImNvbnNvbGUiLCJtZXNzYWdlIiwicmVuZGVyIiwic3RhdGUiLCJ3YXJuIiwiUHJvdmlkZXIiLCJ2YWx1ZSIsInByb3BzIiwiY2hpbGRyZW4iLCJ1bmRlZmluZWQiLCJQcml2eVByb3ZpZGVySW5uZXIiLCJhcHBJZCIsIlZJVEVfUFJJVllfQVBQX0lEIiwiY2xpZW50SWQiLCJWSVRFX1BSSVZZX0NMSUVOVF9JRCIsInByb3ZpZGVySW5zdGFuY2VJZFJlZiIsInByb3ZpZGVySW5zdGFuY2VJZCIsImN1cnJlbnQiLCJocmVmIiwid2luZG93IiwibG9jYXRpb24iLCJjb25maWciLCJQcml2eVdhbGxldFByb3ZpZGVyIl0sIm1hcHBpbmdzIjoiOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7O0FBQUEsU0FBU0EsU0FBUyxFQUFFQyxTQUFTLEVBQUVDLE1BQU0sUUFBd0MsUUFBUTtBQUNyRixTQUFTQyxhQUFhLFFBQVEsdUJBQXVCO0FBQ3JELFNBQ0VDLHFCQUFxQixFQUNyQkMsNEJBQTRCLFFBQ3ZCLDRCQUE0QjtBQVduQyxNQUFNQyw0QkFBNEIsWUFBWUMsR0FBRyxDQUFDQyxHQUFHO0FBQ3JELE1BQU1DLHdCQUF3QjtJQUM1QkMsWUFBWTtRQUNWQyxPQUFPO0lBQ1Q7SUFDQUMsY0FBYztRQUFDO1FBQVM7S0FBVTtJQUNsQ0MsaUJBQWlCO1FBQ2ZDLGVBQWU7UUFDZkMsVUFBVTtZQUFFQyxlQUFlO1FBQWU7UUFDMUNDLFFBQVE7WUFBRUQsZUFBZTtRQUFlO0lBQzFDO0FBQ0Y7QUFFQSxTQUFTRTtJQUNQLElBQUksT0FBT0MsV0FBVyxlQUFlLE9BQU9BLE9BQU9DLFVBQVUsS0FBSyxZQUFZO1FBQzVFLE9BQU9ELE9BQU9DLFVBQVU7SUFDMUI7SUFDQSxPQUFPLENBQUMsZUFBZSxFQUFFQyxLQUFLQyxNQUFNLEdBQUdDLFFBQVEsQ0FBQyxJQUFJQyxLQUFLLENBQUMsR0FBRyxJQUFJLENBQUMsRUFBRUMsS0FBS0MsR0FBRyxHQUFHSCxRQUFRLENBQUMsS0FBSztBQUMvRjtBQUVBLE1BQU1JLDJCQUEyQjNCO0lBRy9CLE9BQU80Qix5QkFBeUJDLEtBQVksRUFBc0I7UUFDaEUsT0FBTztZQUFFQyxVQUFVO1lBQU1EO1FBQU07SUFDakM7SUFFQUUsa0JBQWtCRixLQUFZLEVBQUVHLElBQWUsRUFBRTtRQUMvQ0MsUUFBUUosS0FBSyxDQUFDLDJDQUEyQ0EsTUFBTUssT0FBTyxFQUFFRjtJQUMxRTtJQUVBRyxTQUFTO1FBQ1AsSUFBSSxJQUFJLENBQUNDLEtBQUssQ0FBQ04sUUFBUSxFQUFFO1lBQ3ZCRyxRQUFRSSxJQUFJLENBQUM7WUFDYixxQkFDRSxRQUFDaEMsNkJBQTZCaUMsUUFBUTtnQkFBQ0MsT0FBTzswQkFDNUMsY0FBQSxRQUFDbkMsc0JBQXNCa0MsUUFBUTtvQkFBQ0MsT0FBTzs4QkFDcEMsSUFBSSxDQUFDQyxLQUFLLENBQUNDLFFBQVE7Ozs7Ozs7Ozs7O1FBSTVCO1FBQ0EsT0FBTyxJQUFJLENBQUNELEtBQUssQ0FBQ0MsUUFBUTtJQUM1Qjs7UUF2QkYsZ0JBQ0VMLHVCQUFBQSxTQUE0QjtZQUFFTixVQUFVO1lBQU9ELE9BQU9hO1FBQVU7O0FBdUJsRTtBQUVBLFNBQVNDLG1CQUFtQixFQUFFRixRQUFRLEVBQTRCOztJQUNoRSxNQUFNRyxRQUFRLFlBQVlyQyxHQUFHLENBQUNzQyxpQkFBaUI7SUFDL0MsTUFBTUMsV0FBVyxZQUFZdkMsR0FBRyxDQUFDd0Msb0JBQW9CO0lBQ3JELE1BQU1DLHdCQUF3QjlDLE9BQWVnQjtJQUM3QyxNQUFNK0IscUJBQXFCRCxzQkFBc0JFLE9BQU87SUFFeERqRCxVQUFVO1FBQ1IsSUFBSSxDQUFDMkMsU0FBUyxDQUFDdEMsMkJBQTJCO1lBQ3hDO1FBQ0Y7UUFFQTJCLFFBQVFELElBQUksQ0FBQyxpQ0FBaUM7WUFDNUNpQjtZQUNBTDtZQUNBTyxNQUFNLE9BQU9DLFdBQVcsY0FBY0EsT0FBT0MsUUFBUSxDQUFDRixJQUFJLEdBQUc7UUFDL0Q7UUFFQSxPQUFPO1lBQ0xsQixRQUFRRCxJQUFJLENBQUMsbUNBQW1DO2dCQUM5Q2lCO1lBQ0Y7UUFDRjtJQUNGLEdBQUc7UUFBQ0w7UUFBT0s7S0FBbUI7SUFFOUIsSUFBSSxDQUFDTCxPQUFPO1FBQ1ZYLFFBQVFJLElBQUksQ0FBQztRQUNiLHFCQUNFLFFBQUNoQyw2QkFBNkJpQyxRQUFRO1lBQUNDLE9BQU87c0JBQzVDLGNBQUEsUUFBQ25DLHNCQUFzQmtDLFFBQVE7Z0JBQUNDLE9BQU87MEJBQ3BDRTs7Ozs7Ozs7Ozs7SUFJVDtJQUVBLHFCQUNFLFFBQUNwQyw2QkFBNkJpQyxRQUFRO1FBQUNDLE9BQU9VO2tCQUM1QyxjQUFBLFFBQUM5QztZQUNDeUMsT0FBT0E7WUFDUEUsVUFBVUE7WUFDVlEsUUFBUTdDO3NCQUVSLGNBQUEsUUFBQ0wsc0JBQXNCa0MsUUFBUTtnQkFBQ0MsT0FBTzswQkFDcENFOzs7Ozs7Ozs7Ozs7Ozs7O0FBS1g7R0FoRFNFO0tBQUFBO0FBa0RULE9BQU8sU0FBU1ksb0JBQW9CLEVBQUVkLFFBQVEsRUFBNEI7SUFDeEUscUJBQ0UsUUFBQ2Q7a0JBQ0MsY0FBQSxRQUFDZ0I7c0JBQW9CRjs7Ozs7Ozs7Ozs7QUFHM0I7TUFOZ0JjIn0=

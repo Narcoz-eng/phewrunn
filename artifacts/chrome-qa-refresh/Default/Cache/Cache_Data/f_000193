@@ -1,0 +1,299 @@
+/**
+ * Utilities for Tempo-flavoured EIP-7702 authorizations.
+ *
+ * Tempo extends EIP-7702 to support more signature types (secp256k1, P256, and WebAuthn),
+ * enabling passkey-based account delegation. Authorizations delegate an account to a specified
+ * implementation contract.
+ *
+ * [Tempo Authorization Specification](https://docs.tempo.xyz/protocol/transactions/spec-tempo-transaction#tempo-authorization-list)
+ *
+ * @example
+ * ```ts twoslash
+ * import { Secp256k1 } from 'ox'
+ * import { AuthorizationTempo } from 'ox/tempo'
+ *
+ * const authorization = AuthorizationTempo.from({
+ *   address: '0xbe95c3f554e9fc85ec51be69a3d807a0d55bcf2c',
+ *   chainId: 1,
+ *   nonce: 40n,
+ * })
+ *
+ * const payload = AuthorizationTempo.getSignPayload(authorization)
+ *
+ * const signature = Secp256k1.sign({ payload, privateKey: '0x...' })
+ *
+ * const authorization_signed = AuthorizationTempo.from(
+ *   authorization,
+ *   { signature }
+ * )
+ * ```
+ *
+ * @category Reference
+ */
+export * as AuthorizationTempo from "/node_modules/viem/node_modules/ox/_esm/tempo/AuthorizationTempo.js?v=730f480c";
+/**
+ * Tempo key authorization utilities for provisioning and signing access keys.
+ *
+ * Access keys allow a root key (e.g., a passkey) to delegate transaction signing to secondary
+ * keys with customizable permissions including expiry timestamps and per-TIP-20 token spending
+ * limits. This enables a user to sign transactions without repeated passkey prompts.
+ *
+ * [Access Keys Specification](https://docs.tempo.xyz/protocol/transactions/spec-tempo-transaction#access-keys)
+ *
+ * @example
+ * ```ts twoslash
+ * import { KeyAuthorization, SignatureEnvelope } from 'ox/tempo'
+ * import { Address, Secp256k1, WebCryptoP256, Value } from 'ox'
+ *
+ * const keyPair = await WebCryptoP256.createKeyPair()
+ * const address = Address.fromPublicKey(keyPair.publicKey)
+ *
+ * const authorization = KeyAuthorization.from({
+ *   address,
+ *   expiry: 1234567890,
+ *   type: 'p256',
+ *   limits: [{
+ *     token: '0x20c0000000000000000000000000000000000001',
+ *     limit: Value.from('10', 6),
+ *   }],
+ * })
+ *
+ * const privateKey = '0x...'
+ * const payload = KeyAuthorization.getSignPayload(authorization)
+ * const signature = SignatureEnvelope.from(
+ *   Secp256k1.sign({ payload, privateKey }),
+ * )
+ *
+ * KeyAuthorization.from(authorization, { signature })
+ * ```
+ *
+ * @category Reference
+ */
+export * as KeyAuthorization from "/node_modules/viem/node_modules/ox/_esm/tempo/KeyAuthorization.js?v=730f480c";
+/**
+ * Pool ID utilities for computing pool identifiers from token pairs.
+ *
+ * Pool IDs are deterministic keys derived from two token addresses (order-independent)
+ * used to identify trading pairs on Tempo's enshrined stablecoin DEX.
+ *
+ * [Stablecoin DEX Specification](https://docs.tempo.xyz/protocol/exchange/spec)
+ *
+ * @example
+ * ```ts twoslash
+ * import { PoolId } from 'ox/tempo'
+ *
+ * const poolId = PoolId.from({
+ *   userToken: 1n,
+ *   validatorToken: 2n,
+ * })
+ * ```
+ *
+ * @category Reference
+ */
+export * as PoolId from "/node_modules/viem/node_modules/ox/_esm/tempo/PoolId.js?v=730f480c";
+/**
+ * Signature envelope utilities for secp256k1, P256, WebAuthn, and keychain signatures.
+ *
+ * Tempo transactions support multiple signature types: secp256k1 (65 bytes), P256 for passkeys
+ * (type `0x01`), WebAuthn (type `0x02`), and Keychain for access keys (type `0x03`).
+ *
+ * [Signature Types Specification](https://docs.tempo.xyz/protocol/transactions/spec-tempo-transaction#signature-types)
+ *
+ * @example
+ * ```ts twoslash
+ * import { Secp256k1 } from 'ox'
+ * import { SignatureEnvelope } from 'ox/tempo'
+ *
+ * const privateKey = Secp256k1.randomPrivateKey()
+ * const signature = Secp256k1.sign({ payload: '0xdeadbeef', privateKey })
+ *
+ * const envelope = SignatureEnvelope.from(signature)
+ * ```
+ *
+ * @category Reference
+ */
+export * as SignatureEnvelope from "/node_modules/viem/node_modules/ox/_esm/tempo/SignatureEnvelope.js?v=730f480c";
+/**
+ * Tick-based pricing utilities for DEX price conversions.
+ *
+ * Prices on Tempo's stablecoin DEX are discretized into integer ticks with a tick size of 0.1 bps
+ * (where `price = PRICE_SCALE + tick` and `PRICE_SCALE = 100_000`). Orders must be placed at ticks
+ * divisible by `TICK_SPACING = 10` (1 bp grid), within bounds of ±2000 ticks (±2%).
+ *
+ * [Stablecoin DEX Pricing](https://docs.tempo.xyz/protocol/exchange/spec#key-concepts)
+ *
+ * @example
+ * ```ts twoslash
+ * import { Tick } from 'ox/tempo'
+ *
+ * const price = Tick.toPrice(100) // "1.001" (0.1% above 1.0)
+ * const tick = Tick.fromPrice('0.999') // -100
+ * ```
+ *
+ * @category Reference
+ */
+export * as Tick from "/node_modules/viem/node_modules/ox/_esm/tempo/Tick.js?v=730f480c";
+/**
+ * TIP-20 token ID utilities for converting between token IDs and addresses.
+ *
+ * TIP-20 is Tempo's native token standard for stablecoins with deterministic addresses
+ * derived from sequential token IDs. TIP-20 extends ERC-20 with payment features like
+ * configurable fee tokens, transfer memos, and built-in role-based access control.
+ *
+ * [TIP-20 Token Standard](https://docs.tempo.xyz/protocol/tip20/overview)
+ *
+ * @example
+ * ```ts twoslash
+ * import { TokenId } from 'ox/tempo'
+ *
+ * const tokenId = TokenId.from(1n)
+ * const address = TokenId.toAddress(1n)
+ * // '0x20c0000000000000000000000000000000000001'
+ * ```
+ *
+ * @category Reference
+ */
+export * as TokenId from "/node_modules/viem/node_modules/ox/_esm/tempo/TokenId.js?v=730f480c";
+/**
+ * Token role utilities for serializing role identifiers to keccak256 hashes.
+ *
+ * TIP-20 includes a built-in RBAC system with roles like `ISSUER_ROLE` (mint/burn),
+ * `PAUSE_ROLE`/`UNPAUSE_ROLE` (emergency controls), and `BURN_BLOCKED_ROLE` (compliance).
+ *
+ * [TIP-20 RBAC](https://docs.tempo.xyz/protocol/tip20/overview#role-based-access-control-rbac)
+ *
+ * @example
+ * ```ts twoslash
+ * import { TokenRole } from 'ox/tempo'
+ *
+ * const hash = TokenRole.serialize('issuer')
+ * ```
+ *
+ * @category Reference
+ */
+export * as TokenRole from "/node_modules/viem/node_modules/ox/_esm/tempo/TokenRole.js?v=730f480c";
+/**
+ * Utilities for converting between RPC and structured transaction formats.
+ *
+ * Tempo Transactions (type `0x76`) are a new EIP-2718 transaction type with native support
+ * for passkeys, call batching, fee sponsorship, parallelizable nonces, and scheduled execution.
+ *
+ * [Tempo Transactions](https://docs.tempo.xyz/protocol/transactions)
+ *
+ * @example
+ * ```ts twoslash
+ * // @noErrors
+ * import { Transaction } from 'ox/tempo'
+ *
+ * const transaction = Transaction.fromRpc({
+ *   hash: '0x353fdfc38a2f26115daadee9f5b8392ce62b84f410957967e2ed56b35338cdd0',
+ *   nonce: '0x357',
+ *   blockHash:
+ *     '0xc350d807505fb835650f0013632c5515592987ba169bbc6626d9fc54d91f0f0b',
+ *   blockNumber: '0x12f296f',
+ *   calls: [
+ *     {
+ *       input: '0xdeadbeef',
+ *       to: '0x3fc91a3afd70395cd496c647d5a6cc9d4b2b7fad',
+ *       value: '0x9b6e64a8ec60000',
+ *     },
+ *   ],
+ *   feeToken: '0x20c0000000000000000000000000000000000000',
+ *   transactionIndex: '0x2',
+ *   from: '0x814e5e0e31016b9a7f138c76b7e7b2bb5c1ab6a6',
+ *   value: '0x9b6e64a8ec60000',
+ *   gas: '0x43f5d',
+ *   maxFeePerGas: '0x2ca6ae494',
+ *   maxPriorityFeePerGas: '0x41cc3c0',
+ *   input:
+ *     '0x3593564c000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000006643504700000000000000000000000000000000000000000000000000000000000000040b080604000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000e0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000002800000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000009b6e64a8ec600000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000009b6e64a8ec60000000000000000000000000000000000000000000000000000019124bb5ae978c000000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000c56c7a0eaa804f854b536a5f3d5f49d2ec4b12b80000000000000000000000000000000000000000000000000000000000000060000000000000000000000000c56c7a0eaa804f854b536a5f3d5f49d2ec4b12b8000000000000000000000000000000fee13a103a10d593b9ae06b3e05f2e7e1c00000000000000000000000000000000000000000000000000000000000000190000000000000000000000000000000000000000000000000000000000000060000000000000000000000000c56c7a0eaa804f854b536a5f3d5f49d2ec4b12b800000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000190240001b9872b',
+ *   signature: {
+ *     r: '0x635dc2033e60185bb36709c29c75d64ea51dfbd91c32ef4be198e4ceb169fb4d',
+ *     s: '0x50c2667ac4c771072746acfdcf1f1483336dcca8bd2df47cd83175dbe60f0540',
+ *     type: 'secp256k1',
+ *     yParity: '0x0',
+ *   },
+ *   chainId: '0x1',
+ *   accessList: [],
+ *   type: '0x76',
+ * })
+ * ```
+ *
+ * @category Reference
+ */
+export * as Transaction from "/node_modules/viem/node_modules/ox/_esm/tempo/Transaction.js?v=730f480c";
+/**
+ * Utilities for working with Tempo transaction receipts.
+ *
+ * Tempo receipts include additional fields like `feePayer` (the address that paid fees)
+ * and `feeToken` (the TIP-20 token used for fee payment).
+ *
+ * [Tempo Transactions](https://docs.tempo.xyz/protocol/transactions)
+ *
+ * @example
+ * ```ts twoslash
+ * import { TransactionReceipt } from 'ox/tempo'
+ *
+ * const receipt = TransactionReceipt.fromRpc({
+ *   status: '0x1',
+ *   feePayer: '0x...',
+ *   feeToken: '0x20c0000000000000000000000000000000000001',
+ *   // ... other fields
+ * } as any)
+ * ```
+ *
+ * @category Reference
+ */
+export * as TransactionReceipt from "/node_modules/viem/node_modules/ox/_esm/tempo/TransactionReceipt.js?v=730f480c";
+/**
+ * Utilities for preparing RPC-formatted transaction requests.
+ *
+ * Convert structured transaction requests to RPC format for submission to Tempo nodes,
+ * including support for batched calls and fee token specification.
+ *
+ * [Tempo Transactions](https://docs.tempo.xyz/protocol/transactions)
+ *
+ * @example
+ * ```ts twoslash
+ * import { TransactionRequest } from 'ox/tempo'
+ *
+ * const request = TransactionRequest.toRpc({
+ *   calls: [{ to: '0xcafebabecafebabecafebabecafebabecafebabe', data: '0xdeadbeef' }],
+ *   feeToken: '0x20c0000000000000000000000000000000000000',
+ * })
+ * ```
+ *
+ * @category Reference
+ */
+export * as TransactionRequest from "/node_modules/viem/node_modules/ox/_esm/tempo/TransactionRequest.js?v=730f480c";
+/**
+ * Utilities for instantiating, serializing, and hashing Tempo transaction envelopes.
+ *
+ * Create, sign, and serialize Tempo transactions with support for configurable fee tokens,
+ * call batching, fee sponsorship, access keys, and scheduled execution via `validAfter`/`validBefore`.
+ *
+ * [Tempo Transaction Specification](https://docs.tempo.xyz/protocol/transactions/spec-tempo-transaction)
+ *
+ * @example
+ * ```ts twoslash
+ * import { Secp256k1, Value } from 'ox'
+ * import { TxEnvelopeTempo } from 'ox/tempo'
+ *
+ * const envelope = TxEnvelopeTempo.from({
+ *   chainId: 1,
+ *   calls: [{ to: '0x0000000000000000000000000000000000000000', data: '0xdeadbeef' }],
+ *   maxFeePerGas: Value.fromGwei('10'),
+ * })
+ *
+ * const payload = TxEnvelopeTempo.getSignPayload(envelope)
+ * const signature = Secp256k1.sign({ payload, privateKey: '0x...' })
+ *
+ * const envelope_signed = TxEnvelopeTempo.from(envelope, { signature })
+ * const envelope_serialized = TxEnvelopeTempo.serialize(envelope_signed)
+ * ```
+ *
+ * @category Reference
+ */
+export * as TxEnvelopeTempo from "/node_modules/viem/node_modules/ox/_esm/tempo/TxEnvelopeTempo.js?v=730f480c";
+                                 
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiaW5kZXguanMiLCJzb3VyY2VSb290IjoiIiwic291cmNlcyI6WyIuLi8uLi90ZW1wby9pbmRleC50cyJdLCJuYW1lcyI6W10sIm1hcHBpbmdzIjoiQUFJQTs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7OztHQStCRztBQUNILE9BQU8sS0FBSyxrQkFBa0IsTUFBTSx5QkFBeUIsQ0FBQTtBQUU3RDs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7OztHQXFDRztBQUNILE9BQU8sS0FBSyxnQkFBZ0IsTUFBTSx1QkFBdUIsQ0FBQTtBQUV6RDs7Ozs7Ozs7Ozs7Ozs7Ozs7OztHQW1CRztBQUNILE9BQU8sS0FBSyxNQUFNLE1BQU0sYUFBYSxDQUFBO0FBRXJDOzs7Ozs7Ozs7Ozs7Ozs7Ozs7OztHQW9CRztBQUNILE9BQU8sS0FBSyxpQkFBaUIsTUFBTSx3QkFBd0IsQ0FBQTtBQUUzRDs7Ozs7Ozs7Ozs7Ozs7Ozs7O0dBa0JHO0FBQ0gsT0FBTyxLQUFLLElBQUksTUFBTSxXQUFXLENBQUE7QUFFakM7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7R0FtQkc7QUFDSCxPQUFPLEtBQUssT0FBTyxNQUFNLGNBQWMsQ0FBQTtBQUV2Qzs7Ozs7Ozs7Ozs7Ozs7OztHQWdCRztBQUNILE9BQU8sS0FBSyxTQUFTLE1BQU0sZ0JBQWdCLENBQUE7QUFFM0M7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7OztHQWdERztBQUNILE9BQU8sS0FBSyxXQUFXLE1BQU0sa0JBQWtCLENBQUE7QUFDL0M7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7OztHQXFCRztBQUNILE9BQU8sS0FBSyxrQkFBa0IsTUFBTSx5QkFBeUIsQ0FBQTtBQUM3RDs7Ozs7Ozs7Ozs7Ozs7Ozs7OztHQW1CRztBQUNILE9BQU8sS0FBSyxrQkFBa0IsTUFBTSx5QkFBeUIsQ0FBQTtBQUM3RDs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7O0dBMkJHO0FBQ0gsT0FBTyxLQUFLLGVBQWUsTUFBTSxzQkFBc0IsQ0FBQSIsInNvdXJjZXNDb250ZW50IjpbIi8qKiBAZW50cnlwb2ludENhdGVnb3J5IFRlbXBvICovXG4vLyBiaW9tZS1pZ25vcmUgbGludC9jb21wbGV4aXR5L25vVXNlbGVzc0VtcHR5RXhwb3J0OiB0c2RvY1xuZXhwb3J0IHR5cGUge31cblxuLyoqXG4gKiBVdGlsaXRpZXMgZm9yIFRlbXBvLWZsYXZvdXJlZCBFSVAtNzcwMiBhdXRob3JpemF0aW9ucy5cbiAqXG4gKiBUZW1wbyBleHRlbmRzIEVJUC03NzAyIHRvIHN1cHBvcnQgbW9yZSBzaWduYXR1cmUgdHlwZXMgKHNlY3AyNTZrMSwgUDI1NiwgYW5kIFdlYkF1dGhuKSxcbiAqIGVuYWJsaW5nIHBhc3NrZXktYmFzZWQgYWNjb3VudCBkZWxlZ2F0aW9uLiBBdXRob3JpemF0aW9ucyBkZWxlZ2F0ZSBhbiBhY2NvdW50IHRvIGEgc3BlY2lmaWVkXG4gKiBpbXBsZW1lbnRhdGlvbiBjb250cmFjdC5cbiAqXG4gKiBbVGVtcG8gQXV0aG9yaXphdGlvbiBTcGVjaWZpY2F0aW9uXShodHRwczovL2RvY3MudGVtcG8ueHl6L3Byb3RvY29sL3RyYW5zYWN0aW9ucy9zcGVjLXRlbXBvLXRyYW5zYWN0aW9uI3RlbXBvLWF1dGhvcml6YXRpb24tbGlzdClcbiAqXG4gKiBAZXhhbXBsZVxuICogYGBgdHMgdHdvc2xhc2hcbiAqIGltcG9ydCB7IFNlY3AyNTZrMSB9IGZyb20gJ294J1xuICogaW1wb3J0IHsgQXV0aG9yaXphdGlvblRlbXBvIH0gZnJvbSAnb3gvdGVtcG8nXG4gKlxuICogY29uc3QgYXV0aG9yaXphdGlvbiA9IEF1dGhvcml6YXRpb25UZW1wby5mcm9tKHtcbiAqICAgYWRkcmVzczogJzB4YmU5NWMzZjU1NGU5ZmM4NWVjNTFiZTY5YTNkODA3YTBkNTViY2YyYycsXG4gKiAgIGNoYWluSWQ6IDEsXG4gKiAgIG5vbmNlOiA0MG4sXG4gKiB9KVxuICpcbiAqIGNvbnN0IHBheWxvYWQgPSBBdXRob3JpemF0aW9uVGVtcG8uZ2V0U2lnblBheWxvYWQoYXV0aG9yaXphdGlvbilcbiAqXG4gKiBjb25zdCBzaWduYXR1cmUgPSBTZWNwMjU2azEuc2lnbih7IHBheWxvYWQsIHByaXZhdGVLZXk6ICcweC4uLicgfSlcbiAqXG4gKiBjb25zdCBhdXRob3JpemF0aW9uX3NpZ25lZCA9IEF1dGhvcml6YXRpb25UZW1wby5mcm9tKFxuICogICBhdXRob3JpemF0aW9uLFxuICogICB7IHNpZ25hdHVyZSB9XG4gKiApXG4gKiBgYGBcbiAqXG4gKiBAY2F0ZWdvcnkgUmVmZXJlbmNlXG4gKi9cbmV4cG9ydCAqIGFzIEF1dGhvcml6YXRpb25UZW1wbyBmcm9tICcuL0F1dGhvcml6YXRpb25UZW1wby5qcydcblxuLyoqXG4gKiBUZW1wbyBrZXkgYXV0aG9yaXphdGlvbiB1dGlsaXRpZXMgZm9yIHByb3Zpc2lvbmluZyBhbmQgc2lnbmluZyBhY2Nlc3Mga2V5cy5cbiAqXG4gKiBBY2Nlc3Mga2V5cyBhbGxvdyBhIHJvb3Qga2V5IChlLmcuLCBhIHBhc3NrZXkpIHRvIGRlbGVnYXRlIHRyYW5zYWN0aW9uIHNpZ25pbmcgdG8gc2Vjb25kYXJ5XG4gKiBrZXlzIHdpdGggY3VzdG9taXphYmxlIHBlcm1pc3Npb25zIGluY2x1ZGluZyBleHBpcnkgdGltZXN0YW1wcyBhbmQgcGVyLVRJUC0yMCB0b2tlbiBzcGVuZGluZ1xuICogbGltaXRzLiBUaGlzIGVuYWJsZXMgYSB1c2VyIHRvIHNpZ24gdHJhbnNhY3Rpb25zIHdpdGhvdXQgcmVwZWF0ZWQgcGFzc2tleSBwcm9tcHRzLlxuICpcbiAqIFtBY2Nlc3MgS2V5cyBTcGVjaWZpY2F0aW9uXShodHRwczovL2RvY3MudGVtcG8ueHl6L3Byb3RvY29sL3RyYW5zYWN0aW9ucy9zcGVjLXRlbXBvLXRyYW5zYWN0aW9uI2FjY2Vzcy1rZXlzKVxuICpcbiAqIEBleGFtcGxlXG4gKiBgYGB0cyB0d29zbGFzaFxuICogaW1wb3J0IHsgS2V5QXV0aG9yaXphdGlvbiwgU2lnbmF0dXJlRW52ZWxvcGUgfSBmcm9tICdveC90ZW1wbydcbiAqIGltcG9ydCB7IEFkZHJlc3MsIFNlY3AyNTZrMSwgV2ViQ3J5cHRvUDI1NiwgVmFsdWUgfSBmcm9tICdveCdcbiAqXG4gKiBjb25zdCBrZXlQYWlyID0gYXdhaXQgV2ViQ3J5cHRvUDI1Ni5jcmVhdGVLZXlQYWlyKClcbiAqIGNvbnN0IGFkZHJlc3MgPSBBZGRyZXNzLmZyb21QdWJsaWNLZXkoa2V5UGFpci5wdWJsaWNLZXkpXG4gKlxuICogY29uc3QgYXV0aG9yaXphdGlvbiA9IEtleUF1dGhvcml6YXRpb24uZnJvbSh7XG4gKiAgIGFkZHJlc3MsXG4gKiAgIGV4cGlyeTogMTIzNDU2Nzg5MCxcbiAqICAgdHlwZTogJ3AyNTYnLFxuICogICBsaW1pdHM6IFt7XG4gKiAgICAgdG9rZW46ICcweDIwYzAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDEnLFxuICogICAgIGxpbWl0OiBWYWx1ZS5mcm9tKCcxMCcsIDYpLFxuICogICB9XSxcbiAqIH0pXG4gKlxuICogY29uc3QgcHJpdmF0ZUtleSA9ICcweC4uLidcbiAqIGNvbnN0IHBheWxvYWQgPSBLZXlBdXRob3JpemF0aW9uLmdldFNpZ25QYXlsb2FkKGF1dGhvcml6YXRpb24pXG4gKiBjb25zdCBzaWduYXR1cmUgPSBTaWduYXR1cmVFbnZlbG9wZS5mcm9tKFxuICogICBTZWNwMjU2azEuc2lnbih7IHBheWxvYWQsIHByaXZhdGVLZXkgfSksXG4gKiApXG4gKlxuICogS2V5QXV0aG9yaXphdGlvbi5mcm9tKGF1dGhvcml6YXRpb24sIHsgc2lnbmF0dXJlIH0pXG4gKiBgYGBcbiAqXG4gKiBAY2F0ZWdvcnkgUmVmZXJlbmNlXG4gKi9cbmV4cG9ydCAqIGFzIEtleUF1dGhvcml6YXRpb24gZnJvbSAnLi9LZXlBdXRob3JpemF0aW9uLmpzJ1xuXG4vKipcbiAqIFBvb2wgSUQgdXRpbGl0aWVzIGZvciBjb21wdXRpbmcgcG9vbCBpZGVudGlmaWVycyBmcm9tIHRva2VuIHBhaXJzLlxuICpcbiAqIFBvb2wgSURzIGFyZSBkZXRlcm1pbmlzdGljIGtleXMgZGVyaXZlZCBmcm9tIHR3byB0b2tlbiBhZGRyZXNzZXMgKG9yZGVyLWluZGVwZW5kZW50KVxuICogdXNlZCB0byBpZGVudGlmeSB0cmFkaW5nIHBhaXJzIG9uIFRlbXBvJ3MgZW5zaHJpbmVkIHN0YWJsZWNvaW4gREVYLlxuICpcbiAqIFtTdGFibGVjb2luIERFWCBTcGVjaWZpY2F0aW9uXShodHRwczovL2RvY3MudGVtcG8ueHl6L3Byb3RvY29sL2V4Y2hhbmdlL3NwZWMpXG4gKlxuICogQGV4YW1wbGVcbiAqIGBgYHRzIHR3b3NsYXNoXG4gKiBpbXBvcnQgeyBQb29sSWQgfSBmcm9tICdveC90ZW1wbydcbiAqXG4gKiBjb25zdCBwb29sSWQgPSBQb29sSWQuZnJvbSh7XG4gKiAgIHVzZXJUb2tlbjogMW4sXG4gKiAgIHZhbGlkYXRvclRva2VuOiAybixcbiAqIH0pXG4gKiBgYGBcbiAqXG4gKiBAY2F0ZWdvcnkgUmVmZXJlbmNlXG4gKi9cbmV4cG9ydCAqIGFzIFBvb2xJZCBmcm9tICcuL1Bvb2xJZC5qcydcblxuLyoqXG4gKiBTaWduYXR1cmUgZW52ZWxvcGUgdXRpbGl0aWVzIGZvciBzZWNwMjU2azEsIFAyNTYsIFdlYkF1dGhuLCBhbmQga2V5Y2hhaW4gc2lnbmF0dXJlcy5cbiAqXG4gKiBUZW1wbyB0cmFuc2FjdGlvbnMgc3VwcG9ydCBtdWx0aXBsZSBzaWduYXR1cmUgdHlwZXM6IHNlY3AyNTZrMSAoNjUgYnl0ZXMpLCBQMjU2IGZvciBwYXNza2V5c1xuICogKHR5cGUgYDB4MDFgKSwgV2ViQXV0aG4gKHR5cGUgYDB4MDJgKSwgYW5kIEtleWNoYWluIGZvciBhY2Nlc3Mga2V5cyAodHlwZSBgMHgwM2ApLlxuICpcbiAqIFtTaWduYXR1cmUgVHlwZXMgU3BlY2lmaWNhdGlvbl0oaHR0cHM6Ly9kb2NzLnRlbXBvLnh5ei9wcm90b2NvbC90cmFuc2FjdGlvbnMvc3BlYy10ZW1wby10cmFuc2FjdGlvbiNzaWduYXR1cmUtdHlwZXMpXG4gKlxuICogQGV4YW1wbGVcbiAqIGBgYHRzIHR3b3NsYXNoXG4gKiBpbXBvcnQgeyBTZWNwMjU2azEgfSBmcm9tICdveCdcbiAqIGltcG9ydCB7IFNpZ25hdHVyZUVudmVsb3BlIH0gZnJvbSAnb3gvdGVtcG8nXG4gKlxuICogY29uc3QgcHJpdmF0ZUtleSA9IFNlY3AyNTZrMS5yYW5kb21Qcml2YXRlS2V5KClcbiAqIGNvbnN0IHNpZ25hdHVyZSA9IFNlY3AyNTZrMS5zaWduKHsgcGF5bG9hZDogJzB4ZGVhZGJlZWYnLCBwcml2YXRlS2V5IH0pXG4gKlxuICogY29uc3QgZW52ZWxvcGUgPSBTaWduYXR1cmVFbnZlbG9wZS5mcm9tKHNpZ25hdHVyZSlcbiAqIGBgYFxuICpcbiAqIEBjYXRlZ29yeSBSZWZlcmVuY2VcbiAqL1xuZXhwb3J0ICogYXMgU2lnbmF0dXJlRW52ZWxvcGUgZnJvbSAnLi9TaWduYXR1cmVFbnZlbG9wZS5qcydcblxuLyoqXG4gKiBUaWNrLWJhc2VkIHByaWNpbmcgdXRpbGl0aWVzIGZvciBERVggcHJpY2UgY29udmVyc2lvbnMuXG4gKlxuICogUHJpY2VzIG9uIFRlbXBvJ3Mgc3RhYmxlY29pbiBERVggYXJlIGRpc2NyZXRpemVkIGludG8gaW50ZWdlciB0aWNrcyB3aXRoIGEgdGljayBzaXplIG9mIDAuMSBicHNcbiAqICh3aGVyZSBgcHJpY2UgPSBQUklDRV9TQ0FMRSArIHRpY2tgIGFuZCBgUFJJQ0VfU0NBTEUgPSAxMDBfMDAwYCkuIE9yZGVycyBtdXN0IGJlIHBsYWNlZCBhdCB0aWNrc1xuICogZGl2aXNpYmxlIGJ5IGBUSUNLX1NQQUNJTkcgPSAxMGAgKDEgYnAgZ3JpZCksIHdpdGhpbiBib3VuZHMgb2YgwrEyMDAwIHRpY2tzICjCsTIlKS5cbiAqXG4gKiBbU3RhYmxlY29pbiBERVggUHJpY2luZ10oaHR0cHM6Ly9kb2NzLnRlbXBvLnh5ei9wcm90b2NvbC9leGNoYW5nZS9zcGVjI2tleS1jb25jZXB0cylcbiAqXG4gKiBAZXhhbXBsZVxuICogYGBgdHMgdHdvc2xhc2hcbiAqIGltcG9ydCB7IFRpY2sgfSBmcm9tICdveC90ZW1wbydcbiAqXG4gKiBjb25zdCBwcmljZSA9IFRpY2sudG9QcmljZSgxMDApIC8vIFwiMS4wMDFcIiAoMC4xJSBhYm92ZSAxLjApXG4gKiBjb25zdCB0aWNrID0gVGljay5mcm9tUHJpY2UoJzAuOTk5JykgLy8gLTEwMFxuICogYGBgXG4gKlxuICogQGNhdGVnb3J5IFJlZmVyZW5jZVxuICovXG5leHBvcnQgKiBhcyBUaWNrIGZyb20gJy4vVGljay5qcydcblxuLyoqXG4gKiBUSVAtMjAgdG9rZW4gSUQgdXRpbGl0aWVzIGZvciBjb252ZXJ0aW5nIGJldHdlZW4gdG9rZW4gSURzIGFuZCBhZGRyZXNzZXMuXG4gKlxuICogVElQLTIwIGlzIFRlbXBvJ3MgbmF0aXZlIHRva2VuIHN0YW5kYXJkIGZvciBzdGFibGVjb2lucyB3aXRoIGRldGVybWluaXN0aWMgYWRkcmVzc2VzXG4gKiBkZXJpdmVkIGZyb20gc2VxdWVudGlhbCB0b2tlbiBJRHMuIFRJUC0yMCBleHRlbmRzIEVSQy0yMCB3aXRoIHBheW1lbnQgZmVhdHVyZXMgbGlrZVxuICogY29uZmlndXJhYmxlIGZlZSB0b2tlbnMsIHRyYW5zZmVyIG1lbW9zLCBhbmQgYnVpbHQtaW4gcm9sZS1iYXNlZCBhY2Nlc3MgY29udHJvbC5cbiAqXG4gKiBbVElQLTIwIFRva2VuIFN0YW5kYXJkXShodHRwczovL2RvY3MudGVtcG8ueHl6L3Byb3RvY29sL3RpcDIwL292ZXJ2aWV3KVxuICpcbiAqIEBleGFtcGxlXG4gKiBgYGB0cyB0d29zbGFzaFxuICogaW1wb3J0IHsgVG9rZW5JZCB9IGZyb20gJ294L3RlbXBvJ1xuICpcbiAqIGNvbnN0IHRva2VuSWQgPSBUb2tlbklkLmZyb20oMW4pXG4gKiBjb25zdCBhZGRyZXNzID0gVG9rZW5JZC50b0FkZHJlc3MoMW4pXG4gKiAvLyAnMHgyMGMwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAxJ1xuICogYGBgXG4gKlxuICogQGNhdGVnb3J5IFJlZmVyZW5jZVxuICovXG5leHBvcnQgKiBhcyBUb2tlbklkIGZyb20gJy4vVG9rZW5JZC5qcydcblxuLyoqXG4gKiBUb2tlbiByb2xlIHV0aWxpdGllcyBmb3Igc2VyaWFsaXppbmcgcm9sZSBpZGVudGlmaWVycyB0byBrZWNjYWsyNTYgaGFzaGVzLlxuICpcbiAqIFRJUC0yMCBpbmNsdWRlcyBhIGJ1aWx0LWluIFJCQUMgc3lzdGVtIHdpdGggcm9sZXMgbGlrZSBgSVNTVUVSX1JPTEVgIChtaW50L2J1cm4pLFxuICogYFBBVVNFX1JPTEVgL2BVTlBBVVNFX1JPTEVgIChlbWVyZ2VuY3kgY29udHJvbHMpLCBhbmQgYEJVUk5fQkxPQ0tFRF9ST0xFYCAoY29tcGxpYW5jZSkuXG4gKlxuICogW1RJUC0yMCBSQkFDXShodHRwczovL2RvY3MudGVtcG8ueHl6L3Byb3RvY29sL3RpcDIwL292ZXJ2aWV3I3JvbGUtYmFzZWQtYWNjZXNzLWNvbnRyb2wtcmJhYylcbiAqXG4gKiBAZXhhbXBsZVxuICogYGBgdHMgdHdvc2xhc2hcbiAqIGltcG9ydCB7IFRva2VuUm9sZSB9IGZyb20gJ294L3RlbXBvJ1xuICpcbiAqIGNvbnN0IGhhc2ggPSBUb2tlblJvbGUuc2VyaWFsaXplKCdpc3N1ZXInKVxuICogYGBgXG4gKlxuICogQGNhdGVnb3J5IFJlZmVyZW5jZVxuICovXG5leHBvcnQgKiBhcyBUb2tlblJvbGUgZnJvbSAnLi9Ub2tlblJvbGUuanMnXG5cbi8qKlxuICogVXRpbGl0aWVzIGZvciBjb252ZXJ0aW5nIGJldHdlZW4gUlBDIGFuZCBzdHJ1Y3R1cmVkIHRyYW5zYWN0aW9uIGZvcm1hdHMuXG4gKlxuICogVGVtcG8gVHJhbnNhY3Rpb25zICh0eXBlIGAweDc2YCkgYXJlIGEgbmV3IEVJUC0yNzE4IHRyYW5zYWN0aW9uIHR5cGUgd2l0aCBuYXRpdmUgc3VwcG9ydFxuICogZm9yIHBhc3NrZXlzLCBjYWxsIGJhdGNoaW5nLCBmZWUgc3BvbnNvcnNoaXAsIHBhcmFsbGVsaXphYmxlIG5vbmNlcywgYW5kIHNjaGVkdWxlZCBleGVjdXRpb24uXG4gKlxuICogW1RlbXBvIFRyYW5zYWN0aW9uc10oaHR0cHM6Ly9kb2NzLnRlbXBvLnh5ei9wcm90b2NvbC90cmFuc2FjdGlvbnMpXG4gKlxuICogQGV4YW1wbGVcbiAqIGBgYHRzIHR3b3NsYXNoXG4gKiAvLyBAbm9FcnJvcnNcbiAqIGltcG9ydCB7IFRyYW5zYWN0aW9uIH0gZnJvbSAnb3gvdGVtcG8nXG4gKlxuICogY29uc3QgdHJhbnNhY3Rpb24gPSBUcmFuc2FjdGlvbi5mcm9tUnBjKHtcbiAqICAgaGFzaDogJzB4MzUzZmRmYzM4YTJmMjYxMTVkYWFkZWU5ZjViODM5MmNlNjJiODRmNDEwOTU3OTY3ZTJlZDU2YjM1MzM4Y2RkMCcsXG4gKiAgIG5vbmNlOiAnMHgzNTcnLFxuICogICBibG9ja0hhc2g6XG4gKiAgICAgJzB4YzM1MGQ4MDc1MDVmYjgzNTY1MGYwMDEzNjMyYzU1MTU1OTI5ODdiYTE2OWJiYzY2MjZkOWZjNTRkOTFmMGYwYicsXG4gKiAgIGJsb2NrTnVtYmVyOiAnMHgxMmYyOTZmJyxcbiAqICAgY2FsbHM6IFtcbiAqICAgICB7XG4gKiAgICAgICBpbnB1dDogJzB4ZGVhZGJlZWYnLFxuICogICAgICAgdG86ICcweDNmYzkxYTNhZmQ3MDM5NWNkNDk2YzY0N2Q1YTZjYzlkNGIyYjdmYWQnLFxuICogICAgICAgdmFsdWU6ICcweDliNmU2NGE4ZWM2MDAwMCcsXG4gKiAgICAgfSxcbiAqICAgXSxcbiAqICAgZmVlVG9rZW46ICcweDIwYzAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAnLFxuICogICB0cmFuc2FjdGlvbkluZGV4OiAnMHgyJyxcbiAqICAgZnJvbTogJzB4ODE0ZTVlMGUzMTAxNmI5YTdmMTM4Yzc2YjdlN2IyYmI1YzFhYjZhNicsXG4gKiAgIHZhbHVlOiAnMHg5YjZlNjRhOGVjNjAwMDAnLFxuICogICBnYXM6ICcweDQzZjVkJyxcbiAqICAgbWF4RmVlUGVyR2FzOiAnMHgyY2E2YWU0OTQnLFxuICogICBtYXhQcmlvcml0eUZlZVBlckdhczogJzB4NDFjYzNjMCcsXG4gKiAgIGlucHV0OlxuICogICAgICcweDM1OTM1NjRjMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA2MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwYTAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDY2NDM1MDQ3MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwNDBiMDgwNjA0MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA0MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA4MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwZTAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMjAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDI4MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwNDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAyMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDliNmU2NGE4ZWM2MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAxMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAyMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDliNmU2NGE4ZWM2MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAxOTEyNGJiNWFlOTc4YzAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMGEwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDIwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDBjMDJhYWEzOWIyMjNmZThkMGEwZTVjNGYyN2VhZDkwODNjNzU2Y2MyMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwYzU2YzdhMGVhYTgwNGY4NTRiNTM2YTVmM2Q1ZjQ5ZDJlYzRiMTJiODAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwNjAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDBjNTZjN2EwZWFhODA0Zjg1NGI1MzZhNWYzZDVmNDlkMmVjNGIxMmI4MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwZmVlMTNhMTAzYTEwZDU5M2I5YWUwNmIzZTA1ZjJlN2UxYzAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMTkwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDYwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwYzU2YzdhMGVhYTgwNGY4NTRiNTM2YTVmM2Q1ZjQ5ZDJlYzRiMTJiODAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDEwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMTkwMjQwMDAxYjk4NzJiJyxcbiAqICAgc2lnbmF0dXJlOiB7XG4gKiAgICAgcjogJzB4NjM1ZGMyMDMzZTYwMTg1YmIzNjcwOWMyOWM3NWQ2NGVhNTFkZmJkOTFjMzJlZjRiZTE5OGU0Y2ViMTY5ZmI0ZCcsXG4gKiAgICAgczogJzB4NTBjMjY2N2FjNGM3NzEwNzI3NDZhY2ZkY2YxZjE0ODMzMzZkY2NhOGJkMmRmNDdjZDgzMTc1ZGJlNjBmMDU0MCcsXG4gKiAgICAgdHlwZTogJ3NlY3AyNTZrMScsXG4gKiAgICAgeVBhcml0eTogJzB4MCcsXG4gKiAgIH0sXG4gKiAgIGNoYWluSWQ6ICcweDEnLFxuICogICBhY2Nlc3NMaXN0OiBbXSxcbiAqICAgdHlwZTogJzB4NzYnLFxuICogfSlcbiAqIGBgYFxuICpcbiAqIEBjYXRlZ29yeSBSZWZlcmVuY2VcbiAqL1xuZXhwb3J0ICogYXMgVHJhbnNhY3Rpb24gZnJvbSAnLi9UcmFuc2FjdGlvbi5qcydcbi8qKlxuICogVXRpbGl0aWVzIGZvciB3b3JraW5nIHdpdGggVGVtcG8gdHJhbnNhY3Rpb24gcmVjZWlwdHMuXG4gKlxuICogVGVtcG8gcmVjZWlwdHMgaW5jbHVkZSBhZGRpdGlvbmFsIGZpZWxkcyBsaWtlIGBmZWVQYXllcmAgKHRoZSBhZGRyZXNzIHRoYXQgcGFpZCBmZWVzKVxuICogYW5kIGBmZWVUb2tlbmAgKHRoZSBUSVAtMjAgdG9rZW4gdXNlZCBmb3IgZmVlIHBheW1lbnQpLlxuICpcbiAqIFtUZW1wbyBUcmFuc2FjdGlvbnNdKGh0dHBzOi8vZG9jcy50ZW1wby54eXovcHJvdG9jb2wvdHJhbnNhY3Rpb25zKVxuICpcbiAqIEBleGFtcGxlXG4gKiBgYGB0cyB0d29zbGFzaFxuICogaW1wb3J0IHsgVHJhbnNhY3Rpb25SZWNlaXB0IH0gZnJvbSAnb3gvdGVtcG8nXG4gKlxuICogY29uc3QgcmVjZWlwdCA9IFRyYW5zYWN0aW9uUmVjZWlwdC5mcm9tUnBjKHtcbiAqICAgc3RhdHVzOiAnMHgxJyxcbiAqICAgZmVlUGF5ZXI6ICcweC4uLicsXG4gKiAgIGZlZVRva2VuOiAnMHgyMGMwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAxJyxcbiAqICAgLy8gLi4uIG90aGVyIGZpZWxkc1xuICogfSBhcyBhbnkpXG4gKiBgYGBcbiAqXG4gKiBAY2F0ZWdvcnkgUmVmZXJlbmNlXG4gKi9cbmV4cG9ydCAqIGFzIFRyYW5zYWN0aW9uUmVjZWlwdCBmcm9tICcuL1RyYW5zYWN0aW9uUmVjZWlwdC5qcydcbi8qKlxuICogVXRpbGl0aWVzIGZvciBwcmVwYXJpbmcgUlBDLWZvcm1hdHRlZCB0cmFuc2FjdGlvbiByZXF1ZXN0cy5cbiAqXG4gKiBDb252ZXJ0IHN0cnVjdHVyZWQgdHJhbnNhY3Rpb24gcmVxdWVzdHMgdG8gUlBDIGZvcm1hdCBmb3Igc3VibWlzc2lvbiB0byBUZW1wbyBub2RlcyxcbiAqIGluY2x1ZGluZyBzdXBwb3J0IGZvciBiYXRjaGVkIGNhbGxzIGFuZCBmZWUgdG9rZW4gc3BlY2lmaWNhdGlvbi5cbiAqXG4gKiBbVGVtcG8gVHJhbnNhY3Rpb25zXShodHRwczovL2RvY3MudGVtcG8ueHl6L3Byb3RvY29sL3RyYW5zYWN0aW9ucylcbiAqXG4gKiBAZXhhbXBsZVxuICogYGBgdHMgdHdvc2xhc2hcbiAqIGltcG9ydCB7IFRyYW5zYWN0aW9uUmVxdWVzdCB9IGZyb20gJ294L3RlbXBvJ1xuICpcbiAqIGNvbnN0IHJlcXVlc3QgPSBUcmFuc2FjdGlvblJlcXVlc3QudG9ScGMoe1xuICogICBjYWxsczogW3sgdG86ICcweGNhZmViYWJlY2FmZWJhYmVjYWZlYmFiZWNhZmViYWJlY2FmZWJhYmUnLCBkYXRhOiAnMHhkZWFkYmVlZicgfV0sXG4gKiAgIGZlZVRva2VuOiAnMHgyMGMwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwJyxcbiAqIH0pXG4gKiBgYGBcbiAqXG4gKiBAY2F0ZWdvcnkgUmVmZXJlbmNlXG4gKi9cbmV4cG9ydCAqIGFzIFRyYW5zYWN0aW9uUmVxdWVzdCBmcm9tICcuL1RyYW5zYWN0aW9uUmVxdWVzdC5qcydcbi8qKlxuICogVXRpbGl0aWVzIGZvciBpbnN0YW50aWF0aW5nLCBzZXJpYWxpemluZywgYW5kIGhhc2hpbmcgVGVtcG8gdHJhbnNhY3Rpb24gZW52ZWxvcGVzLlxuICpcbiAqIENyZWF0ZSwgc2lnbiwgYW5kIHNlcmlhbGl6ZSBUZW1wbyB0cmFuc2FjdGlvbnMgd2l0aCBzdXBwb3J0IGZvciBjb25maWd1cmFibGUgZmVlIHRva2VucyxcbiAqIGNhbGwgYmF0Y2hpbmcsIGZlZSBzcG9uc29yc2hpcCwgYWNjZXNzIGtleXMsIGFuZCBzY2hlZHVsZWQgZXhlY3V0aW9uIHZpYSBgdmFsaWRBZnRlcmAvYHZhbGlkQmVmb3JlYC5cbiAqXG4gKiBbVGVtcG8gVHJhbnNhY3Rpb24gU3BlY2lmaWNhdGlvbl0oaHR0cHM6Ly9kb2NzLnRlbXBvLnh5ei9wcm90b2NvbC90cmFuc2FjdGlvbnMvc3BlYy10ZW1wby10cmFuc2FjdGlvbilcbiAqXG4gKiBAZXhhbXBsZVxuICogYGBgdHMgdHdvc2xhc2hcbiAqIGltcG9ydCB7IFNlY3AyNTZrMSwgVmFsdWUgfSBmcm9tICdveCdcbiAqIGltcG9ydCB7IFR4RW52ZWxvcGVUZW1wbyB9IGZyb20gJ294L3RlbXBvJ1xuICpcbiAqIGNvbnN0IGVudmVsb3BlID0gVHhFbnZlbG9wZVRlbXBvLmZyb20oe1xuICogICBjaGFpbklkOiAxLFxuICogICBjYWxsczogW3sgdG86ICcweDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAnLCBkYXRhOiAnMHhkZWFkYmVlZicgfV0sXG4gKiAgIG1heEZlZVBlckdhczogVmFsdWUuZnJvbUd3ZWkoJzEwJyksXG4gKiB9KVxuICpcbiAqIGNvbnN0IHBheWxvYWQgPSBUeEVudmVsb3BlVGVtcG8uZ2V0U2lnblBheWxvYWQoZW52ZWxvcGUpXG4gKiBjb25zdCBzaWduYXR1cmUgPSBTZWNwMjU2azEuc2lnbih7IHBheWxvYWQsIHByaXZhdGVLZXk6ICcweC4uLicgfSlcbiAqXG4gKiBjb25zdCBlbnZlbG9wZV9zaWduZWQgPSBUeEVudmVsb3BlVGVtcG8uZnJvbShlbnZlbG9wZSwgeyBzaWduYXR1cmUgfSlcbiAqIGNvbnN0IGVudmVsb3BlX3NlcmlhbGl6ZWQgPSBUeEVudmVsb3BlVGVtcG8uc2VyaWFsaXplKGVudmVsb3BlX3NpZ25lZClcbiAqIGBgYFxuICpcbiAqIEBjYXRlZ29yeSBSZWZlcmVuY2VcbiAqL1xuZXhwb3J0ICogYXMgVHhFbnZlbG9wZVRlbXBvIGZyb20gJy4vVHhFbnZlbG9wZVRlbXBvLmpzJ1xuIl0sInhfZ29vZ2xlX2lnbm9yZUxpc3QiOlswXX0=

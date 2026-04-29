@@ -1,0 +1,432 @@
+import { createHotContext as __vite__createHotContext } from "/@vite/client";import.meta.hot = __vite__createHotContext("/src/components/ProtectedRoute.tsx");import * as RefreshRuntime from "/@react-refresh";
+const inWebWorker = typeof WorkerGlobalScope !== 'undefined' && self instanceof WorkerGlobalScope;
+
+let prevRefreshReg;
+let prevRefreshSig;
+
+if (import.meta.hot && !inWebWorker) {
+  if (!window.$RefreshReg$) {
+    throw new Error(
+      "@vitejs/plugin-react-swc can't detect preamble. Something is wrong."
+    );
+  }
+
+  prevRefreshReg = window.$RefreshReg$;
+  prevRefreshSig = window.$RefreshSig$;
+  window.$RefreshReg$ = RefreshRuntime.getRefreshReg("C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx");
+  window.$RefreshSig$ = RefreshRuntime.createSignatureFunctionForTransform;
+}
+
+import { jsxDEV as _jsxDEV, Fragment as _Fragment } from "/@id/__x00__vibecode-jsx-source/jsx-dev-runtime";
+var _s = $RefreshSig$(), _s1 = $RefreshSig$(), _s2 = $RefreshSig$(), _s3 = $RefreshSig$();
+import __vite__cjsImport3_react from "/node_modules/.vite/deps/react.js?v=730f480c"; const lazy = __vite__cjsImport3_react["lazy"]; const Suspense = __vite__cjsImport3_react["Suspense"]; const useEffect = __vite__cjsImport3_react["useEffect"]; const useRef = __vite__cjsImport3_react["useRef"]; const useState = __vite__cjsImport3_react["useState"];
+import { Navigate, useLocation } from "/node_modules/.vite/deps/react-router-dom.js?v=730f480c";
+import { isExplicitLogoutCoolingDown, readCachedAuthUserSnapshot, useSession } from "/src/lib/auth-client.ts";
+import { usePrivyAvailable } from "/src/components/PrivyContext.tsx";
+import { V2AppShell } from "/src/components/layout/V2AppShell.tsx?t=1777467785830";
+const ProtectedRouteWithPrivy = /*#__PURE__*/ lazy(()=>import("/src/components/ProtectedRouteWithPrivy.tsx").then((mod)=>({
+            default: mod.ProtectedRouteWithPrivy
+        })));
+_c = ProtectedRouteWithPrivy;
+function isProductRoute(pathname) {
+    return pathname === "/" || pathname.startsWith("/profile") || pathname.startsWith("/notifications") || pathname.startsWith("/leaderboard") || pathname.startsWith("/post/") || pathname.startsWith("/token/") || pathname.startsWith("/terminal") || pathname.startsWith("/bundle-checker") || pathname.startsWith("/communities") || pathname.startsWith("/raids");
+}
+function RouteLoading({ label }) {
+    _s();
+    const location = useLocation();
+    if (isProductRoute(location.pathname)) {
+        return /*#__PURE__*/ _jsxDEV(V2AppShell, {
+            children: /*#__PURE__*/ _jsxDEV("div", {
+                className: "grid gap-3 lg:grid-cols-[minmax(0,1fr)_320px]",
+                children: [
+                    /*#__PURE__*/ _jsxDEV("div", {
+                        className: "space-y-3",
+                        children: [
+                            /*#__PURE__*/ _jsxDEV("div", {
+                                className: "rounded-[22px] border border-white/[0.07] bg-white/[0.03] px-4 py-4",
+                                children: [
+                                    /*#__PURE__*/ _jsxDEV("div", {
+                                        className: "h-5 w-32 rounded-full bg-white/[0.08]"
+                                    }, void 0, false, {
+                                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx",
+                                        lineNumber: 41,
+                                        columnNumber: 15
+                                    }, this),
+                                    /*#__PURE__*/ _jsxDEV("div", {
+                                        className: "mt-3 h-4 w-72 max-w-full rounded-full bg-white/[0.055]"
+                                    }, void 0, false, {
+                                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx",
+                                        lineNumber: 42,
+                                        columnNumber: 15
+                                    }, this)
+                                ]
+                            }, void 0, true, {
+                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx",
+                                lineNumber: 40,
+                                columnNumber: 13
+                            }, this),
+                            /*#__PURE__*/ _jsxDEV("div", {
+                                className: "rounded-[22px] border border-white/[0.07] bg-white/[0.03] p-4",
+                                children: [
+                                    /*#__PURE__*/ _jsxDEV("div", {
+                                        className: "h-16 rounded-[16px] border border-white/[0.06] bg-black/20"
+                                    }, void 0, false, {
+                                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx",
+                                        lineNumber: 45,
+                                        columnNumber: 15
+                                    }, this),
+                                    /*#__PURE__*/ _jsxDEV("div", {
+                                        className: "mt-3 flex gap-2",
+                                        children: [
+                                            /*#__PURE__*/ _jsxDEV("div", {
+                                                className: "h-8 w-20 rounded-[10px] bg-white/[0.06]"
+                                            }, void 0, false, {
+                                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx",
+                                                lineNumber: 47,
+                                                columnNumber: 17
+                                            }, this),
+                                            /*#__PURE__*/ _jsxDEV("div", {
+                                                className: "h-8 w-20 rounded-[10px] bg-white/[0.06]"
+                                            }, void 0, false, {
+                                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx",
+                                                lineNumber: 48,
+                                                columnNumber: 17
+                                            }, this),
+                                            /*#__PURE__*/ _jsxDEV("div", {
+                                                className: "h-8 w-24 rounded-[10px] bg-white/[0.06]"
+                                            }, void 0, false, {
+                                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx",
+                                                lineNumber: 49,
+                                                columnNumber: 17
+                                            }, this)
+                                        ]
+                                    }, void 0, true, {
+                                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx",
+                                        lineNumber: 46,
+                                        columnNumber: 15
+                                    }, this)
+                                ]
+                            }, void 0, true, {
+                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx",
+                                lineNumber: 44,
+                                columnNumber: 13
+                            }, this),
+                            /*#__PURE__*/ _jsxDEV("div", {
+                                className: "rounded-[22px] border border-white/[0.07] bg-white/[0.025] p-4",
+                                children: [
+                                    /*#__PURE__*/ _jsxDEV("div", {
+                                        className: "h-4 w-40 rounded-full bg-white/[0.06]"
+                                    }, void 0, false, {
+                                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx",
+                                        lineNumber: 53,
+                                        columnNumber: 15
+                                    }, this),
+                                    /*#__PURE__*/ _jsxDEV("div", {
+                                        className: "mt-4 h-5 w-64 max-w-full rounded-full bg-white/[0.08]"
+                                    }, void 0, false, {
+                                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx",
+                                        lineNumber: 54,
+                                        columnNumber: 15
+                                    }, this),
+                                    /*#__PURE__*/ _jsxDEV("div", {
+                                        className: "mt-3 h-4 w-full rounded-full bg-white/[0.045]"
+                                    }, void 0, false, {
+                                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx",
+                                        lineNumber: 55,
+                                        columnNumber: 15
+                                    }, this)
+                                ]
+                            }, void 0, true, {
+                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx",
+                                lineNumber: 52,
+                                columnNumber: 13
+                            }, this)
+                        ]
+                    }, void 0, true, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx",
+                        lineNumber: 39,
+                        columnNumber: 11
+                    }, this),
+                    /*#__PURE__*/ _jsxDEV("div", {
+                        className: "hidden space-y-3 lg:block",
+                        children: [
+                            /*#__PURE__*/ _jsxDEV("div", {
+                                className: "h-28 rounded-[22px] border border-white/[0.07] bg-white/[0.03]"
+                            }, void 0, false, {
+                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx",
+                                lineNumber: 59,
+                                columnNumber: 13
+                            }, this),
+                            /*#__PURE__*/ _jsxDEV("div", {
+                                className: "h-28 rounded-[22px] border border-white/[0.07] bg-white/[0.03]"
+                            }, void 0, false, {
+                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx",
+                                lineNumber: 60,
+                                columnNumber: 13
+                            }, this)
+                        ]
+                    }, void 0, true, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx",
+                        lineNumber: 58,
+                        columnNumber: 11
+                    }, this)
+                ]
+            }, void 0, true, {
+                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx",
+                lineNumber: 38,
+                columnNumber: 9
+            }, this)
+        }, void 0, false, {
+            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx",
+            lineNumber: 37,
+            columnNumber: 7
+        }, this);
+    }
+    return /*#__PURE__*/ _jsxDEV("div", {
+        className: "flex min-h-screen items-center justify-center bg-background",
+        children: /*#__PURE__*/ _jsxDEV("div", {
+            className: "flex flex-col items-center gap-4",
+            children: [
+                /*#__PURE__*/ _jsxDEV("div", {
+                    className: "h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent"
+                }, void 0, false, {
+                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx",
+                    lineNumber: 70,
+                    columnNumber: 9
+                }, this),
+                /*#__PURE__*/ _jsxDEV("span", {
+                    className: "text-sm text-muted-foreground",
+                    children: label
+                }, void 0, false, {
+                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx",
+                    lineNumber: 71,
+                    columnNumber: 9
+                }, this)
+            ]
+        }, void 0, true, {
+            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx",
+            lineNumber: 69,
+            columnNumber: 7
+        }, this)
+    }, void 0, false, {
+        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx",
+        lineNumber: 68,
+        columnNumber: 5
+    }, this);
+}
+_s(RouteLoading, "pkHmaVRPskBaU4tMJuJJpV42k1I=", false, function() {
+    return [
+        useLocation
+    ];
+});
+_c1 = RouteLoading;
+function LoggedNavigate({ to, replace = false, state, reason, context }) {
+    _s1();
+    useEffect(()=>{
+        console.warn("[AuthFlow] ProtectedRoute redirect", {
+            to,
+            replace,
+            reason,
+            ...context
+        });
+    }, [
+        context,
+        reason,
+        replace,
+        state,
+        to
+    ]);
+    return /*#__PURE__*/ _jsxDEV(Navigate, {
+        to: to,
+        replace: replace,
+        state: state
+    }, void 0, false, {
+        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx",
+        lineNumber: 99,
+        columnNumber: 10
+    }, this);
+}
+_s1(LoggedNavigate, "OD7bBpZva5O2jO+Puf00hKivP7c=");
+_c2 = LoggedNavigate;
+function useStoredAuthHint() {
+    if (isExplicitLogoutCoolingDown()) {
+        return false;
+    }
+    try {
+        if (sessionStorage.getItem("phew.auth.session.v1")) return true;
+    } catch  {
+    // ignore
+    }
+    return false;
+}
+function hasCompletedHandle(username) {
+    return typeof username === "string" && username.trim().length > 0;
+}
+function ProtectedRouteFallback({ children, allowMissingUsername }) {
+    _s2();
+    const { data: session, isPending, hasLiveSession } = useSession();
+    const location = useLocation();
+    const hadTokenHint = useRef(useStoredAuthHint());
+    const [graceExpired, setGraceExpired] = useState(false);
+    const cachedUser = !session?.user ? readCachedAuthUserSnapshot() : null;
+    const effectiveUser = session?.user ?? cachedUser;
+    useEffect(()=>{
+        if (effectiveUser || isPending || !hadTokenHint.current) return;
+        const timer = window.setTimeout(()=>setGraceExpired(true), 4000);
+        return ()=>window.clearTimeout(timer);
+    }, [
+        effectiveUser,
+        isPending
+    ]);
+    if (effectiveUser) {
+        hadTokenHint.current = false;
+    }
+    if (isPending && !effectiveUser) {
+        return /*#__PURE__*/ _jsxDEV(RouteLoading, {
+            label: "Connecting..."
+        }, void 0, false, {
+            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx",
+            lineNumber: 143,
+            columnNumber: 12
+        }, this);
+    }
+    if (!effectiveUser) {
+        if (hadTokenHint.current && !graceExpired) {
+            return /*#__PURE__*/ _jsxDEV(RouteLoading, {
+                label: "Signing you in..."
+            }, void 0, false, {
+                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx",
+                lineNumber: 148,
+                columnNumber: 14
+            }, this);
+        }
+        return /*#__PURE__*/ _jsxDEV(LoggedNavigate, {
+            to: "/login",
+            replace: true,
+            reason: "fallback_no_effective_user",
+            context: {
+                pathname: location.pathname,
+                hasLiveSession,
+                isPending,
+                graceExpired,
+                hadTokenHint: hadTokenHint.current
+            }
+        }, void 0, false, {
+            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx",
+            lineNumber: 151,
+            columnNumber: 7
+        }, this);
+    }
+    if (!hasLiveSession) {
+        if (!graceExpired) {
+            return /*#__PURE__*/ _jsxDEV(RouteLoading, {
+                label: "Signing you in..."
+            }, void 0, false, {
+                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx",
+                lineNumber: 168,
+                columnNumber: 14
+            }, this);
+        }
+        return /*#__PURE__*/ _jsxDEV(LoggedNavigate, {
+            to: "/login",
+            replace: true,
+            reason: "fallback_effective_user_without_live_session",
+            context: {
+                pathname: location.pathname,
+                effectiveUserId: effectiveUser.id,
+                hasLiveSession,
+                isPending,
+                graceExpired
+            }
+        }, void 0, false, {
+            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx",
+            lineNumber: 171,
+            columnNumber: 7
+        }, this);
+    }
+    if (!allowMissingUsername && !hasCompletedHandle(effectiveUser.username)) {
+        return /*#__PURE__*/ _jsxDEV(Navigate, {
+            to: "/welcome",
+            replace: true,
+            state: {
+                from: `${location.pathname}${location.search}${location.hash}`
+            }
+        }, void 0, false, {
+            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx",
+            lineNumber: 188,
+            columnNumber: 7
+        }, this);
+    }
+    return /*#__PURE__*/ _jsxDEV(_Fragment, {
+        children: children
+    }, void 0, false);
+}
+_s2(ProtectedRouteFallback, "rCfj1+WRZhmks3wvBrLylKRARYE=", false, function() {
+    return [
+        useSession,
+        useLocation
+    ];
+});
+_c3 = ProtectedRouteFallback;
+export function ProtectedRoute({ children, allowMissingUsername = false }) {
+    _s3();
+    const privyAvailable = usePrivyAvailable();
+    const fallback = /*#__PURE__*/ _jsxDEV(ProtectedRouteFallback, {
+        allowMissingUsername: allowMissingUsername,
+        children: children
+    }, void 0, false, {
+        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx",
+        lineNumber: 208,
+        columnNumber: 5
+    }, this);
+    if (!privyAvailable) {
+        return fallback;
+    }
+    return /*#__PURE__*/ _jsxDEV(Suspense, {
+        fallback: fallback,
+        children: /*#__PURE__*/ _jsxDEV(ProtectedRouteWithPrivy, {
+            allowMissingUsername: allowMissingUsername,
+            children: children
+        }, void 0, false, {
+            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx",
+            lineNumber: 219,
+            columnNumber: 7
+        }, this)
+    }, void 0, false, {
+        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx",
+        lineNumber: 218,
+        columnNumber: 5
+    }, this);
+}
+_s3(ProtectedRoute, "4OYf3fnHC/XWzuo7NKUQgj8aK8s=", false, function() {
+    return [
+        usePrivyAvailable
+    ];
+});
+_c4 = ProtectedRoute;
+var _c, _c1, _c2, _c3, _c4;
+$RefreshReg$(_c, "ProtectedRouteWithPrivy");
+$RefreshReg$(_c1, "RouteLoading");
+$RefreshReg$(_c2, "LoggedNavigate");
+$RefreshReg$(_c3, "ProtectedRouteFallback");
+$RefreshReg$(_c4, "ProtectedRoute");
+
+
+if (import.meta.hot && !inWebWorker) {
+  window.$RefreshReg$ = prevRefreshReg;
+  window.$RefreshSig$ = prevRefreshSig;
+}
+
+
+if (import.meta.hot && !inWebWorker) {
+  RefreshRuntime.__hmr_import(import.meta.url).then((currentExports) => {
+    RefreshRuntime.registerExportsForReactRefresh("C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx", currentExports);
+    import.meta.hot.accept((nextExports) => {
+      if (!nextExports) return;
+      const invalidateMessage = RefreshRuntime.validateRefreshBoundaryAndEnqueueUpdate("C:/Users/renga/Documents/phewrunn/webapp/src/components/ProtectedRoute.tsx", currentExports, nextExports);
+      if (invalidateMessage) import.meta.hot.invalidate(invalidateMessage);
+    });
+  });
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIlByb3RlY3RlZFJvdXRlLnRzeCJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgeyBsYXp5LCBTdXNwZW5zZSwgdXNlRWZmZWN0LCB1c2VSZWYsIHVzZVN0YXRlIH0gZnJvbSBcInJlYWN0XCI7XG5pbXBvcnQgeyBOYXZpZ2F0ZSwgdXNlTG9jYXRpb24gfSBmcm9tIFwicmVhY3Qtcm91dGVyLWRvbVwiO1xuaW1wb3J0IHtcbiAgaXNFeHBsaWNpdExvZ291dENvb2xpbmdEb3duLFxuICByZWFkQ2FjaGVkQXV0aFVzZXJTbmFwc2hvdCxcbiAgdXNlU2Vzc2lvbixcbn0gZnJvbSBcIkAvbGliL2F1dGgtY2xpZW50XCI7XG5pbXBvcnQgeyB1c2VQcml2eUF2YWlsYWJsZSB9IGZyb20gXCJAL2NvbXBvbmVudHMvUHJpdnlDb250ZXh0XCI7XG5pbXBvcnQgeyBWMkFwcFNoZWxsIH0gZnJvbSBcIkAvY29tcG9uZW50cy9sYXlvdXQvVjJBcHBTaGVsbFwiO1xuXG5jb25zdCBQcm90ZWN0ZWRSb3V0ZVdpdGhQcml2eSA9IGxhenkoKCkgPT5cbiAgaW1wb3J0KFwiQC9jb21wb25lbnRzL1Byb3RlY3RlZFJvdXRlV2l0aFByaXZ5XCIpLnRoZW4oKG1vZCkgPT4gKHtcbiAgICBkZWZhdWx0OiBtb2QuUHJvdGVjdGVkUm91dGVXaXRoUHJpdnksXG4gIH0pKVxuKTtcblxuZnVuY3Rpb24gaXNQcm9kdWN0Um91dGUocGF0aG5hbWU6IHN0cmluZyk6IGJvb2xlYW4ge1xuICByZXR1cm4gKFxuICAgIHBhdGhuYW1lID09PSBcIi9cIiB8fFxuICAgIHBhdGhuYW1lLnN0YXJ0c1dpdGgoXCIvcHJvZmlsZVwiKSB8fFxuICAgIHBhdGhuYW1lLnN0YXJ0c1dpdGgoXCIvbm90aWZpY2F0aW9uc1wiKSB8fFxuICAgIHBhdGhuYW1lLnN0YXJ0c1dpdGgoXCIvbGVhZGVyYm9hcmRcIikgfHxcbiAgICBwYXRobmFtZS5zdGFydHNXaXRoKFwiL3Bvc3QvXCIpIHx8XG4gICAgcGF0aG5hbWUuc3RhcnRzV2l0aChcIi90b2tlbi9cIikgfHxcbiAgICBwYXRobmFtZS5zdGFydHNXaXRoKFwiL3Rlcm1pbmFsXCIpIHx8XG4gICAgcGF0aG5hbWUuc3RhcnRzV2l0aChcIi9idW5kbGUtY2hlY2tlclwiKSB8fFxuICAgIHBhdGhuYW1lLnN0YXJ0c1dpdGgoXCIvY29tbXVuaXRpZXNcIikgfHxcbiAgICBwYXRobmFtZS5zdGFydHNXaXRoKFwiL3JhaWRzXCIpXG4gICk7XG59XG5cbmZ1bmN0aW9uIFJvdXRlTG9hZGluZyh7IGxhYmVsIH06IHsgbGFiZWw6IHN0cmluZyB9KSB7XG4gIGNvbnN0IGxvY2F0aW9uID0gdXNlTG9jYXRpb24oKTtcblxuICBpZiAoaXNQcm9kdWN0Um91dGUobG9jYXRpb24ucGF0aG5hbWUpKSB7XG4gICAgcmV0dXJuIChcbiAgICAgIDxWMkFwcFNoZWxsPlxuICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cImdyaWQgZ2FwLTMgbGc6Z3JpZC1jb2xzLVttaW5tYXgoMCwxZnIpXzMyMHB4XVwiPlxuICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwic3BhY2UteS0zXCI+XG4gICAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cInJvdW5kZWQtWzIycHhdIGJvcmRlciBib3JkZXItd2hpdGUvWzAuMDddIGJnLXdoaXRlL1swLjAzXSBweC00IHB5LTRcIj5cbiAgICAgICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJoLTUgdy0zMiByb3VuZGVkLWZ1bGwgYmctd2hpdGUvWzAuMDhdXCIgLz5cbiAgICAgICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJtdC0zIGgtNCB3LTcyIG1heC13LWZ1bGwgcm91bmRlZC1mdWxsIGJnLXdoaXRlL1swLjA1NV1cIiAvPlxuICAgICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cInJvdW5kZWQtWzIycHhdIGJvcmRlciBib3JkZXItd2hpdGUvWzAuMDddIGJnLXdoaXRlL1swLjAzXSBwLTRcIj5cbiAgICAgICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJoLTE2IHJvdW5kZWQtWzE2cHhdIGJvcmRlciBib3JkZXItd2hpdGUvWzAuMDZdIGJnLWJsYWNrLzIwXCIgLz5cbiAgICAgICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJtdC0zIGZsZXggZ2FwLTJcIj5cbiAgICAgICAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cImgtOCB3LTIwIHJvdW5kZWQtWzEwcHhdIGJnLXdoaXRlL1swLjA2XVwiIC8+XG4gICAgICAgICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJoLTggdy0yMCByb3VuZGVkLVsxMHB4XSBiZy13aGl0ZS9bMC4wNl1cIiAvPlxuICAgICAgICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwiaC04IHctMjQgcm91bmRlZC1bMTBweF0gYmctd2hpdGUvWzAuMDZdXCIgLz5cbiAgICAgICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwicm91bmRlZC1bMjJweF0gYm9yZGVyIGJvcmRlci13aGl0ZS9bMC4wN10gYmctd2hpdGUvWzAuMDI1XSBwLTRcIj5cbiAgICAgICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJoLTQgdy00MCByb3VuZGVkLWZ1bGwgYmctd2hpdGUvWzAuMDZdXCIgLz5cbiAgICAgICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJtdC00IGgtNSB3LTY0IG1heC13LWZ1bGwgcm91bmRlZC1mdWxsIGJnLXdoaXRlL1swLjA4XVwiIC8+XG4gICAgICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwibXQtMyBoLTQgdy1mdWxsIHJvdW5kZWQtZnVsbCBiZy13aGl0ZS9bMC4wNDVdXCIgLz5cbiAgICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwiaGlkZGVuIHNwYWNlLXktMyBsZzpibG9ja1wiPlxuICAgICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJoLTI4IHJvdW5kZWQtWzIycHhdIGJvcmRlciBib3JkZXItd2hpdGUvWzAuMDddIGJnLXdoaXRlL1swLjAzXVwiIC8+XG4gICAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cImgtMjggcm91bmRlZC1bMjJweF0gYm9yZGVyIGJvcmRlci13aGl0ZS9bMC4wN10gYmctd2hpdGUvWzAuMDNdXCIgLz5cbiAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgPC9kaXY+XG4gICAgICA8L1YyQXBwU2hlbGw+XG4gICAgKTtcbiAgfVxuXG4gIHJldHVybiAoXG4gICAgPGRpdiBjbGFzc05hbWU9XCJmbGV4IG1pbi1oLXNjcmVlbiBpdGVtcy1jZW50ZXIganVzdGlmeS1jZW50ZXIgYmctYmFja2dyb3VuZFwiPlxuICAgICAgPGRpdiBjbGFzc05hbWU9XCJmbGV4IGZsZXgtY29sIGl0ZW1zLWNlbnRlciBnYXAtNFwiPlxuICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cImgtOCB3LTggYW5pbWF0ZS1zcGluIHJvdW5kZWQtZnVsbCBib3JkZXItMiBib3JkZXItcHJpbWFyeSBib3JkZXItdC10cmFuc3BhcmVudFwiIC8+XG4gICAgICAgIDxzcGFuIGNsYXNzTmFtZT1cInRleHQtc20gdGV4dC1tdXRlZC1mb3JlZ3JvdW5kXCI+e2xhYmVsfTwvc3Bhbj5cbiAgICAgIDwvZGl2PlxuICAgIDwvZGl2PlxuICApO1xufVxuXG5mdW5jdGlvbiBMb2dnZWROYXZpZ2F0ZSh7XG4gIHRvLFxuICByZXBsYWNlID0gZmFsc2UsXG4gIHN0YXRlLFxuICByZWFzb24sXG4gIGNvbnRleHQsXG59OiB7XG4gIHRvOiBzdHJpbmc7XG4gIHJlcGxhY2U/OiBib29sZWFuO1xuICBzdGF0ZT86IHVua25vd247XG4gIHJlYXNvbjogc3RyaW5nO1xuICBjb250ZXh0OiBSZWNvcmQ8c3RyaW5nLCB1bmtub3duPjtcbn0pIHtcbiAgdXNlRWZmZWN0KCgpID0+IHtcbiAgICBjb25zb2xlLndhcm4oXCJbQXV0aEZsb3ddIFByb3RlY3RlZFJvdXRlIHJlZGlyZWN0XCIsIHtcbiAgICAgIHRvLFxuICAgICAgcmVwbGFjZSxcbiAgICAgIHJlYXNvbixcbiAgICAgIC4uLmNvbnRleHQsXG4gICAgfSk7XG4gIH0sIFtjb250ZXh0LCByZWFzb24sIHJlcGxhY2UsIHN0YXRlLCB0b10pO1xuXG4gIHJldHVybiA8TmF2aWdhdGUgdG89e3RvfSByZXBsYWNlPXtyZXBsYWNlfSBzdGF0ZT17c3RhdGV9IC8+O1xufVxuXG5mdW5jdGlvbiB1c2VTdG9yZWRBdXRoSGludCgpOiBib29sZWFuIHtcbiAgaWYgKGlzRXhwbGljaXRMb2dvdXRDb29saW5nRG93bigpKSB7XG4gICAgcmV0dXJuIGZhbHNlO1xuICB9XG4gIHRyeSB7XG4gICAgaWYgKHNlc3Npb25TdG9yYWdlLmdldEl0ZW0oXCJwaGV3LmF1dGguc2Vzc2lvbi52MVwiKSkgcmV0dXJuIHRydWU7XG4gIH0gY2F0Y2gge1xuICAgIC8vIGlnbm9yZVxuICB9XG4gIHJldHVybiBmYWxzZTtcbn1cblxuZnVuY3Rpb24gaGFzQ29tcGxldGVkSGFuZGxlKHVzZXJuYW1lOiBzdHJpbmcgfCBudWxsIHwgdW5kZWZpbmVkKTogYm9vbGVhbiB7XG4gIHJldHVybiB0eXBlb2YgdXNlcm5hbWUgPT09IFwic3RyaW5nXCIgJiYgdXNlcm5hbWUudHJpbSgpLmxlbmd0aCA+IDA7XG59XG5cbmZ1bmN0aW9uIFByb3RlY3RlZFJvdXRlRmFsbGJhY2soe1xuICBjaGlsZHJlbixcbiAgYWxsb3dNaXNzaW5nVXNlcm5hbWUsXG59OiB7XG4gIGNoaWxkcmVuOiBSZWFjdC5SZWFjdE5vZGU7XG4gIGFsbG93TWlzc2luZ1VzZXJuYW1lOiBib29sZWFuO1xufSkge1xuICBjb25zdCB7IGRhdGE6IHNlc3Npb24sIGlzUGVuZGluZywgaGFzTGl2ZVNlc3Npb24gfSA9IHVzZVNlc3Npb24oKTtcbiAgY29uc3QgbG9jYXRpb24gPSB1c2VMb2NhdGlvbigpO1xuICBjb25zdCBoYWRUb2tlbkhpbnQgPSB1c2VSZWYodXNlU3RvcmVkQXV0aEhpbnQoKSk7XG4gIGNvbnN0IFtncmFjZUV4cGlyZWQsIHNldEdyYWNlRXhwaXJlZF0gPSB1c2VTdGF0ZShmYWxzZSk7XG4gIGNvbnN0IGNhY2hlZFVzZXIgPSAhc2Vzc2lvbj8udXNlciA/IHJlYWRDYWNoZWRBdXRoVXNlclNuYXBzaG90KCkgOiBudWxsO1xuICBjb25zdCBlZmZlY3RpdmVVc2VyID0gc2Vzc2lvbj8udXNlciA/PyBjYWNoZWRVc2VyO1xuXG4gIHVzZUVmZmVjdCgoKSA9PiB7XG4gICAgaWYgKGVmZmVjdGl2ZVVzZXIgfHwgaXNQZW5kaW5nIHx8ICFoYWRUb2tlbkhpbnQuY3VycmVudCkgcmV0dXJuO1xuICAgIGNvbnN0IHRpbWVyID0gd2luZG93LnNldFRpbWVvdXQoKCkgPT4gc2V0R3JhY2VFeHBpcmVkKHRydWUpLCA0XzAwMCk7XG4gICAgcmV0dXJuICgpID0+IHdpbmRvdy5jbGVhclRpbWVvdXQodGltZXIpO1xuICB9LCBbZWZmZWN0aXZlVXNlciwgaXNQZW5kaW5nXSk7XG5cbiAgaWYgKGVmZmVjdGl2ZVVzZXIpIHtcbiAgICBoYWRUb2tlbkhpbnQuY3VycmVudCA9IGZhbHNlO1xuICB9XG5cbiAgaWYgKGlzUGVuZGluZyAmJiAhZWZmZWN0aXZlVXNlcikge1xuICAgIHJldHVybiA8Um91dGVMb2FkaW5nIGxhYmVsPVwiQ29ubmVjdGluZy4uLlwiIC8+O1xuICB9XG5cbiAgaWYgKCFlZmZlY3RpdmVVc2VyKSB7XG4gICAgaWYgKGhhZFRva2VuSGludC5jdXJyZW50ICYmICFncmFjZUV4cGlyZWQpIHtcbiAgICAgIHJldHVybiA8Um91dGVMb2FkaW5nIGxhYmVsPVwiU2lnbmluZyB5b3UgaW4uLi5cIiAvPjtcbiAgICB9XG4gICAgcmV0dXJuIChcbiAgICAgIDxMb2dnZWROYXZpZ2F0ZVxuICAgICAgICB0bz1cIi9sb2dpblwiXG4gICAgICAgIHJlcGxhY2VcbiAgICAgICAgcmVhc29uPVwiZmFsbGJhY2tfbm9fZWZmZWN0aXZlX3VzZXJcIlxuICAgICAgICBjb250ZXh0PXt7XG4gICAgICAgICAgcGF0aG5hbWU6IGxvY2F0aW9uLnBhdGhuYW1lLFxuICAgICAgICAgIGhhc0xpdmVTZXNzaW9uLFxuICAgICAgICAgIGlzUGVuZGluZyxcbiAgICAgICAgICBncmFjZUV4cGlyZWQsXG4gICAgICAgICAgaGFkVG9rZW5IaW50OiBoYWRUb2tlbkhpbnQuY3VycmVudCxcbiAgICAgICAgfX1cbiAgICAgIC8+XG4gICAgKTtcbiAgfVxuXG4gIGlmICghaGFzTGl2ZVNlc3Npb24pIHtcbiAgICBpZiAoIWdyYWNlRXhwaXJlZCkge1xuICAgICAgcmV0dXJuIDxSb3V0ZUxvYWRpbmcgbGFiZWw9XCJTaWduaW5nIHlvdSBpbi4uLlwiIC8+O1xuICAgIH1cbiAgICByZXR1cm4gKFxuICAgICAgPExvZ2dlZE5hdmlnYXRlXG4gICAgICAgIHRvPVwiL2xvZ2luXCJcbiAgICAgICAgcmVwbGFjZVxuICAgICAgICByZWFzb249XCJmYWxsYmFja19lZmZlY3RpdmVfdXNlcl93aXRob3V0X2xpdmVfc2Vzc2lvblwiXG4gICAgICAgIGNvbnRleHQ9e3tcbiAgICAgICAgICBwYXRobmFtZTogbG9jYXRpb24ucGF0aG5hbWUsXG4gICAgICAgICAgZWZmZWN0aXZlVXNlcklkOiBlZmZlY3RpdmVVc2VyLmlkLFxuICAgICAgICAgIGhhc0xpdmVTZXNzaW9uLFxuICAgICAgICAgIGlzUGVuZGluZyxcbiAgICAgICAgICBncmFjZUV4cGlyZWQsXG4gICAgICAgIH19XG4gICAgICAvPlxuICAgICk7XG4gIH1cblxuICBpZiAoIWFsbG93TWlzc2luZ1VzZXJuYW1lICYmICFoYXNDb21wbGV0ZWRIYW5kbGUoZWZmZWN0aXZlVXNlci51c2VybmFtZSkpIHtcbiAgICByZXR1cm4gKFxuICAgICAgPE5hdmlnYXRlXG4gICAgICAgIHRvPVwiL3dlbGNvbWVcIlxuICAgICAgICByZXBsYWNlXG4gICAgICAgIHN0YXRlPXt7IGZyb206IGAke2xvY2F0aW9uLnBhdGhuYW1lfSR7bG9jYXRpb24uc2VhcmNofSR7bG9jYXRpb24uaGFzaH1gIH19XG4gICAgICAvPlxuICAgICk7XG4gIH1cblxuICByZXR1cm4gPD57Y2hpbGRyZW59PC8+O1xufVxuXG5leHBvcnQgZnVuY3Rpb24gUHJvdGVjdGVkUm91dGUoe1xuICBjaGlsZHJlbixcbiAgYWxsb3dNaXNzaW5nVXNlcm5hbWUgPSBmYWxzZSxcbn06IHtcbiAgY2hpbGRyZW46IFJlYWN0LlJlYWN0Tm9kZTtcbiAgYWxsb3dNaXNzaW5nVXNlcm5hbWU/OiBib29sZWFuO1xufSkge1xuICBjb25zdCBwcml2eUF2YWlsYWJsZSA9IHVzZVByaXZ5QXZhaWxhYmxlKCk7XG4gIGNvbnN0IGZhbGxiYWNrID0gKFxuICAgIDxQcm90ZWN0ZWRSb3V0ZUZhbGxiYWNrIGFsbG93TWlzc2luZ1VzZXJuYW1lPXthbGxvd01pc3NpbmdVc2VybmFtZX0+XG4gICAgICB7Y2hpbGRyZW59XG4gICAgPC9Qcm90ZWN0ZWRSb3V0ZUZhbGxiYWNrPlxuICApO1xuXG4gIGlmICghcHJpdnlBdmFpbGFibGUpIHtcbiAgICByZXR1cm4gZmFsbGJhY2s7XG4gIH1cblxuICByZXR1cm4gKFxuICAgIDxTdXNwZW5zZSBmYWxsYmFjaz17ZmFsbGJhY2t9PlxuICAgICAgPFByb3RlY3RlZFJvdXRlV2l0aFByaXZ5IGFsbG93TWlzc2luZ1VzZXJuYW1lPXthbGxvd01pc3NpbmdVc2VybmFtZX0+XG4gICAgICAgIHtjaGlsZHJlbn1cbiAgICAgIDwvUHJvdGVjdGVkUm91dGVXaXRoUHJpdnk+XG4gICAgPC9TdXNwZW5zZT5cbiAgKTtcbn1cbiJdLCJuYW1lcyI6WyJsYXp5IiwiU3VzcGVuc2UiLCJ1c2VFZmZlY3QiLCJ1c2VSZWYiLCJ1c2VTdGF0ZSIsIk5hdmlnYXRlIiwidXNlTG9jYXRpb24iLCJpc0V4cGxpY2l0TG9nb3V0Q29vbGluZ0Rvd24iLCJyZWFkQ2FjaGVkQXV0aFVzZXJTbmFwc2hvdCIsInVzZVNlc3Npb24iLCJ1c2VQcml2eUF2YWlsYWJsZSIsIlYyQXBwU2hlbGwiLCJQcm90ZWN0ZWRSb3V0ZVdpdGhQcml2eSIsInRoZW4iLCJtb2QiLCJkZWZhdWx0IiwiaXNQcm9kdWN0Um91dGUiLCJwYXRobmFtZSIsInN0YXJ0c1dpdGgiLCJSb3V0ZUxvYWRpbmciLCJsYWJlbCIsImxvY2F0aW9uIiwiZGl2IiwiY2xhc3NOYW1lIiwic3BhbiIsIkxvZ2dlZE5hdmlnYXRlIiwidG8iLCJyZXBsYWNlIiwic3RhdGUiLCJyZWFzb24iLCJjb250ZXh0IiwiY29uc29sZSIsIndhcm4iLCJ1c2VTdG9yZWRBdXRoSGludCIsInNlc3Npb25TdG9yYWdlIiwiZ2V0SXRlbSIsImhhc0NvbXBsZXRlZEhhbmRsZSIsInVzZXJuYW1lIiwidHJpbSIsImxlbmd0aCIsIlByb3RlY3RlZFJvdXRlRmFsbGJhY2siLCJjaGlsZHJlbiIsImFsbG93TWlzc2luZ1VzZXJuYW1lIiwiZGF0YSIsInNlc3Npb24iLCJpc1BlbmRpbmciLCJoYXNMaXZlU2Vzc2lvbiIsImhhZFRva2VuSGludCIsImdyYWNlRXhwaXJlZCIsInNldEdyYWNlRXhwaXJlZCIsImNhY2hlZFVzZXIiLCJ1c2VyIiwiZWZmZWN0aXZlVXNlciIsImN1cnJlbnQiLCJ0aW1lciIsIndpbmRvdyIsInNldFRpbWVvdXQiLCJjbGVhclRpbWVvdXQiLCJlZmZlY3RpdmVVc2VySWQiLCJpZCIsImZyb20iLCJzZWFyY2giLCJoYXNoIiwiUHJvdGVjdGVkUm91dGUiLCJwcml2eUF2YWlsYWJsZSIsImZhbGxiYWNrIl0sIm1hcHBpbmdzIjoiOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7QUFBQSxTQUFTQSxJQUFJLEVBQUVDLFFBQVEsRUFBRUMsU0FBUyxFQUFFQyxNQUFNLEVBQUVDLFFBQVEsUUFBUSxRQUFRO0FBQ3BFLFNBQVNDLFFBQVEsRUFBRUMsV0FBVyxRQUFRLG1CQUFtQjtBQUN6RCxTQUNFQywyQkFBMkIsRUFDM0JDLDBCQUEwQixFQUMxQkMsVUFBVSxRQUNMLG9CQUFvQjtBQUMzQixTQUFTQyxpQkFBaUIsUUFBUSw0QkFBNEI7QUFDOUQsU0FBU0MsVUFBVSxRQUFRLGlDQUFpQztBQUU1RCxNQUFNQyx3Q0FBMEJaLEtBQUssSUFDbkMsTUFBTSxDQUFD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

@@ -60,8 +60,8 @@ const TokenCommunitySection = lazy(() =>
 );
 
 const TOKEN_PAGE_CACHE_TTL_MS = 75_000;
-const TOKEN_LIVE_PENDING_REFRESH_INTERVAL_MS = 5_000;
-const TOKEN_LIVE_RESOLVED_REFRESH_INTERVAL_MS = 10_000;
+const TOKEN_LIVE_PENDING_REFRESH_INTERVAL_MS = 30_000;
+const TOKEN_LIVE_RESOLVED_REFRESH_INTERVAL_MS = 60_000;
 const TOKEN_LIVE_CHART_VISIBLE_POINTS = 72;
 const TOKEN_LIVE_CHART_FUTURE_SLOTS = 6;
 const FRESH_POST_MCAP_WINDOW_MS = 30 * 60_000;
@@ -2359,14 +2359,14 @@ export default function TokenPage() {
   const liveStreamRefreshIntervalMs =
     chartRequestConfig.timeframe === "minute"
       ? chartRequestConfig.aggregate <= 5
-        ? 3_500
-        : 5_000
+        ? 30_000
+        : 45_000
       : chartRequestConfig.timeframe === "hour"
-        ? 6_000
-        : 8_000;
+        ? 60_000
+        : 120_000;
   const liveStreamCacheTtlMs = Math.max(
-    1_500,
-    chartRequestConfig.timeframe === "minute" && chartRequestConfig.aggregate <= 5 ? 2_750 : 4_000
+    30_000,
+    chartRequestConfig.timeframe === "minute" && chartRequestConfig.aggregate <= 5 ? 45_000 : 60_000
   );
 
   const liveTokenQuery = useQuery<TokenLiveData>({
@@ -2458,7 +2458,7 @@ export default function TokenPage() {
       chartRequestConfig.limit,
     ],
     enabled: Boolean(tokenAddress && token && (token.pairAddress || token.address)),
-    staleTime: 4_000,
+    staleTime: 45_000,
     gcTime: 8 * 60_000,
     placeholderData: (previousData) => previousData,
     refetchOnWindowFocus: false,
@@ -2468,11 +2468,11 @@ export default function TokenPage() {
         ? false
         : chartRequestConfig.timeframe === "minute"
           ? chartRequestConfig.aggregate <= 5
-            ? 5_000
-            : 8_000
+            ? 60_000
+            : 90_000
           : chartRequestConfig.timeframe === "hour"
-            ? 15_000
-            : 45_000,
+            ? 120_000
+            : 5 * 60_000,
     queryFn: async () => {
       if (!tokenAddress || !token) {
         return {

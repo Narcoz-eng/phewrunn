@@ -96,16 +96,6 @@ export function stabilizePostChartPreview(post: Post): Post {
   return post;
 }
 
-export function loadFeedChartOnce(key: string, loader: () => Promise<FeedChartPreview>): Promise<FeedChartPreview> {
-  const inFlight = feedChartPreviewInFlight.get(key);
-  if (inFlight) return inFlight;
-  const request = loader().finally(() => {
-    feedChartPreviewInFlight.delete(key);
-  });
-  feedChartPreviewInFlight.set(key, request);
-  return request;
-}
-
 function scheduleFeedChartBatchFlush(): void {
   if (feedChartBatchTimer) return;
   feedChartBatchTimer = setTimeout(() => {

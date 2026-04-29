@@ -77,8 +77,8 @@ type SharedTokenLiveStream = {
 
 const MAX_RECENT_TRADES = 32;
 const MAX_LIVE_SAMPLES = 720;
-const FALLBACK_TRADES_POLL_MS = 20_000;
-const FALLBACK_PRICE_POLL_MS = 15_000;
+const FALLBACK_TRADES_POLL_MS = 60_000;
+const FALLBACK_PRICE_POLL_MS = 60_000;
 const STREAM_ERROR_GRACE_MS = 2_500;
 const STREAM_IDLE_CLOSE_MS = 15_000;
 const LIVE_PRICE_SNAPSHOT_FRESHNESS_MS = 5_000;
@@ -86,6 +86,16 @@ const LIVE_TRADE_SNAPSHOT_FRESHNESS_MS = 10_000;
 
 const sharedStreams = new Map<string, SharedTokenLiveStream>();
 const tradeRequestBackoffUntil = new Map<string, number>();
+const tradeRequestFailureCount = new Map<string, number>();
+const tradeRequestCache = new Map<
+  string,
+  {
+    trades: TradePanelRecentTrade[];
+    expiresAtMs: number;
+    staleUntilMs: number;
+  }
+>();
+const tradeRequestInFlight = new Map<string, Promise<TradePanelRecentTrade[]>>();
 
 function buildTradesRequestKey(stream: SharedTokenLiveStream): string {
   return [stream.params.chainType, stream.params.tokenAddress ?? "", stream.params.pairAddress ?? ""]
@@ -93,12 +103,64 @@ function buildTradesRequestKey(stream: SharedTokenLiveStream): string {
     .toLowerCase();
 }
 
-function canRequestTrades(stream: SharedTokenLiveStream): boolean {
-  return (tradeRequestBackoffUntil.get(buildTradesRequestKey(stream)) ?? 0) <= Date.now();
+function readCachedTrades(key: string, allowStale = false): TradePanelRecentTrade[] | null {
+  const cached = tradeRequestCache.get(key);
+  if (!cached) return null;
+  const now = Date.now();
+  if (cached.expiresAtMs > now || (allowStale && cached.staleUntilMs > now)) return cached.trades;
+  if (cached.staleUntilMs <= now) tradeRequestCache.delete(key);
+  return null;
 }
 
-function recordTradesRequestFailure(stream: SharedTokenLiveStream): void {
-  tradeRequestBackoffUntil.set(buildTradesRequestKey(stream), Date.now() + 60_000);
+function recordTradesRequestFailure(key: string): void {
+  const failures = Math.min(6, (tradeRequestFailureCount.get(key) ?? 0) + 1);
+  tradeRequestFailureCount.set(key, failures);
+  tradeRequestBackoffUntil.set(key, Date.now() + Math.min(5 * 60_000, 15_000 * Math.pow(2, failures - 1)));
+}
+
+function recordTradesRequestSuccess(key: string, trades: TradePanelRecentTrade[]): TradePanelRecentTrade[] {
+  tradeRequestFailureCount.delete(key);
+  tradeRequestBackoffUntil.delete(key);
+  tradeRequestCache.set(key, {
+    trades,
+    expiresAtMs: Date.now() + 45_000,
+    staleUntilMs: Date.now() + 5 * 60_000,
+  });
+  return trades;
+}
+
+async function loadRecentTrades(stream: SharedTokenLiveStream): Promise<TradePanelRecentTrade[]> {
+  const key = buildTradesRequestKey(stream);
+  const cached = readCachedTrades(key);
+  if (cached) return cached;
+  const stale = readCachedTrades(key, true);
+  if ((tradeRequestBackoffUntil.get(key) ?? 0) > Date.now()) return stale ?? [];
+
+  const inFlight = tradeRequestInFlight.get(key);
+  if (inFlight) return inFlight;
+
+  const request = (async () => {
+    const query = new URLSearchParams({
+      tokenAddress: stream.params.tokenAddress!,
+      chainType: stream.params.chainType,
+      limit: String(MAX_RECENT_TRADES),
+    });
+    if (stream.params.pairAddress) {
+      query.set("pairAddress", stream.params.pairAddress);
+    }
+    const payload = await api.get<{ trades: TradePanelRecentTrade[] }>(`/api/posts/chart/trades?${query.toString()}`);
+    return recordTradesRequestSuccess(key, Array.isArray(payload.trades) ? payload.trades : []);
+  })().catch((error) => {
+    recordTradesRequestFailure(key);
+    const staleAfterFailure = readCachedTrades(key, true);
+    if (staleAfterFailure) return staleAfterFailure;
+    throw error;
+  }).finally(() => {
+    tradeRequestInFlight.delete(key);
+  });
+
+  tradeRequestInFlight.set(key, request);
+  return request;
 }
 
 function buildStreamKey(params: Omit<TokenLiveStreamParams, "enabled">): string {
@@ -211,23 +273,14 @@ function applyFallbackMode(stream: SharedTokenLiveStream, reason: string | null)
 }
 
 async function primeTrades(stream: SharedTokenLiveStream): Promise<void> {
-  if (!canRequestTrades(stream)) return;
-  const query = new URLSearchParams({
-    tokenAddress: stream.params.tokenAddress!,
-    chainType: stream.params.chainType,
-    limit: String(MAX_RECENT_TRADES),
-  });
-  if (stream.params.pairAddress) {
-    query.set("pairAddress", stream.params.pairAddress);
-  }
   try {
-    const payload = await api.get<{ trades: TradePanelRecentTrade[] }>(`/api/posts/chart/trades?${query.toString()}`);
-    if (!Array.isArray(payload.trades) || payload.trades.length === 0) {
+    const trades = await loadRecentTrades(stream);
+    if (trades.length === 0) {
       return;
     }
     patchSnapshot(stream, (current) => {
-      const mergedTrades = mergeRecentTrades(current.recentTrades, payload.trades);
-      const latestTrade = [...payload.trades].sort((left, right) => right.timestampMs - left.timestampMs)[0];
+      const mergedTrades = mergeRecentTrades(current.recentTrades, trades);
+      const latestTrade = [...trades].sort((left, right) => right.timestampMs - left.timestampMs)[0];
       let nextSamples = current.liveSamples;
       let nextLastEventAtMs = current.lastEventAtMs;
       let nextLastTradeEventAtMs = current.lastTradeEventAtMs;
@@ -263,7 +316,6 @@ async function primeTrades(stream: SharedTokenLiveStream): Promise<void> {
       };
     });
   } catch {
-    recordTradesRequestFailure(stream);
     // Ignore priming failures; the live transport/fallback will continue.
   }
 }
@@ -302,32 +354,19 @@ async function refreshFallbackPrice(stream: SharedTokenLiveStream): Promise<void
 }
 
 async function refreshFallbackTrades(stream: SharedTokenLiveStream): Promise<void> {
-  if (!canRequestTrades(stream)) return;
   try {
-    const query = new URLSearchParams({
-      tokenAddress: stream.params.tokenAddress!,
-      chainType: stream.params.chainType,
-      limit: String(MAX_RECENT_TRADES),
-    });
-    if (stream.params.pairAddress) {
-      query.set("pairAddress", stream.params.pairAddress);
-    }
-    const payload = await api.get<{ trades: TradePanelRecentTrade[] }>(`/api/posts/chart/trades?${query.toString()}`);
-    if (!Array.isArray(payload.trades)) {
-      return;
-    }
+    const trades = await loadRecentTrades(stream);
     patchSnapshot(stream, (current) => {
-      const latestTradeTs = payload.trades.reduce((maxTimestamp, trade) => Math.max(maxTimestamp, trade.timestampMs), 0);
+      const latestTradeTs = trades.reduce((maxTimestamp, trade) => Math.max(maxTimestamp, trade.timestampMs), 0);
       return {
         ...current,
-        recentTrades: mergeRecentTrades(current.recentTrades, payload.trades),
+        recentTrades: mergeRecentTrades(current.recentTrades, trades),
         lastTradeEventAtMs: latestTradeTs > 0 ? latestTradeTs : current.lastTradeEventAtMs,
         lastEventAtMs:
           latestTradeTs > 0 && Date.now() - latestTradeTs <= 30_000 ? Date.now() : current.lastEventAtMs,
       };
     });
   } catch {
-    recordTradesRequestFailure(stream);
     // Ignore fallback trade polling errors.
   }
 }

@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import type { Server, ServerWebSocket } from "bun";
 import {
   startBirdeyeLiveFeed,
@@ -249,20 +248,24 @@ function parseRealtimeClientMessage(rawMessage: string | Buffer): RealtimeClient
 }
 
 export function handleRealtimeUpgrade(request: Request, server: Server<unknown> | undefined): Response | undefined {
-  if (typeof Bun === "undefined" || !server) {
-    return undefined;
-  }
-
   const url = new URL(request.url);
   if (url.pathname !== "/api/realtime") {
     return undefined;
   }
 
-  if (server.upgrade(request, { data: { socketId: randomUUID() } satisfies RealtimeSocketData })) {
-    return undefined;
-  }
-
-  return new Response("WebSocket upgrade failed", { status: 400 });
+  void server;
+  return new Response(
+    JSON.stringify({
+      error: {
+        message: "Realtime socket is disabled for this deployment",
+        code: "REALTIME_DISABLED",
+      },
+    }),
+    {
+      status: 410,
+      headers: { "content-type": "application/json" },
+    }
+  );
 }
 
 export const realtimeWebSocketHandlers = {

@@ -3808,6 +3808,18 @@ app.route("/api/invites", invitesRouter);
 app.route("/api/admin", adminInvitesRouter);
 app.route("/api/internal/jobs", internalJobsRouter);
 
+app.get("/api/realtime", (c) =>
+  c.json(
+    {
+      error: {
+        message: "Realtime socket is disabled for this deployment",
+        code: "REALTIME_DISABLED",
+      },
+    },
+    410
+  )
+);
+
 // =====================================================
 // Static File Serving (Production Only)
 // =====================================================

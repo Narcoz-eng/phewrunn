@@ -1,0 +1,665 @@
+import * as Hash from "/node_modules/viem/node_modules/ox/_esm/core/Hash.js?v=730f480c";
+import * as Hex from "/node_modules/viem/node_modules/ox/_esm/core/Hex.js?v=730f480c";
+import * as Rlp from "/node_modules/viem/node_modules/ox/_esm/core/Rlp.js?v=730f480c";
+import * as SignatureEnvelope from "/node_modules/viem/node_modules/ox/_esm/tempo/SignatureEnvelope.js?v=730f480c";
+/**
+ * Converts an EIP-7702 Authorization object into a typed {@link ox#AuthorizationTempo.AuthorizationTempo}.
+ *
+ * Tempo extends EIP-7702 to support secp256k1, P256, and WebAuthn signature types.
+ *
+ * [Tempo Authorization Specification](https://docs.tempo.xyz/protocol/transactions/spec-tempo-transaction#tempo-authorization-list)
+ *
+ * @example
+ * An Authorization can be instantiated from an EIP-7702 Authorization tuple in object format.
+ *
+ * ```ts twoslash
+ * import { AuthorizationTempo } from 'ox/tempo'
+ *
+ * const authorization = AuthorizationTempo.from({
+ *   address: '0x1234567890abcdef1234567890abcdef12345678',
+ *   chainId: 1,
+ *   nonce: 69n,
+ * })
+ * ```
+ *
+ * @example
+ * ### Attaching Signatures (Secp256k1)
+ *
+ * Standard Ethereum ECDSA signature using the secp256k1 curve.
+ *
+ * ```ts twoslash
+ * import { Secp256k1 } from 'ox'
+ * import { AuthorizationTempo } from 'ox/tempo'
+ *
+ * const privateKey = Secp256k1.randomPrivateKey()
+ *
+ * const authorization = AuthorizationTempo.from({
+ *   address: '0xbe95c3f554e9fc85ec51be69a3d807a0d55bcf2c',
+ *   chainId: 1,
+ *   nonce: 40n,
+ * })
+ *
+ * const signature = Secp256k1.sign({
+ *   payload: AuthorizationTempo.getSignPayload(authorization),
+ *   privateKey,
+ * })
+ *
+ * const authorization_signed = AuthorizationTempo.from(
+ *   authorization,
+ *   { signature }, // [!code focus]
+ * )
+ * ```
+ *
+ * @example
+ * ### Attaching Signatures (P256)
+ *
+ * ECDSA signature using the P-256 (secp256r1) curve. Requires embedding the
+ * public key and a `prehash` flag indicating whether the payload was hashed
+ * before signing.
+ *
+ * ```ts twoslash
+ * import { P256 } from 'ox'
+ * import { AuthorizationTempo, SignatureEnvelope } from 'ox/tempo'
+ *
+ * const { privateKey, publicKey } = P256.createKeyPair()
+ *
+ * const authorization = AuthorizationTempo.from({
+ *   address: '0xbe95c3f554e9fc85ec51be69a3d807a0d55bcf2c',
+ *   chainId: 1,
+ *   nonce: 40n,
+ * })
+ *
+ * const signature = P256.sign({
+ *   payload: AuthorizationTempo.getSignPayload(authorization),
+ *   privateKey,
+ * })
+ * const signatureEnvelope = SignatureEnvelope.from({
+ *   signature,
+ *   publicKey,
+ *   prehash: false,
+ * })
+ *
+ * const authorization_signed = AuthorizationTempo.from(
+ *   authorization,
+ *   { signature: signatureEnvelope }, // [!code focus]
+ * )
+ * ```
+ *
+ * @example
+ * ### Attaching Signatures (P256 WebCrypto)
+ *
+ * When using WebCrypto keys, `prehash` must be `true` since WebCrypto always
+ * hashes the payload internally before signing.
+ *
+ * ```ts twoslash
+ * // @noErrors
+ * import { WebCryptoP256 } from 'ox'
+ * import { AuthorizationTempo, SignatureEnvelope } from 'ox/tempo'
+ *
+ * const { privateKey, publicKey } = await WebCryptoP256.createKeyPair()
+ *
+ * const authorization = AuthorizationTempo.from({
+ *   address: '0xbe95c3f554e9fc85ec51be69a3d807a0d55bcf2c',
+ *   chainId: 1,
+ *   nonce: 40n,
+ * })
+ *
+ * const signature = await WebCryptoP256.sign({
+ *   payload: AuthorizationTempo.getSignPayload(authorization),
+ *   privateKey,
+ * })
+ * const signatureEnvelope = SignatureEnvelope.from({
+ *   signature,
+ *   publicKey,
+ *   prehash: true,
+ * })
+ *
+ * const authorization_signed = AuthorizationTempo.from(
+ *   authorization,
+ *   { signature: signatureEnvelope }, // [!code focus]
+ * )
+ * ```
+ *
+ * @example
+ * ### Attaching Signatures (WebAuthn)
+ *
+ * Passkey-based signature using WebAuthn. Includes authenticator metadata
+ * (authenticatorData and clientDataJSON) along with the P-256 signature and
+ * public key.
+ *
+ * ```ts twoslash
+ * // @noErrors
+ * import { WebAuthnP256 } from 'ox'
+ * import { AuthorizationTempo, SignatureEnvelope } from 'ox/tempo'
+ *
+ * const credential = await WebAuthnP256.createCredential({ name: 'Example' })
+ *
+ * const authorization = AuthorizationTempo.from({
+ *   address: '0xbe95c3f554e9fc85ec51be69a3d807a0d55bcf2c',
+ *   chainId: 1,
+ *   nonce: 40n,
+ * })
+ *
+ * const { metadata, signature } = await WebAuthnP256.sign({
+ *   challenge: AuthorizationTempo.getSignPayload(authorization),
+ *   credentialId: credential.id,
+ * })
+ * const signatureEnvelope = SignatureEnvelope.from({
+ *   signature,
+ *   publicKey: credential.publicKey,
+ *   metadata,
+ * })
+ *
+ * const authorization_signed = AuthorizationTempo.from(
+ *   authorization,
+ *   { signature: signatureEnvelope }, // [!code focus]
+ * )
+ * ```
+ *
+ * @param authorization - An [EIP-7702](https://eips.ethereum.org/EIPS/eip-7702) AA Authorization tuple in object format.
+ * @param options - AA Authorization options.
+ * @returns The {@link ox#AuthorizationTempo.AuthorizationTempo}.
+ */
+export function from(authorization, options = {}) {
+    if (typeof authorization.chainId === 'string')
+        return fromRpc(authorization);
+    if (options.signature) {
+        return { ...authorization, signature: options.signature };
+    }
+    return authorization;
+}
+/**
+ * Converts an {@link ox#AuthorizationTempo.Rpc} to an {@link ox#AuthorizationTempo.AuthorizationTempo}.
+ *
+ * @example
+ * ```ts twoslash
+ * import { AuthorizationTempo } from 'ox/tempo'
+ *
+ * const authorization = AuthorizationTempo.fromRpc({
+ *   address: '0x0000000000000000000000000000000000000000',
+ *   chainId: '0x1',
+ *   nonce: '0x1',
+ *   signature: {
+ *     type: 'secp256k1',
+ *     r: '0x635dc2033e60185bb36709c29c75d64ea51dfbd91c32ef4be198e4ceb169fb4d',
+ *     s: '0x50c2667ac4c771072746acfdcf1f1483336dcca8bd2df47cd83175dbe60f0540',
+ *     yParity: '0x0',
+ *   },
+ * })
+ * ```
+ *
+ * @param authorization - The RPC-formatted AA Authorization.
+ * @returns A signed {@link ox#AuthorizationTempo.AuthorizationTempo}.
+ */
+export function fromRpc(authorization) {
+    const { address, chainId, nonce } = authorization;
+    const signature = SignatureEnvelope.fromRpc(authorization.signature);
+    return {
+        address,
+        chainId: Number(chainId),
+        nonce: BigInt(nonce),
+        signature,
+    };
+}
+/**
+ * Converts an {@link ox#AuthorizationTempo.ListRpc} to an {@link ox#AuthorizationTempo.List}.
+ *
+ * @example
+ * ```ts twoslash
+ * import { AuthorizationTempo } from 'ox/tempo'
+ *
+ * const authorizationList = AuthorizationTempo.fromRpcList([{
+ *   address: '0x0000000000000000000000000000000000000000',
+ *   chainId: '0x1',
+ *   nonce: '0x1',
+ *   signature: {
+ *     type: 'secp256k1',
+ *     r: '0x635dc2033e60185bb36709c29c75d64ea51dfbd91c32ef4be198e4ceb169fb4d',
+ *     s: '0x50c2667ac4c771072746acfdcf1f1483336dcca8bd2df47cd83175dbe60f0540',
+ *     yParity: '0x0',
+ *   },
+ * }])
+ * ```
+ *
+ * @param authorizationList - The RPC-formatted AA Authorization list.
+ * @returns A signed {@link ox#AuthorizationTempo.List}.
+ */
+export function fromRpcList(authorizationList) {
+    return authorizationList.map((x) => fromRpc(x));
+}
+/**
+ * Converts an {@link ox#AuthorizationTempo.Tuple} to an {@link ox#AuthorizationTempo.AuthorizationTempo}.
+ *
+ * @example
+ * ```ts twoslash
+ * import { AuthorizationTempo } from 'ox/tempo'
+ *
+ * const authorization = AuthorizationTempo.fromTuple([
+ *   '0x1',
+ *   '0xbe95c3f554e9fc85ec51be69a3d807a0d55bcf2c',
+ *   '0x3'
+ * ])
+ * // @log: {
+ * // @log:   address: '0xbe95c3f554e9fc85ec51be69a3d807a0d55bcf2c',
+ * // @log:   chainId: 1,
+ * // @log:   nonce: 3n
+ * // @log: }
+ * ```
+ *
+ * @example
+ * It is also possible to append a serialized SignatureEnvelope to the end of an AA Authorization tuple.
+ *
+ * ```ts twoslash
+ * import { AuthorizationTempo } from 'ox/tempo'
+ *
+ * const authorization = AuthorizationTempo.fromTuple([
+ *   '0x1',
+ *   '0xbe95c3f554e9fc85ec51be69a3d807a0d55bcf2c',
+ *   '0x3',
+ *   '0x01a068a020a209d3d56c46f38cc50a33f704f4a9a10a59377f8dd762ac66910e9b907e865ad05c4035ab5792787d4a0297a43617ae897930a6fe4d822b8faea52064',
+ * ])
+ * // @log: {
+ * // @log:   address: '0xbe95c3f554e9fc85ec51be69a3d807a0d55bcf2c',
+ * // @log:   chainId: 1,
+ * // @log:   nonce: 3n
+ * // @log:   signature: {
+ * // @log:     r: BigInt('0x68a020a209d3d56c46f38cc50a33f704f4a9a10a59377f8dd762ac66910e9b90'),
+ * // @log:     s: BigInt('0x7e865ad05c4035ab5792787d4a0297a43617ae897930a6fe4d822b8faea52064'),
+ * // @log:     yParity: 0,
+ * // @log:   },
+ * // @log: }
+ * ```
+ *
+ * @param tuple - The [EIP-7702](https://eips.ethereum.org/EIPS/eip-7702) AA Authorization tuple.
+ * @returns The {@link ox#AuthorizationTempo.AuthorizationTempo}.
+ */
+export function fromTuple(tuple) {
+    const [chainId, address, nonce, signatureSerialized] = tuple;
+    const args = {
+        address,
+        chainId: chainId === '0x' ? 0 : Number(chainId),
+        nonce: nonce === '0x' ? 0n : BigInt(nonce),
+    };
+    if (signatureSerialized)
+        args.signature = SignatureEnvelope.deserialize(signatureSerialized);
+    return from(args);
+}
+/**
+ * Converts an {@link ox#AuthorizationTempo.TupleList} to an {@link ox#AuthorizationTempo.List}.
+ *
+ * @example
+ * ```ts twoslash
+ * import { AuthorizationTempo } from 'ox/tempo'
+ *
+ * const authorizationList = AuthorizationTempo.fromTupleList([
+ *   ['0x1', '0xbe95c3f554e9fc85ec51be69a3d807a0d55bcf2c', '0x3'],
+ *   ['0x3', '0xbe95c3f554e9fc85ec51be69a3d807a0d55bcf2c', '0x14'],
+ * ])
+ * // @log: [
+ * // @log:   {
+ * // @log:     address: '0xbe95c3f554e9fc85ec51be69a3d807a0d55bcf2c',
+ * // @log:     chainId: 1,
+ * // @log:     nonce: 3n,
+ * // @log:   },
+ * // @log:   {
+ * // @log:     address: '0xbe95c3f554e9fc85ec51be69a3d807a0d55bcf2c',
+ * // @log:     chainId: 3,
+ * // @log:     nonce: 20n,
+ * // @log:   },
+ * // @log: ]
+ * ```
+ *
+ * @example
+ * It is also possible to append a serialized SignatureEnvelope to the end of an AA Authorization tuple.
+ *
+ * ```ts twoslash
+ * import { AuthorizationTempo } from 'ox/tempo'
+ *
+ * const authorizationList = AuthorizationTempo.fromTupleList([
+ *   ['0x1', '0xbe95c3f554e9fc85ec51be69a3d807a0d55bcf2c', '0x3', '0x01a068a020a209d3d56c46f38cc50a33f704f4a9a10a59377f8dd762ac66910e9b907e865ad05c4035ab5792787d4a0297a43617ae897930a6fe4d822b8faea52064'],
+ *   ['0x3', '0xbe95c3f554e9fc85ec51be69a3d807a0d55bcf2c', '0x14', '0x01a068a020a209d3d56c46f38cc50a33f704f4a9a10a59377f8dd762ac66910e9b907e865ad05c4035ab5792787d4a0297a43617ae897930a6fe4d822b8faea52064'],
+ * ])
+ * // @log: [
+ * // @log:   {
+ * // @log:     address: '0xbe95c3f554e9fc85ec51be69a3d807a0d55bcf2c',
+ * // @log:     chainId: 1,
+ * // @log:     nonce: 3n,
+ * // @log:     signature: {
+ * // @log:       r: BigInt('0x68a020a209d3d56c46f38cc50a33f704f4a9a10a59377f8dd762ac66910e9b90'),
+ * // @log:       s: BigInt('0x7e865ad05c4035ab5792787d4a0297a43617ae897930a6fe4d822b8faea52064'),
+ * // @log:       yParity: 0,
+ * // @log:     },
+ * // @log:   },
+ * // @log:   {
+ * // @log:     address: '0xbe95c3f554e9fc85ec51be69a3d807a0d55bcf2c',
+ * // @log:     chainId: 3,
+ * // @log:     nonce: 20n,
+ * // @log:     signature: {
+ * // @log:       r: BigInt('0x68a020a209d3d56c46f38cc50a33f704f4a9a10a59377f8dd762ac66910e9b90'),
+ * // @log:       s: BigInt('0x7e865ad05c4035ab5792787d4a0297a43617ae897930a6fe4d822b8faea52064'),
+ * // @log:       yParity: 0,
+ * // @log:     },
+ * // @log:   },
+ * // @log: ]
+ * ```
+ *
+ * @param tupleList - The [EIP-7702](https://eips.ethereum.org/EIPS/eip-7702) AA Authorization tuple list.
+ * @returns An {@link ox#AuthorizationTempo.List}.
+ */
+export function fromTupleList(tupleList) {
+    const list = [];
+    for (const tuple of tupleList)
+        list.push(fromTuple(tuple));
+    return list;
+}
+/**
+ * Computes the sign payload for an {@link ox#AuthorizationTempo.AuthorizationTempo} in [EIP-7702 format](https://eips.ethereum.org/EIPS/eip-7702): `keccak256('0x05' || rlp([chain_id, address, nonce]))`.
+ *
+ * @example
+ * ### Secp256k1
+ *
+ * Standard Ethereum ECDSA signature using the secp256k1 curve.
+ *
+ * ```ts twoslash
+ * import { Secp256k1 } from 'ox'
+ * import { AuthorizationTempo } from 'ox/tempo'
+ *
+ * const privateKey = Secp256k1.randomPrivateKey()
+ *
+ * const authorization = AuthorizationTempo.from({
+ *   address: '0x1234567890abcdef1234567890abcdef12345678',
+ *   chainId: 1,
+ *   nonce: 69n,
+ * })
+ *
+ * const payload = AuthorizationTempo.getSignPayload(authorization) // [!code focus]
+ *
+ * const signature = Secp256k1.sign({ payload, privateKey })
+ * const authorization_signed = AuthorizationTempo.from(
+ *   authorization,
+ *   { signature }
+ * )
+ * ```
+ *
+ * @example
+ * ### P256
+ *
+ * ECDSA signature using the P-256 (secp256r1) curve. Requires embedding the
+ * public key and a `prehash` flag indicating whether the payload was hashed
+ * before signing.
+ *
+ * ```ts twoslash
+ * import { P256 } from 'ox'
+ * import { AuthorizationTempo, SignatureEnvelope } from 'ox/tempo'
+ *
+ * const { privateKey, publicKey } = P256.createKeyPair()
+ *
+ * const authorization = AuthorizationTempo.from({
+ *   address: '0x1234567890abcdef1234567890abcdef12345678',
+ *   chainId: 1,
+ *   nonce: 69n,
+ * })
+ *
+ * const payload = AuthorizationTempo.getSignPayload(authorization) // [!code focus]
+ *
+ * const signature = P256.sign({ payload, privateKey })
+ * const signatureEnvelope = SignatureEnvelope.from({
+ *   prehash: false,
+ *   publicKey,
+ *   signature,
+ * })
+ * const authorization_signed = AuthorizationTempo.from(
+ *   authorization,
+ *   { signature: signatureEnvelope }
+ * )
+ * ```
+ *
+ * @example
+ * ### P256 (WebCrypto)
+ *
+ * When using WebCrypto keys, `prehash` must be `true` since WebCrypto always
+ * hashes the payload internally before signing.
+ *
+ * ```ts twoslash
+ * // @noErrors
+ * import { WebCryptoP256 } from 'ox'
+ * import { AuthorizationTempo, SignatureEnvelope } from 'ox/tempo'
+ *
+ * const { privateKey, publicKey } = await WebCryptoP256.createKeyPair()
+ *
+ * const authorization = AuthorizationTempo.from({
+ *   address: '0x1234567890abcdef1234567890abcdef12345678',
+ *   chainId: 1,
+ *   nonce: 69n,
+ * })
+ *
+ * const payload = AuthorizationTempo.getSignPayload(authorization) // [!code focus]
+ *
+ * const signature = await WebCryptoP256.sign({ payload, privateKey })
+ * const signatureEnvelope = SignatureEnvelope.from({
+ *   prehash: true,
+ *   publicKey,
+ *   signature,
+ * })
+ * const authorization_signed = AuthorizationTempo.from(
+ *   authorization,
+ *   { signature: signatureEnvelope }
+ * )
+ * ```
+ *
+ * @example
+ * ### WebAuthn
+ *
+ * Passkey-based signature using WebAuthn. Includes authenticator metadata
+ * (authenticatorData and clientDataJSON) along with the P-256 signature and
+ * public key.
+ *
+ * ```ts twoslash
+ * // @noErrors
+ * import { WebAuthnP256 } from 'ox'
+ * import { AuthorizationTempo, SignatureEnvelope } from 'ox/tempo'
+ *
+ * const credential = await WebAuthnP256.createCredential({ name: 'Example' })
+ *
+ * const authorization = AuthorizationTempo.from({
+ *   address: '0x1234567890abcdef1234567890abcdef12345678',
+ *   chainId: 1,
+ *   nonce: 69n,
+ * })
+ *
+ * const challenge = AuthorizationTempo.getSignPayload(authorization) // [!code focus]
+ *
+ * const { metadata, signature } = await WebAuthnP256.sign({
+ *   challenge,
+ *   credentialId: credential.id,
+ * })
+ * const signatureEnvelope = SignatureEnvelope.from({
+ *   signature,
+ *   publicKey: credential.publicKey,
+ *   metadata,
+ * })
+ * const authorization_signed = AuthorizationTempo.from(
+ *   authorization,
+ *   { signature: signatureEnvelope }
+ * )
+ * ```
+ *
+ * @param authorization - The {@link ox#AuthorizationTempo.AuthorizationTempo}.
+ * @returns The sign payload.
+ */
+export function getSignPayload(authorization) {
+    return hash(authorization, { presign: true });
+}
+/**
+ * Computes the hash for an {@link ox#AuthorizationTempo.AuthorizationTempo} in [EIP-7702 format](https://eips.ethereum.org/EIPS/eip-7702): `keccak256('0x05' || rlp([chain_id, address, nonce]))`.
+ *
+ * @example
+ * ```ts twoslash
+ * import { AuthorizationTempo } from 'ox/tempo'
+ *
+ * const authorization = AuthorizationTempo.from({
+ *   address: '0x1234567890abcdef1234567890abcdef12345678',
+ *   chainId: 1,
+ *   nonce: 69n,
+ * })
+ *
+ * const hash = AuthorizationTempo.hash(authorization) // [!code focus]
+ * ```
+ *
+ * @param authorization - The {@link ox#AuthorizationTempo.AuthorizationTempo}.
+ * @returns The hash.
+ */
+export function hash(authorization, options = {}) {
+    const { presign } = options;
+    return Hash.keccak256(Hex.concat('0x05', Rlp.fromHex(toTuple(presign
+        ? {
+            address: authorization.address,
+            chainId: authorization.chainId,
+            nonce: authorization.nonce,
+        }
+        : authorization))));
+}
+/**
+ * Converts an {@link ox#AuthorizationTempo.AuthorizationTempo} to an {@link ox#AuthorizationTempo.Rpc}.
+ *
+ * @example
+ * ```ts twoslash
+ * import { AuthorizationTempo } from 'ox/tempo'
+ *
+ * const authorization = AuthorizationTempo.toRpc({
+ *   address: '0x0000000000000000000000000000000000000000',
+ *   chainId: 1,
+ *   nonce: 1n,
+ *   signature: {
+ *     type: 'secp256k1',
+ *     signature: {
+ *       r: 44944627813007772897391531230081695102703289123332187696115181104739239197517n,
+ *       s: 36528503505192438307355164441104001310566505351980369085208178712678799181120n,
+ *       yParity: 0,
+ *     },
+ *   },
+ * })
+ * ```
+ *
+ * @param authorization - An AA Authorization.
+ * @returns An RPC-formatted AA Authorization.
+ */
+export function toRpc(authorization) {
+    const { address, chainId, nonce, signature } = authorization;
+    return {
+        address,
+        chainId: Hex.fromNumber(chainId),
+        nonce: Hex.fromNumber(nonce),
+        signature: SignatureEnvelope.toRpc(signature),
+    };
+}
+/**
+ * Converts an {@link ox#AuthorizationTempo.List} to an {@link ox#AuthorizationTempo.ListRpc}.
+ *
+ * @example
+ * ```ts twoslash
+ * import { AuthorizationTempo } from 'ox/tempo'
+ *
+ * const authorization = AuthorizationTempo.toRpcList([{
+ *   address: '0x0000000000000000000000000000000000000000',
+ *   chainId: 1,
+ *   nonce: 1n,
+ *   signature: {
+ *     type: 'secp256k1',
+ *     signature: {
+ *       r: 44944627813007772897391531230081695102703289123332187696115181104739239197517n,
+ *       s: 36528503505192438307355164441104001310566505351980369085208178712678799181120n,
+ *       yParity: 0,
+ *     },
+ *   },
+ * }])
+ * ```
+ *
+ * @param authorizationList - An AA Authorization List.
+ * @returns An RPC-formatted AA Authorization List.
+ */
+export function toRpcList(authorizationList) {
+    return authorizationList.map((x) => toRpc(x));
+}
+/**
+ * Converts an {@link ox#AuthorizationTempo.AuthorizationTempo} to an {@link ox#AuthorizationTempo.Tuple}.
+ *
+ * @example
+ * ```ts twoslash
+ * import { AuthorizationTempo } from 'ox/tempo'
+ *
+ * const authorization = AuthorizationTempo.from({
+ *   address: '0x1234567890abcdef1234567890abcdef12345678',
+ *   chainId: 1,
+ *   nonce: 69n,
+ * })
+ *
+ * const tuple = AuthorizationTempo.toTuple(authorization) // [!code focus]
+ * // @log: [
+ * // @log:   address: '0x1234567890abcdef1234567890abcdef12345678',
+ * // @log:   chainId: 1,
+ * // @log:   nonce: 69n,
+ * // @log: ]
+ * ```
+ *
+ * @param authorization - The {@link ox#AuthorizationTempo.AuthorizationTempo}.
+ * @returns An [EIP-7702](https://eips.ethereum.org/EIPS/eip-7702) AA Authorization tuple.
+ */
+export function toTuple(authorization) {
+    const { address, chainId, nonce } = authorization;
+    const signature = authorization.signature
+        ? SignatureEnvelope.serialize(authorization.signature)
+        : undefined;
+    return [
+        chainId ? Hex.fromNumber(chainId) : '0x',
+        address,
+        nonce ? Hex.fromNumber(nonce) : '0x',
+        ...(signature ? [signature] : []),
+    ];
+}
+/**
+ * Converts an {@link ox#AuthorizationTempo.List} to an {@link ox#AuthorizationTempo.TupleList}.
+ *
+ * @example
+ * ```ts twoslash
+ * import { AuthorizationTempo } from 'ox/tempo'
+ *
+ * const authorization_1 = AuthorizationTempo.from({
+ *   address: '0x1234567890abcdef1234567890abcdef12345678',
+ *   chainId: 1,
+ *   nonce: 69n,
+ * })
+ * const authorization_2 = AuthorizationTempo.from({
+ *   address: '0x1234567890abcdef1234567890abcdef12345678',
+ *   chainId: 3,
+ *   nonce: 20n,
+ * })
+ *
+ * const tuple = AuthorizationTempo.toTupleList([authorization_1, authorization_2]) // [!code focus]
+ * // @log: [
+ * // @log:   [
+ * // @log:     address: '0x1234567890abcdef1234567890abcdef12345678',
+ * // @log:     chainId: 1,
+ * // @log:     nonce: 69n,
+ * // @log:   ],
+ * // @log:   [
+ * // @log:     address: '0x1234567890abcdef1234567890abcdef12345678',
+ * // @log:     chainId: 3,
+ * // @log:     nonce: 20n,
+ * // @log:   ],
+ * // @log: ]
+ * ```
+ *
+ * @param list - An {@link ox#AuthorizationTempo.List}.
+ * @returns An [EIP-7702](https://eips.ethereum.org/EIPS/eip-7702) AA Authorization tuple list.
+ */
+export function toTupleList(list) {
+    if (!list || list.length === 0)
+        return [];
+    const tupleList = [];
+    for (const authorization of list)
+        tupleList.push(toTuple(authorization));
+    return tupleList;
+}
+                                              
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiQXV0aG9yaXphdGlvblRlbXBvLmpzIiwic291cmNlUm9vdCI6IiIsInNvdXJjZXMiOlsiLi4vLi4vdGVtcG8vQXV0aG9yaXphdGlvblRlbXBvLnRzIl0sIm5hbWVzIjpbXSwibWFwcGluZ3MiOiJBQUVBLE9BQU8sS0FBSyxJQUFJLE1BQU0saUJBQWlCLENBQUE7QUFDdkMsT0FBTyxLQUFLLEdBQUcsTUFBTSxnQkFBZ0IsQ0FBQTtBQUVyQyxPQUFPLEtBQUssR0FBRyxNQUFNLGdCQUFnQixDQUFBO0FBQ3JDLE9BQU8sS0FBSyxpQkFBaUIsTUFBTSx3QkFBd0IsQ0FBQTtBQWtGM0Q7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7R0E2Skc7QUFDSCxNQUFNLFVBQVUsSUFBSSxDQUlsQixhQUFpRCxFQUNqRCxVQUFtQyxFQUFFO0lBRXJDLElBQUksT0FBTyxhQUFhLENBQUMsT0FBTyxLQUFLLFFBQVE7UUFDM0MsT0FBTyxPQUFPLENBQUMsYUFBb0IsQ0FBVSxDQUFBO0lBQy9DLElBQUksT0FBTyxDQUFDLFNBQVMsRUFBRSxDQUFDO1FBQ3RCLE9BQU8sRUFBRSxHQUFHLGFBQWEsRUFBRSxTQUFTLEVBQUUsT0FBTyxDQUFDLFNBQVMsRUFBVyxDQUFBO0lBQ3BFLENBQUM7SUFDRCxPQUFPLGFBQXNCLENBQUE7QUFDL0IsQ0FBQztBQTZCRDs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7OztHQXNCRztBQUNILE1BQU0sVUFBVSxPQUFPLENBQUMsYUFBa0I7SUFDeEMsTUFBTSxFQUFFLE9BQU8sRUFBRSxPQUFPLEVBQUUsS0FBSyxFQUFFLEdBQUcsYUFBYSxDQUFBO0lBQ2pELE1BQU0sU0FBUyxHQUFHLGlCQUFpQixDQUFDLE9BQU8sQ0FBQyxhQUFhLENB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Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7R0FtQ0c7QUFDSCxNQUFNLFVBQVUsV0FBVyxDQUl6QixJQUF1QjtJQUN2QixJQUFJLENBQUMsSUFBSSxJQUFJLElBQUksQ0FBQyxNQUFNLEtBQUssQ0FBQztRQUFFLE9BQU8sRUFBRSxDQUFBO0lBRXpDLE1BQU0sU0FBUyxHQUF1QixFQUFFLENBQUE7SUFDeEMsS0FBSyxNQUFNLGFBQWEsSUFBSSxJQUFJO1FBQUUsU0FBUyxDQUFDLElBQUksQ0FBQyxPQUFPLENBQUMsYUFBYSxDQUFDLENBQUMsQ0FBQTtJQUV4RSxPQUFPLFNBQWtCLENBQUE7QUFDM0IsQ0FBQyIsInNvdXJjZXNDb250ZW50IjpbImltcG9ydCB0eXBlICogYXMgQWRkcmVzcyBmcm9tICcuLi9jb3JlL0FkZHJlc3MuanMnXG5pbXBvcnQgdHlwZSAqIGFzIEVycm9ycyBmcm9tICcuLi9jb3JlL0Vycm9ycy5qcydcbmltcG9ydCAqIGFzIEhhc2ggZnJvbSAnLi4vY29yZS9IYXNoLmpzJ1xuaW1wb3J0ICogYXMgSGV4IGZyb20gJy4uL2NvcmUvSGV4LmpzJ1xuaW1wb3J0IHR5cGUgeyBDb21wdXRlLCBNdXRhYmxlIH0gZnJvbSAnLi4vY29yZS9pbnRlcm5hbC90eXBlcy5qcydcbmltcG9ydCAqIGFzIFJscCBmcm9tICcuLi9jb3JlL1JscC5qcydcbmltcG9ydCAqIGFzIFNpZ25hdHVyZUVudmVsb3BlIGZyb20gJy4vU2lnbmF0dXJlRW52ZWxvcGUuanMnXG5cbi8qKlxuICogUm9vdCB0eXBlIGZvciBhIFRlbXBvIEF1dGhvcml6YXRpb24uXG4gKlxuICogVGVtcG8gZXh0ZW5kcyBFSVAtNzcwMiB0byBzdXBwb3J0IHNlY3AyNTZrMSwgUDI1NiwgYW5kIFdlYkF1dGhuIHNpZ25hdHVyZSB0eXBlcyxcbiAqIGVuYWJsaW5nIHBhc3NrZXktYmFzZWQgYWNjb3VudCBkZWxlZ2F0aW9uLlxuICpcbiAqIFtUZW1wbyBBdXRob3JpemF0aW9uIFNwZWNpZmljYXRpb25dKGh0dHBzOi8vZG9jcy50ZW1wby54eXovcHJvdG9jb2wvdHJhbnNhY3Rpb25zL3NwZWMtdGVtcG8tdHJhbnNhY3Rpb24jdGVtcG8tYXV0aG9yaXphdGlvbi1saXN0KVxuICovXG5leHBvcnQgdHlwZSBBdXRob3JpemF0aW9uVGVtcG88XG4gIHNpZ25lZCBleHRlbmRzIGJvb2xlYW4gPSBib29sZWFuLFxuICBiaWdpbnRUeXBlID0gYmlnaW50LFxuICBudW1iZXJUeXBlID0gbnVtYmVyLFxuPiA9IENvbXB1dGU8XG4gIHtcbiAgICAvKiogQWRkcmVzcyBvZiB0aGUgY29udHJhY3QgdG8gc2V0IGFzIGNvZGUgZm9yIHRoZSBBdXRob3JpdHkuICovXG4gICAgYWRkcmVzczogQWRkcmVzcy5BZGRyZXNzXG4gICAgLyoqIENoYWluIElEIHRvIGF1dGhvcml6ZS4gKi9cbiAgICBjaGFpbklkOiBudW1iZXJUeXBlXG4gICAgLyoqIE5vbmNlIG9mIHRoZSBBdXRob3JpdHkgdG8gYXV0aG9yaXplLiAqL1xuICAgIG5vbmNlOiBiaWdpbnRUeXBlXG4gIH0gJiAoc2lnbmVkIGV4dGVuZHMgdHJ1ZVxuICAgID8geyBzaWduYXR1cmU6IFNpZ25hdHVyZUVudmVsb3BlLlNpZ25hdHVyZUVudmVsb3BlPGJpZ2ludFR5cGUsIG51bWJlclR5cGU+IH1cbiAgICA6IHtcbiAgICAgICAgc2lnbmF0dXJlPzpcbiAgICAgICAgICB8IFNpZ25hdHVyZUVudmVsb3BlLlNpZ25hdHVyZUVudmVsb3BlPGJpZ2ludFR5cGUsIG51bWJlclR5cGU+XG4gICAgICAgICAgfCB1bmRlZmluZWRcbiAgICAgIH0pXG4+XG5cbi8qKiBSUEMgcmVwcmVzZW50YXRpb24gb2YgYW4ge0BsaW5rIG94I0F1dGhvcml6YXRpb25UZW1wby5BdXRob3JpemF0aW9uVGVtcG99LiAqL1xuZXhwb3J0IHR5cGUgUnBjID0gT21pdDxcbiAgQXV0aG9yaXphdGlvblRlbXBvPGZhbHNlLCBIZXguSGV4LCBIZXguSGV4PixcbiAgJ3NpZ25hdHVyZSdcbj4gJiB7XG4gIHNpZ25hdHVyZTogU2lnbmF0dXJlRW52ZWxvcGUuU2lnbmF0dXJlRW52ZWxvcGVScGNcbn1cblxuLyoqIExpc3Qgb2Yge0BsaW5rIG94I0F1dGhvcml6YXRpb25UZW1wby5BdXRob3JpemF0aW9uVGVtcG99LiAqL1xuZXhwb3J0IHR5cGUgTGlzdDxcbiAgc2lnbmVkIGV4dGVuZHMgYm9vbGVhbiA9IGJvb2xlYW4sXG4gIGJpZ2ludFR5cGUgPSBiaWdpbnQsXG4gIG51bWJlclR5cGUgPSBudW1iZXIsXG4+ID0gQ29tcHV0ZTxyZWFkb25seSBBdXRob3JpemF0aW9uVGVtcG88c2lnbmVkLCBiaWdpbnRUeXBlLCBudW1iZXJUeXBlPltdPlxuXG4vKiogUlBDIHJlcHJlc2VudGF0aW9uIG9mIGEgbGlzdCBvZiBBQSBBdXRob3JpemF0aW9ucy4gKi9cbmV4cG9ydCB0eXBlIExpc3RScGMgPSByZWFkb25seSBScGNbXVxuXG4vKiogU2lnbmVkIHJlcHJlc2VudGF0aW9uIG9mIGEgbGlzdCBvZiBBQSBBdXRob3JpemF0aW9ucy4gKi9cbmV4cG9ydCB0eXBlIExpc3RTaWduZWQ8YmlnaW50VHlwZSA9IGJpZ2ludCwgbnVtYmVyVHlwZSA9IG51bWJlcj4gPSBMaXN0PFxuICB0cnVlLFxuICBiaWdpbnRUeXBlLFxuICBudW1iZXJUeXBlXG4+XG5cbi8qKiBTaWduZWQgcmVwcmVzZW50YXRpb24gb2YgYW4gQUEgQXV0aG9yaXphdGlvbi4gKi9cbmV4cG9ydCB0eXBlIFNpZ25lZDxcbiAgYmlnaW50VHlwZSA9IGJpZ2ludCxcbiAgbnVtYmVyVHlwZSA9IG51bWJlcixcbj4gPSBBdXRob3JpemF0aW9uVGVtcG88dHJ1ZSwgYmlnaW50VHlwZSwgbnVtYmVyVHlwZT5cblxuLyoqIFR1cGxlIHJlcHJlc2VudGF0aW9uIG9mIGFuIEFBIEF1dGhvcml6YXRpb24uICovXG5leHBvcnQgdHlwZSBUdXBsZTxzaWduZWQgZXh0ZW5kcyBib29sZWFuID0gYm9vbGVhbj4gPSBzaWduZWQgZXh0ZW5kcyB0cnVlXG4gID8gcmVhZG9ubHkgW1xuICAgICAgY2hhaW5JZDogSGV4LkhleCxcbiAgICAgIGFkZHJlc3M6IEhleC5IZXgsXG4gICAgICBub25jZTogSGV4LkhleCxcbiAgICAgIHNpZ25hdHVyZTogSGV4LkhleCxcbiAgICBdXG4gIDogcmVhZG9ubHkgW2NoYWluSWQ6IEhleC5IZXgsIGFkZHJlc3M6IEhleC5IZXgsIG5vbmNlOiBIZXguSGV4XVxuXG4vKiogVHVwbGUgcmVwcmVzZW50YXRpb24gb2YgYSBzaWduZWQge0BsaW5rIG94I0F1dGhvcml6YXRpb25UZW1wby5BdXRob3JpemF0aW9uVGVtcG99LiAqL1xuZXhwb3J0IHR5cGUgVHVwbGVTaWduZWQgPSBUdXBsZTx0cnVlPlxuXG4vKiogVHVwbGUgcmVwcmVzZW50YXRpb24gb2YgYSBsaXN0IG9mIHtAbGluayBveCNBdXRob3JpemF0aW9uVGVtcG8uQXV0aG9yaXphdGlvblRlbXBvfS4gKi9cbmV4cG9ydCB0eXBlIFR1cGxlTGlzdDxzaWduZWQgZXh0ZW5kcyBib29sZWFuID0gYm9vbGVhbj4gPVxuICByZWFkb25seSBUdXBsZTxzaWduZWQ+W11cblxuLyoqIFR1cGxlIHJlcHJlc2VudGF0aW9uIG9mIGEgbGlzdCBvZiBzaWduZWQge0BsaW5rIG94I0F1dGhvcml6YXRpb25UZW1wby5BdXRob3JpemF0aW9uVGVtcG99LiAqL1xuZXhwb3J0IHR5cGUgVHVwbGVMaXN0U2lnbmVkID0gVHVwbGVMaXN0PHRydWU+XG5cbi8qKlxuICogQ29udmVydHMgYW4gRUlQLTc3MDIgQXV0aG9yaXphdGlvbiBvYmplY3QgaW50byBhIHR5cGVkIHtAbGluayBveCNBdXRob3JpemF0aW9uVGVtcG8uQXV0aG9yaXphdGlvblRlbXBvfS5cbiAqXG4gKiBUZW1wbyBleHRlbmRzIEVJUC03NzAyIHRvIHN1cHBvcnQgc2VjcDI1NmsxLCBQMjU2LCBhbmQgV2ViQXV0aG4gc2lnbmF0dXJlIHR5cGVzLlxuICpcbiAqIFtUZW1wbyBBdXRob3JpemF0aW9uIFNwZWNpZmljYXRpb25dKGh0dHBzOi8vZG9jcy50ZW1wby54eXovcHJvdG9jb2wvdHJhbnNhY3Rpb25zL3NwZWMtdGVtcG8tdHJhbnNhY3Rpb24jdGVtcG8tYXV0aG9yaXphdGlvbi1saXN0KVxuICpcbiAqIEBleGFtcGxlXG4gKiBBbiBBdXRob3JpemF0aW9uIGNhbiBiZSBpbnN0YW50aWF0ZWQgZnJvbSBhbiBFSVAtNzcwMiBBdXRob3JpemF0aW9uIHR1cGxlIGluIG9iamVjdCBmb3JtYXQuXG4gKlxuICogYGBgdHMgdHdvc2xhc2hcbiAqIGltcG9ydCB7IEF1dGhvcml6YXRpb25UZW1wbyB9IGZyb20gJ294L3RlbXBvJ1xuICpcbiAqIGNvbnN0IGF1dGhvcml6YXRpb24gPSBBdXRob3JpemF0aW9uVGVtcG8uZnJvbSh7XG4gKiAgIGFkZHJlc3M6ICcweDEyMzQ1Njc4OTBhYmNkZWYxMjM0NTY3ODkwYWJjZGVmMTIzNDU2NzgnLFxuICogICBjaGFpbklkOiAxLFxuICogICBub25jZTogNjluLFxuICogfSlcbiAqIGBgYFxuICpcbiAqIEBleGFtcGxlXG4gKiAjIyMgQXR0YWNoaW5nIFNpZ25hdHVyZXMgKFNlY3AyNTZrMSlcbiAqXG4gKiBTdGFuZGFyZCBFdGhlcmV1bSBFQ0RTQSBzaWduYXR1cmUgdXNpbmcgdGhlIHNlY3AyNTZrMSBjdXJ2ZS5cbiAqXG4gKiBgYGB0cyB0d29zbGFzaFxuICogaW1wb3J0IHsgU2VjcDI1NmsxIH0gZnJvbSAnb3gnXG4gKiBpbXBvcnQgeyBBdXRob3JpemF0aW9uVGVtcG8gfSBmcm9tICdveC90ZW1wbydcbiAqXG4gKiBjb25zdCBwcml2YXRlS2V5ID0gU2VjcDI1NmsxLnJhbmRvbVByaXZhdGVLZXkoKVxuICpcbiAqIGNvbnN0IGF1dGhvcml6YXRpb24gPSBBdXRob3JpemF0aW9uVGVtcG8uZnJvbSh7XG4gKiAgIGFkZHJlc3M6ICcweGJlOTVjM2Y1NTRlOWZjODVlYzUxYmU2OWEzZDgwN2EwZDU1YmNmMmMnLFxuICogICBjaGFpbklkOiAxLFxuICogICBub25jZTogNDBuLFxuICogfSlcbiAqXG4gKiBjb25zdCBzaWduYXR1cmUgPSBTZWNwMjU2azEuc2lnbih7XG4gKiAgIHBheWxvYWQ6IEF1dGhvcml6YXRpb25UZW1wby5nZXRTaWduUGF5bG9hZChhdXRob3JpemF0aW9uKSxcbiAqICAgcHJpdmF0ZUtleSxcbiAqIH0pXG4gKlxuICogY29uc3QgYXV0aG9yaXphdGlvbl9zaWduZWQgPSBBdXRob3JpemF0aW9uVGVtcG8uZnJvbShcbiAqICAgYXV0aG9yaXphdGlvbixcbiAqICAgeyBzaWduYXR1cmUgfSwgLy8gWyFjb2RlIGZvY3VzXVxuICogKVxuICogYGBgXG4gKlxuICogQGV4YW1wbGVcbiAqICMjIyBBdHRhY2hpbmcgU2lnbmF0dXJlcyAoUDI1NilcbiAqXG4gKiBFQ0RTQSBzaWduYXR1cmUgdXNpbmcgdGhlIFAtMjU2IChzZWNwMjU2cjEpIGN1cnZlLiBSZXF1aXJlcyBlbWJlZGRpbmcgdGhlXG4gKiBwdWJsaWMga2V5IGFuZCBhIGBwcmVoYXNoYCBmbGFnIGluZGljYXRpbmcgd2hldGhlciB0aGUgcGF5bG9hZCB3YXMgaGFzaGVkXG4gKiBiZWZvcmUgc2lnbmluZy5cbiAqXG4gKiBgYGB0cyB0d29zbGFzaFxuICogaW1wb3J0IHsgUDI1NiB9IGZyb20gJ294J1xuICogaW1wb3J0IHsgQXV0aG9yaXphdGlvblRlbXBvLCBTaWduYXR1cmVFbnZlbG9wZSB9IGZyb20gJ294L3RlbXBvJ1xuICpcbiAqIGNvbnN0IHsgcHJpdmF0ZUtleSwgcHVibGljS2V5IH0gPSBQMjU2LmNyZWF0ZUtleVBhaXIoKVxuICpcbiAqIGNvbnN0IGF1dGhvcml6YXRpb24gPSBBdXRob3JpemF0aW9uVGVtcG8uZnJvbSh7XG4gKiAgIGFkZHJlc3M6ICcweGJlOTVjM2Y1NTRlOWZjODVlYzUxYmU2OWEzZDgwN2EwZDU1YmNmMmMnLFxuICogICBjaGFpbklkOiAxLFxuICogICBub25jZTogNDBuLFxuICogfSlcbiAqXG4gKiBjb25zdCBzaWduYXR1cmUgPSBQMjU2LnNpZ24oe1xuICogICBwYXlsb2FkOiBBdXRob3JpemF0aW9uVGVtcG8uZ2V0U2lnblBheWxvYWQoYXV0aG9yaXphdGlvbiksXG4gKiAgIHByaXZhdGVLZXksXG4gKiB9KVxuICogY29uc3Qgc2lnbmF0dXJlRW52ZWxvcGUgPSBTaWduYXR1cmVFbnZlbG9wZS5mcm9tKHtcbiAqICAgc2lnbmF0dXJlLFxuICogICBwdWJsaWNLZXksXG4gKiAgIHByZWhhc2g6IGZhbHNlLFxuICogfSlcbiAqXG4gKiBjb25zdCBhdXRob3JpemF0aW9uX3NpZ25lZCA9IEF1dGhvcml6YXRpb25UZW1wby5mcm9tKFxuICogICBhdXRob3JpemF0aW9uLFxuICogICB7IHNpZ25hdHVyZTogc2lnbmF0dXJlRW52ZWxvcGUgfSwgLy8gWyFjb2RlIGZvY3VzXVxuICogKVxuICogYGBgXG4gKlxuICogQGV4YW1wbGVcbiAqICMjIyBBdHRhY2hpbmcgU2lnbmF0dXJlcyAoUDI1NiBXZWJDcnlwdG8pXG4gKlxuICogV2hlbiB1c2luZyBXZWJDcnlwdG8ga2V5cywgYHByZWhhc2hgIG11c3QgYmUgYHRydWVgIHNpbmNlIFdlYkNyeXB0byBhbHdheXNcbiAqIGhhc2hlcyB0aGUgcGF5bG9hZCBpbnRlcm5hbGx5IGJlZm9yZSBzaWduaW5nLlxuICpcbiAqIGBgYHRzIHR3b3NsYXNoXG4gKiAvLyBAbm9FcnJvcnNcbiAqIGltcG9ydCB7IFdlYkNyeXB0b1AyNTYgfSBmcm9tICdveCdcbiAqIGltcG9ydCB7IEF1dGhvcml6YXRpb25UZW1wbywgU2lnbmF0dXJlRW52ZWxvcGUgfSBmcm9tICdveC90ZW1wbydcbiAqXG4gKiBjb25zdCB7IHByaXZhdGVLZXksIHB1YmxpY0tleSB9ID0gYXdhaXQgV2ViQ3J5cHRvUDI1Ni5jcmVhdGVLZXlQYWlyKClcbiAqXG4gKiBjb25zdCBhdXRob3JpemF0aW9uID0gQXV0aG9yaXphdGlvblRlbXBvLmZyb20oe1xuICogICBhZGRyZXNzOiAnMHhiZTk1YzNmNTU0ZTlmYzg1ZWM1MWJlNjlhM2Q4MDdhMGQ1NWJjZjJjJyxcbiAqICAgY2hhaW5JZDogMSxcbiAqICAgbm9uY2U6IDQwbixcbiAqIH0pXG4gKlxuICogY29uc3Qgc2lnbmF0dXJlID0gYXdhaXQgV2ViQ3J5cHRvUDI1Ni5zaWduKHtcbiAqICAgcGF5bG9hZDogQXV0aG9yaXphdGlvblRlbXBvLmdldFNpZ25QYXlsb2FkKGF1dGhvcml6YXRpb24pLFxuICogICBwcml2YXRlS2V5LFxuICogfSlcbiAqIGNvbnN0IHNpZ25hdHVyZUVudmVsb3BlID0gU2lnbmF0dXJlRW52ZWxvcGUuZnJvbSh7XG4gKiAgIHNpZ25hdHVyZSxcbiAqICAgcHVibGljS2V5LFxuICogICBwcmVoYXNoOiB0cnVlLFxuICogfSlcbiAqXG4gKiBjb25zdCBhdXRob3JpemF0aW9uX3NpZ25lZCA9IEF1dGhvcml6YXRpb25UZW1wby5mcm9tKFxuICogICBhdXRob3JpemF0aW9uLFxuICogICB7IHNpZ25hdHVyZTogc2lnbmF0dXJlRW52ZWxvcGUgfSwgLy8gWyFjb2RlIGZvY3VzXVxuICogKVxuICogYGBgXG4gKlxuICogQGV4YW1wbGVcbiAqICMjIyBBdHRhY2hpbmcgU2lnbmF0dXJlcyAoV2ViQXV0aG4pXG4gKlxuICogUGFzc2tleS1iYXNlZCBzaWduYXR1cmUgdXNpbmcgV2ViQXV0aG4uIEluY2x1ZGVzIGF1dGhlbnRpY2F0b3IgbWV0YWRhdGFcbiAqIChhdXRoZW50aWNhdG9yRGF0YSBhbmQgY2xpZW50RGF0YUpTT04pIGFsb25nIHdpdGggdGhlIFAtMjU2IHNpZ25hdHVyZSBhbmRcbiAqIHB1YmxpYyBrZXkuXG4gKlxuICogYGBgdHMgdHdvc2xhc2hcbiAqIC8vIEBub0Vycm9yc1xuICogaW1wb3J0IHsgV2ViQXV0aG5QMjU2IH0gZnJvbSAnb3gnXG4gKiBpbXBvcnQgeyBBdXRob3JpemF0aW9uVGVtcG8sIFNpZ25hdHVyZUVudmVsb3BlIH0gZnJvbSAnb3gvdGVtcG8nXG4gKlxuICogY29uc3QgY3JlZGVudGlhbCA9IGF3YWl0IFdlYkF1dGhuUDI1Ni5jcmVhdGVDcmVkZW50aWFsKHsgbmFtZTogJ0V4YW1wbGUnIH0pXG4gKlxuICogY29uc3QgYXV0aG9yaXphdGlvbiA9IEF1dGhvcml6YXRpb25UZW1wby5mcm9tKHtcbiAqICAgYWRkcmVzczogJzB4YmU5NWMzZjU1NGU5ZmM4NWVjNTFiZTY5YTNkODA3YTBkNTViY2YyYycsXG4gKiAgIGNoYWluSWQ6IDEsXG4gKiAgIG5vbmNlOiA0MG4sXG4gKiB9KVxuICpcbiAqIGNvbnN0IHsgbWV0YWRhdGEsIHNpZ25hdHVyZSB9ID0gYXdhaXQgV2ViQXV0aG5QMjU2LnNpZ24oe1xuICogICBjaGFsbGVuZ2U6IEF1dGhvcml6YXRpb25UZW1wby5nZXRTaWduUGF5bG9hZChhdXRob3JpemF0aW9uKSxcbiAqICAgY3JlZGVudGlhbElkOiBjcmVkZW50aWFsLmlkLFxuICogfSlcbiAqIGNvbnN0IHNpZ25hdHVyZUVudmVsb3BlID0gU2lnbmF0dXJlRW52ZWxvcGUuZnJvbSh7XG4gKiAgIHNpZ25hdHVyZSxcbiAqICAgcHVibGljS2V5OiBjcmVkZW50aWFsLnB1YmxpY0tleSxcbiAqICAgbWV0YWRhdGEsXG4gKiB9KVxuICpcbiAqIGNvbnN0IGF1dGhvcml6YXRpb25fc2lnbmVkID0gQXV0aG9yaXphdGlvblRlbXBvLmZyb20oXG4gKiAgIGF1dGhvcml6YXRpb24sXG4gKiAgIHsgc2lnbmF0dXJlOiBzaWduYXR1cmVFbnZlbG9wZSB9LCAvLyBbIWNvZGUgZm9jdXNdXG4gKiApXG4gKiBgYGBcbiAqXG4gKiBAcGFyYW0gYXV0aG9yaXphdGlvbiAtIEFuIFtFSVAtNzcwMl0oaHR0cHM6Ly9laXBzLmV0aGVyZXVtLm9yZy9FSVBTL2VpcC03NzAyKSBBQSBBdXRob3JpemF0aW9uIHR1cGxlIGluIG9iamVjdCBmb3JtYXQuXG4gKiBAcGFyYW0gb3B0aW9ucyAtIEFBIEF1dGhvcml6YXRpb24gb3B0aW9ucy5cbiAqIEByZXR1cm5zIFRoZSB7QGxpbmsgb3gjQXV0aG9yaXphdGlvblRlbXBvLkF1dGhvcml6YXRpb25UZW1wb30uXG4gKi9cbmV4cG9ydCBmdW5jdGlvbiBmcm9tPFxuICBjb25zdCBhdXRob3JpemF0aW9uIGV4dGVuZHMgQXV0aG9yaXphdGlvblRlbXBvIHwgUnBjLFxuICBjb25zdCBzaWduYXR1cmUgZXh0ZW5kcyBTaWduYXR1cmVFbnZlbG9wZS5mcm9tLlZhbHVlIHwgdW5kZWZpbmVkID0gdW5kZWZpbmVkLFxuPihcbiAgYXV0aG9yaXphdGlvbjogYXV0aG9yaXphdGlvbiB8IEF1dGhvcml6YXRpb25UZW1wbyxcbiAgb3B0aW9uczogZnJvbS5PcHRpb25zPHNpZ25hdHVyZT4gPSB7fSxcbik6IGZyb20uUmV0dXJuVHlwZTxhdXRob3JpemF0aW9uLCBzaWduYXR1cmU+IHtcbiAgaWYgKHR5cGVvZiBhdXRob3JpemF0aW9uLmNoYWluSWQgPT09ICdzdHJpbmcnKVxuICAgIHJldHVybiBmcm9tUnBjKGF1dGhvcml6YXRpb24gYXMgUnBjKSBhcyBuZXZlclxuICBpZiAob3B0aW9ucy5zaWduYXR1cmUpIHtcbiAgICByZXR1cm4geyAuLi5hdXRob3JpemF0aW9uLCBzaWduYXR1cmU6IG9wdGlvbnMuc2lnbmF0dXJlIH0gYXMgbmV2ZXJcbiAgfVxuICByZXR1cm4gYXV0aG9yaXphdGlvbiBhcyBuZXZlclxufVxuXG5leHBvcnQgZGVjbGFyZSBuYW1lc3BhY2UgZnJvbSB7XG4gIHR5cGUgT3B0aW9uczxcbiAgICBzaWduYXR1cmUgZXh0ZW5kcyBTaWduYXR1cmVFbnZlbG9wZS5mcm9tLlZhbHVlIHwgdW5kZWZpbmVkID1cbiAgICAgIHwgU2lnbmF0dXJlRW52ZWxvcGUuZnJvbS5WYWx1ZVxuICAgICAgfCB1bmRlZmluZWQsXG4gID4gPSB7XG4gICAgLyoqIFRoZSB7QGxpbmsgb3gjU2lnbmF0dXJlRW52ZWxvcGUuU2lnbmF0dXJlRW52ZWxvcGV9IHRvIGF0dGFjaCB0byB0aGUgQUEgQXV0aG9yaXphdGlvbi4gKi9cbiAgICBzaWduYXR1cmU/OiBzaWduYXR1cmUgfCBTaWduYXR1cmVFbnZlbG9wZS5TaWduYXR1cmVFbnZlbG9wZSB8IHVuZGVmaW5lZFxuICB9XG5cbiAgdHlwZSBSZXR1cm5UeXBlPFxuICAgIGF1dGhvcml6YXRpb24gZXh0ZW5kcyBBdXRob3JpemF0aW9uVGVtcG8gfCBScGMgPSBBdXRob3JpemF0aW9uVGVtcG8sXG4gICAgc2lnbmF0dXJlIGV4dGVuZHMgU2lnbmF0dXJlRW52ZWxvcGUuZnJvbS5WYWx1ZSB8IHVuZGVmaW5lZCA9XG4gICAgICB8IFNpZ25hdHVyZUVudmVsb3BlLmZyb20uVmFsdWVcbiAgICAgIHwgdW5kZWZpbmVkLFxuICA+ID0gQ29tcHV0ZTxcbiAgICBhdXRob3JpemF0aW9uIGV4dGVuZHMgUnBjXG4gICAgICA/IFNpZ25lZFxuICAgICAgOiBhdXRob3JpemF0aW9uICZcbiAgICAgICAgICAoc2lnbmF0dXJlIGV4dGVuZHMgU2lnbmF0dXJlRW52ZWxvcGUuZnJvbS5WYWx1ZVxuICAgICAgICAgICAgPyB7IHNpZ25hdHVyZTogU2lnbmF0dXJlRW52ZWxvcGUuZnJvbS5SZXR1cm5WYWx1ZTxzaWduYXR1cmU+IH1cbiAgICAgICAgICAgIDoge30pXG4gID5cblxuICB0eXBlIEVycm9yVHlwZSA9IEVycm9ycy5HbG9iYWxFcnJvclR5cGVcbn1cblxuLyoqXG4gKiBDb252ZXJ0cyBhbiB7QGxpbmsgb3gjQXV0aG9yaXphdGlvblRlbXBvLlJwY30gdG8gYW4ge0BsaW5rIG94I0F1dGhvcml6YXRpb25UZW1wby5BdXRob3JpemF0aW9uVGVtcG99LlxuICpcbiAqIEBleGFtcGxlXG4gKiBgYGB0cyB0d29zbGFzaFxuICogaW1wb3J0IHsgQXV0aG9yaXphdGlvblRlbXBvIH0gZnJvbSAnb3gvdGVtcG8nXG4gKlxuICogY29uc3QgYXV0aG9yaXphdGlvbiA9IEF1dGhvcml6YXRpb25UZW1wby5mcm9tUnBjKHtcbiAqICAgYWRkcmVzczogJzB4MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMCcsXG4gKiAgIGNoYWluSWQ6ICcweDEnLFxuICogICBub25jZTogJzB4MScsXG4gKiAgIHNpZ25hdHVyZToge1xuICogICAgIHR5cGU6ICdzZWNwMjU2azEnLFxuICogICAgIHI6ICcweDYzNWRjMjAzM2U2MDE4NWJiMzY3MDljMjljNzVkNjRlYTUxZGZiZDkxYzMyZWY0YmUxOThlNGNlYjE2OWZiNGQnLFxuICogICAgIHM6ICcweDUwYzI2NjdhYzRjNzcxMDcyNzQ2YWNmZGNmMWYxNDgzMzM2ZGNjYThiZDJkZjQ3Y2Q4MzE3NWRiZTYwZjA1NDAnLFxuICogICAgIHlQYXJpdHk6ICcweDAnLFxuICogICB9LFxuICogfSlcbiAqIGBgYFxuICpcbiAqIEBwYXJhbSBhdXRob3JpemF0aW9uIC0gVGhlIFJQQy1mb3JtYXR0ZWQgQUEgQXV0aG9yaXphdGlvbi5cbiAqIEByZXR1cm5zIEEgc2lnbmVkIHtAbGluayBveCNBdXRob3JpemF0aW9uVGVtcG8uQXV0aG9yaXphdGlvblRlbXBvfS5cbiAqL1xuZXhwb3J0IGZ1bmN0aW9uIGZyb21ScGMoYXV0aG9yaXphdGlvbjogUnBjKTogU2lnbmVkIHtcbiAgY29uc3QgeyBhZGRyZXNzLCBjaGFpbklkLCBub25jZSB9ID0gYXV0aG9yaXphdGlvblxuICBjb25zdCBzaWduYXR1cmUgPSBTaWduYXR1cmVFbnZlbG9wZS5mcm9tUnBjKGF1dGhvcml6YXRpb24uc2lnbmF0dXJlKVxuICByZXR1cm4ge1xuICAgIGFkZHJlc3MsXG4gICAgY2hhaW5JZDogTnVtYmVyKGNoYWluSWQpLFxuICAgIG5vbmNlOiBCaWdJbnQobm9uY2UpLFxuICAgIHNpZ25hdHVyZSxcbiAgfSBhcyBuZXZlclxufVxuXG5leHBvcnQgZGVjbGFyZSBuYW1lc3BhY2UgZnJvbVJwYyB7XG4gIHR5cGUgRXJyb3JUeXBlID0gRXJyb3JzLkdsb2JhbEVycm9yVHlwZVxufVxuXG4vKipcbiAqIENvbnZlcnRzIGFuIHtAbGluayBveCNBdXRob3JpemF0aW9uVGVtcG8uTGlzdFJwY30gdG8gYW4ge0BsaW5rIG94I0F1dGhvcml6YXRpb25UZW1wby5MaXN0fS5cbiAqXG4gKiBAZXhhbXBsZVxuICogYGBgdHMgdHdvc2xhc2hcbiAqIGltcG9ydCB7IEF1dGhvcml6YXRpb25UZW1wbyB9IGZyb20gJ294L3RlbXBvJ1xuICpcbiAqIGNvbnN0IGF1dGhvcml6YXRpb25MaXN0ID0gQXV0aG9yaXphdGlvblRlbXBvLmZyb21ScGNMaXN0KFt7XG4gKiAgIGFkZHJlc3M6ICcweDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAnLFxuICogICBjaGFpbklkOiAnMHgxJyxcbiAqICAgbm9uY2U6ICcweDEnLFxuICogICBzaWduYXR1cmU6IHtcbiAqICAgICB0eXBlOiAnc2VjcDI1NmsxJyxcbiAqICAgICByOiAnMHg2MzVkYzIwMzNlNjAxODViYjM2NzA5YzI5Yzc1ZDY0ZWE1MWRmYmQ5MWMzMmVmNGJlMTk4ZTRjZWIxNjlmYjRkJyxcbiAqICAgICBzOiAnMHg1MGMyNjY3YWM0Yzc3MTA3Mjc0NmFjZmRjZjFmMTQ4MzMzNmRjY2E4YmQyZGY0N2NkODMxNzVkYmU2MGYwNTQwJyxcbiAqICAgICB5UGFyaXR5OiAnMHgwJyxcbiAqICAgfSxcbiAqIH1dKVxuICogYGBgXG4gKlxuICogQHBhcmFtIGF1dGhvcml6YXRpb25MaXN0IC0gVGhlIFJQQy1mb3JtYXR0ZWQgQUEgQXV0aG9yaXphdGlvbiBsaXN0LlxuICogQHJldHVybnMgQSBzaWduZWQge0BsaW5rIG94I0F1dGhvcml6YXRpb25UZW1wby5MaXN0fS5cbiAqL1xuZXhwb3J0IGZ1bmN0aW9uIGZyb21ScGNMaXN0KGF1dGhvcml6YXRpb25MaXN0OiBMaXN0UnBjKTogTGlzdFNpZ25lZCB7XG4gIHJldHVybiBhdXRob3JpemF0aW9uTGlzdC5tYXAoKHgpID0+IGZyb21ScGMoeCBhcyB1bmtub3duIGFzIFJwYykpXG59XG5cbmV4cG9ydCBkZWNsYXJlIG5hbWVzcGFjZSBmcm9tUnBjTGlzdCB7XG4gIHR5cGUgRXJyb3JUeXBlID0gRXJyb3JzLkdsb2JhbEVycm9yVHlwZVxufVxuXG4vKipcbiAqIENvbnZlcnRzIGFuIHtAbGluayBveCNBdXRob3JpemF0aW9uVGVtcG8uVHVwbGV9IHRvIGFuIHtAbGluayBveCNBdXRob3JpemF0aW9uVGVtcG8uQXV0aG9yaXphdGlvblRlbXBvfS5cbiAqXG4gKiBAZXhhbXBsZVxuICogYGBgdHMgdHdvc2xhc2hcbiAqIGltcG9ydCB7IEF1dGhvcml6YXRpb25UZW1wbyB9IGZyb20gJ294L3RlbXBvJ1xuICpcbiAqIGNvbnN0IGF1dGhvcml6YXRpb24gPSBBdXRob3JpemF0aW9uVGVtcG8uZnJvbVR1cGxlKFtcbiAqICAgJzB4MScsXG4gKiAgICcweGJlOTVjM2Y1NTRlOWZjODVlYzUxYmU2OWEzZDgwN2EwZDU1YmNmMmMnLFxuICogICAnMHgzJ1xuICogXSlcbiAqIC8vIEBsb2c6IHtcbiAqIC8vIEBsb2c6ICAgYWRkcmVzczogJzB4YmU5NWMzZjU1NGU5ZmM4NWVjNTFiZTY5YTNkODA3YTBkNTViY2YyYycsXG4gKiAvLyBAbG9nOiAgIGNoYWluSWQ6IDEsXG4gKiAvLyBAbG9nOiAgIG5vbmNlOiAzblxuICogLy8gQGxvZzogfVxuICogYGBgXG4gKlxuICogQGV4YW1wbGVcbiAqIEl0IGlzIGFsc28gcG9zc2libGUgdG8gYXBwZW5kIGEgc2VyaWFsaXplZCBTaWduYXR1cmVFbnZlbG9wZSB0byB0aGUgZW5kIG9mIGFuIEFBIEF1dGhvcml6YXRpb24gdHVwbGUuXG4gKlxuICogYGBgdHMgdHdvc2xhc2hcbiAqIGltcG9ydCB7IEF1dGhvcml6YXRpb25UZW1wbyB9IGZyb20gJ294L3RlbXBvJ1xuICpcbiAqIGNvbnN0IGF1dGhvcml6YXRpb24gPSBBdXRob3JpemF0aW9uVGVtcG8uZnJvbVR1cGxlKFtcbiAqICAgJzB4MScsXG4gKiAgICcweGJlOTVjM2Y1NTRlOWZjODVlYzUxYmU2OWEzZDgwN2EwZDU1YmNmMmMnLFxuICogICAnMHgzJyxcbiAqICAgJzB4MDFhMDY4YTAyMGEyMDlkM2Q1NmM0NmYzOGNjNTBhMzNmNzA0ZjRhOWExMGE1OTM3N2Y4ZGQ3NjJhYzY2OTEwZTliOTA3ZTg2NWFkMDVjNDAzNWFiNTc5Mjc4N2Q0YTAyOTdhNDM2MTdhZTg5NzkzMGE2ZmU0ZDgyMmI4ZmFlYTUyMDY0JyxcbiAqIF0pXG4gKiAvLyBAbG9nOiB7XG4gKiAvLyBAbG9nOiAgIGFkZHJlc3M6ICcweGJlOTVjM2Y1NTRlOWZjODVlYzUxYmU2OWEzZDgwN2EwZDU1YmNmMmMnLFxuICogLy8gQGxvZzogICBjaGFpbklkOiAxLFxuICogLy8gQGxvZzogICBub25jZTogM25cbiAqIC8vIEBsb2c6ICAgc2lnbmF0dXJlOiB7XG4gKiAvLyBAbG9nOiAgICAgcjogQmlnSW50KCcweDY4YTAyMGEyMDlkM2Q1NmM0NmYzOGNjNTBhMzNmNzA0ZjRhOWExMGE1OTM3N2Y4ZGQ3NjJhYzY2OTEwZTliOTAnKSxcbiAqIC8vIEBsb2c6ICAgICBzOiBCaWdJbnQoJzB4N2U4NjVhZDA1YzQwMzVhYjU3OTI3ODdkNGEwMjk3YTQzNjE3YWU4OTc5MzBhNmZlNGQ4MjJiOGZhZWE1MjA2NCcpLFxuICogLy8gQGxvZzogICAgIHlQYXJpdHk6IDAsXG4gKiAvLyBAbG9nOiAgIH0sXG4gKiAvLyBAbG9nOiB9XG4gKiBgYGBcbiAqXG4gKiBAcGFyYW0gdHVwbGUgLSBUaGUgW0VJUC03NzAyXShodHRwczovL2VpcHMuZXRoZXJldW0ub3JnL0VJUFMvZWlwLTc3MDIpIEFBIEF1dGhvcml6YXRpb24gdHVwbGUuXG4gKiBAcmV0dXJucyBUaGUge0BsaW5rIG94I0F1dGhvcml6YXRpb25UZW1wby5BdXRob3JpemF0aW9uVGVtcG99LlxuICovXG5leHBvcnQgZnVuY3Rpb24gZnJvbVR1cGxlPGNvbnN0IHR1cGxlIGV4dGVuZHMgVHVwbGU+KFxuICB0dXBsZTogdHVwbGUsXG4pOiBmcm9tVHVwbGUuUmV0dXJuVHlwZTx0dXBsZT4ge1xuICBjb25zdCBbY2hhaW5JZCwgYWRkcmVzcywgbm9uY2UsIHNpZ25hdHVyZVNlcmlhbGl6ZWRdID0gdHVwbGVcbiAgY29uc3QgYXJnczogQXV0aG9yaXphdGlvblRlbXBvID0ge1xuICAgIGFkZHJlc3MsXG4gICAgY2hhaW5JZDogY2hhaW5JZCA9PT0gJzB4JyA/IDAgOiBOdW1iZXIoY2hhaW5JZCksXG4gICAgbm9uY2U6IG5vbmNlID09PSAnMHgnID8gMG4gOiBCaWdJbnQobm9uY2UpLFxuICB9XG4gIGlmIChzaWduYXR1cmVTZXJpYWxpemVkKVxuICAgIGFyZ3Muc2lnbmF0dXJlID0gU2lnbmF0dXJlRW52ZWxvcGUuZGVzZXJpYWxpemUoc2lnbmF0dXJlU2VyaWFsaXplZClcbiAgcmV0dXJuIGZyb20oYXJncykgYXMgbmV2ZXJcbn1cblxuZXhwb3J0IGRlY2xhcmUgbmFtZXNwYWNlIGZyb21UdXBsZSB7XG4gIHR5cGUgUmV0dXJuVHlwZTxhdXRob3JpemF0aW9uIGV4dGVuZHMgVHVwbGUgPSBUdXBsZT4gPSBDb21wdXRlPFxuICAgIEF1dGhvcml6YXRpb25UZW1wbzxhdXRob3JpemF0aW9uIGV4dGVuZHMgVHVwbGU8dHJ1ZT4gPyB0cnVlIDogZmFsc2U+XG4gID5cblxuICB0eXBlIEVycm9yVHlwZSA9IEVycm9ycy5HbG9iYWxFcnJvclR5cGVcbn1cblxuLyoqXG4gKiBDb252ZXJ0cyBhbiB7QGxpbmsgb3gjQXV0aG9yaXphdGlvblRlbXBvLlR1cGxlTGlzdH0gdG8gYW4ge0BsaW5rIG94I0F1dGhvcml6YXRpb25UZW1wby5MaXN0fS5cbiAqXG4gKiBAZXhhbXBsZVxuICogYGBgdHMgdHdvc2xhc2hcbiAqIGltcG9ydCB7IEF1dGhvcml6YXRpb25UZW1wbyB9IGZyb20gJ294L3RlbXBvJ1xuICpcbiAqIGNvbnN0IGF1dGhvcml6YXRpb25MaXN0ID0gQXV0aG9yaXphdGlvblRlbXBvLmZyb21UdXBsZUxpc3QoW1xuICogICBbJzB4MScsICcweGJlOTVjM2Y1NTRlOWZjODVlYzUxYmU2OWEzZDgwN2EwZDU1YmNmMmMnLCAnMHgzJ10sXG4gKiAgIFsnMHgzJywgJzB4YmU5NWMzZjU1NGU5ZmM4NWVjNTFiZTY5YTNkODA3YTBkNTViY2YyYycsICcweDE0J10sXG4gKiBdKVxuICogLy8gQGxvZzogW1xuICogLy8gQGxvZzogICB7XG4gKiAvLyBAbG9nOiAgICAgYWRkcmVzczogJzB4YmU5NWMzZjU1NGU5ZmM4NWVjNTFiZTY5YTNkODA3YTBkNTViY2YyYycsXG4gKiAvLyBAbG9nOiAgICAgY2hhaW5JZDogMSxcbiAqIC8vIEBsb2c6ICAgICBub25jZTogM24sXG4gKiAvLyBAbG9nOiAgIH0sXG4gKiAvLyBAbG9nOiAgIHtcbiAqIC8vIEBsb2c6ICAgICBhZGRyZXNzOiAnMHhiZTk1YzNmNTU0ZTlmYzg1ZWM1MWJlNjlhM2Q4MDdhMGQ1NWJjZjJjJyxcbiAqIC8vIEBsb2c6ICAgICBjaGFpbklkOiAzLFxuICogLy8gQGxvZzogICAgIG5vbmNlOiAyMG4sXG4gKiAvLyBAbG9nOiAgIH0sXG4gKiAvLyBAbG9nOiBdXG4gKiBgYGBcbiAqXG4gKiBAZXhhbXBsZVxuICogSXQgaXMgYWxzbyBwb3NzaWJsZSB0byBhcHBlbmQgYSBzZXJpYWxpemVkIFNpZ25hdHVyZUVudmVsb3BlIHRvIHRoZSBlbmQgb2YgYW4gQUEgQXV0aG9yaXphdGlvbiB0dXBsZS5cbiAqXG4gKiBgYGB0cyB0d29zbGFzaFxuICogaW1wb3J0IHsgQXV0aG9yaXphdGlvblRlbXBvIH0gZnJvbSAnb3gvdGVtcG8nXG4gKlxuICogY29uc3QgYXV0aG9yaXphdGlvbkxpc3QgPSBBdXRob3JpemF0aW9uVGVtcG8uZnJvbVR1cGxlTGlzdChbXG4gKiAgIFsnMHgxJywgJzB4YmU5NWMzZjU1NGU5ZmM4NWVjNTFiZTY5YTNkODA3YTBkNTViY2YyYycsICcweDMnLCAnMHgwMWEwNjhhMDIwYTIwOWQzZDU2YzQ2ZjM4Y2M1MGEzM2Y3MDRmNGE5YTEwYTU5Mzc3ZjhkZDc2MmFjNjY5MTBlOWI5MDdlODY1YWQwNWM0MDM1YWI1NzkyNzg3ZDRhMDI5N2E0MzYxN2FlODk3OTMwYTZmZTRkODIyYjhmYWVhNTIwNjQnXSxcbiAqICAgWycweDMnLCAnMHhiZTk1YzNmNTU0ZTlmYzg1ZWM1MWJlNjlhM2Q4MDdhMGQ1NWJjZjJjJywgJzB4MTQnLCAnMHgwMWEwNjhhMDIwYTIwOWQzZDU2YzQ2ZjM4Y2M1MGEzM2Y3MDRmNGE5YTEwYTU5Mzc3ZjhkZDc2MmFjNjY5MTBlOWI5MDdlODY1YWQwNWM0MDM1YWI1NzkyNzg3ZDRhMDI5N2E0MzYxN2FlODk3OTMwYTZmZTRkODIyYjhmYWVhNTIwNjQnXSxcbiAqIF0pXG4gKiAvLyBAbG9nOiBbXG4gKiAvLyBAbG9nOiAgIHtcbiAqIC8vIEBsb2c6ICAgICBhZGRyZXNzOiAnMHhiZTk1YzNmNTU0ZTlmYzg1ZWM1MWJlNjlhM2Q4MDdhMGQ1NWJjZjJjJyxcbiAqIC8vIEBsb2c6ICAgICBjaGFpbklkOiAxLFxuICogLy8gQGxvZzogICAgIG5vbmNlOiAzbixcbiAqIC8vIEBsb2c6ICAgICBzaWduYXR1cmU6IHtcbiAqIC8vIEBsb2c6ICAgICAgIHI6IEJpZ0ludCgnMHg2OGEwMjBhMjA5ZDNkNTZjNDZmMzhjYzUwYTMzZjcwNGY0YTlhMTBhNTkzNzdmOGRkNzYyYWM2NjkxMGU5YjkwJyksXG4gKiAvLyBAbG9nOiAgICAgICBzOiBCaWdJbnQoJzB4N2U4NjVhZDA1YzQwMzVhYjU3OTI3ODdkNGEwMjk3YTQzNjE3YWU4OTc5MzBhNmZlNGQ4MjJiOGZhZWE1MjA2NCcpLFxuICogLy8gQGxvZzogICAgICAgeVBhcml0eTogMCxcbiAqIC8vIEBsb2c6ICAgICB9LFxuICogLy8gQGxvZzogICB9LFxuICogLy8gQGxvZzogICB7XG4gKiAvLyBAbG9nOiAgICAgYWRkcmVzczogJzB4YmU5NWMzZjU1NGU5ZmM4NWVjNTFiZTY5YTNkODA3YTBkNTViY2YyYycsXG4gKiAvLyBAbG9nOiAgICAgY2hhaW5JZDogMyxcbiAqIC8vIEBsb2c6ICAgICBub25jZTogMjBuLFxuICogLy8gQGxvZzogICAgIHNpZ25hdHVyZToge1xuICogLy8gQGxvZzogICAgICAgcjogQmlnSW50KCcweDY4YTAyMGEyMDlkM2Q1NmM0NmYzOGNjNTBhMzNmNzA0ZjRhOWExMGE1OTM3N2Y4ZGQ3NjJhYzY2OTEwZTliOTAnKSxcbiAqIC8vIEBsb2c6ICAgICAgIHM6IEJpZ0ludCgnMHg3ZTg2NWFkMDVjNDAzNWFiNTc5Mjc4N2Q0YTAyOTdhNDM2MTdhZTg5NzkzMGE2ZmU0ZDgyMmI4ZmFlYTUyMDY0JyksXG4gKiAvLyBAbG9nOiAgICAgICB5UGFyaXR5OiAwLFxuICogLy8gQGxvZzogICAgIH0sXG4gKiAvLyBAbG9nOiAgIH0sXG4gKiAvLyBAbG9nOiBdXG4gKiBgYGBcbiAqXG4gKiBAcGFyYW0gdHVwbGVMaXN0IC0gVGhlIFtFSVAtNzcwMl0oaHR0cHM6Ly9laXBzLmV0aGVyZXVtLm9yZy9FSVBTL2VpcC03NzAyKSBBQSBBdXRob3JpemF0aW9uIHR1cGxlIGxpc3QuXG4gKiBAcmV0dXJucyBBbiB7QGxpbmsgb3gjQXV0aG9yaXphdGlvblRlbXBvLkxpc3R9LlxuICovXG5leHBvcnQgZnVuY3Rpb24gZnJvbVR1cGxlTGlzdDxjb25zdCB0dXBsZUxpc3QgZXh0ZW5kcyBUdXBsZUxpc3Q+KFxuICB0dXBsZUxpc3Q6IHR1cGxlTGlzdCxcbik6IGZyb21UdXBsZUxpc3QuUmV0dXJuVHlwZTx0dXBsZUxpc3Q+IHtcbiAgY29uc3QgbGlzdDogTXV0YWJsZTxMaXN0PiA9IFtdXG4gIGZvciAoY29uc3QgdHVwbGUgb2YgdHVwbGVMaXN0KSBsaXN0LnB1c2goZnJvbVR1cGxlKHR1cGxlKSlcbiAgcmV0dXJuIGxpc3QgYXMgbmV2ZXJcbn1cblxuZXhwb3J0IGRlY2xhcmUgbmFtZXNwYWNlIGZyb21UdXBsZUxpc3Qge1xuICB0eXBlIFJldHVyblR5cGU8dHVwbGVMaXN0IGV4dGVuZHMgVHVwbGVMaXN0PiA9IENvbXB1dGU8XG4gICAgVHVwbGVMaXN0PHR1cGxlTGlzdCBleHRlbmRzIFR1cGxlTGlzdDx0cnVlPiA/IHRydWUgOiBmYWxzZT5cbiAgPlxuXG4gIHR5cGUgRXJyb3JUeXBlID0gRXJyb3JzLkdsb2JhbEVycm9yVHlwZVxufVxuXG4vKipcbiAqIENvbXB1dGVzIHRoZSBzaWduIHBheWxvYWQgZm9yIGFuIHtAbGluayBveCNBdXRob3JpemF0aW9uVGVtcG8uQXV0aG9yaXphdGlvblRlbXBvfSBpbiBbRUlQLTc3MDIgZm9ybWF0XShodHRwczovL2VpcHMuZXRoZXJldW0ub3JnL0VJUFMvZWlwLTc3MDIpOiBga2VjY2FrMjU2KCcweDA1JyB8fCBybHAoW2NoYWluX2lkLCBhZGRyZXNzLCBub25jZV0pKWAuXG4gKlxuICogQGV4YW1wbGVcbiAqICMjIyBTZWNwMjU2azFcbiAqXG4gKiBTdGFuZGFyZCBFdGhlcmV1bSBFQ0RTQSBzaWduYXR1cmUgdXNpbmcgdGhlIHNlY3AyNTZrMSBjdXJ2ZS5cbiAqXG4gKiBgYGB0cyB0d29zbGFzaFxuICogaW1wb3J0IHsgU2VjcDI1NmsxIH0gZnJvbSAnb3gnXG4gKiBpbXBvcnQgeyBBdXRob3JpemF0aW9uVGVtcG8gfSBmcm9tICdveC90ZW1wbydcbiAqXG4gKiBjb25zdCBwcml2YXRlS2V5ID0gU2VjcDI1NmsxLnJhbmRvbVByaXZhdGVLZXkoKVxuICpcbiAqIGNvbnN0IGF1dGhvcml6YXRpb24gPSBBdXRob3JpemF0aW9uVGVtcG8uZnJvbSh7XG4gKiAgIGFkZHJlc3M6ICcweDEyMzQ1Njc4OTBhYmNkZWYxMjM0NTY3ODkwYWJjZGVmMTIzNDU2NzgnLFxuICogICBjaGFpbklkOiAxLFxuICogICBub25jZTogNjluLFxuICogfSlcbiAqXG4gKiBjb25zdCBwYXlsb2FkID0gQXV0aG9yaXphdGlvblRlbXBvLmdldFNpZ25QYXlsb2FkKGF1dGhvcml6YXRpb24pIC8vIFshY29kZSBmb2N1c11cbiAqXG4gKiBjb25zdCBzaWduYXR1cmUgPSBTZWNwMjU2azEuc2lnbih7IHBheWxvYWQsIHByaXZhdGVLZXkgfSlcbiAqIGNvbnN0IGF1dGhvcml6YXRpb25fc2lnbmVkID0gQXV0aG9yaXphdGlvblRlbXBvLmZyb20oXG4gKiAgIGF1dGhvcml6YXRpb24sXG4gKiAgIHsgc2lnbmF0dXJlIH1cbiAqIClcbiAqIGBgYFxuICpcbiAqIEBleGFtcGxlXG4gKiAjIyMgUDI1NlxuICpcbiAqIEVDRFNBIHNpZ25hdHVyZSB1c2luZyB0aGUgUC0yNTYgKHNlY3AyNTZyMSkgY3VydmUuIFJlcXVpcmVzIGVtYmVkZGluZyB0aGVcbiAqIHB1YmxpYyBrZXkgYW5kIGEgYHByZWhhc2hgIGZsYWcgaW5kaWNhdGluZyB3aGV0aGVyIHRoZSBwYXlsb2FkIHdhcyBoYXNoZWRcbiAqIGJlZm9yZSBzaWduaW5nLlxuICpcbiAqIGBgYHRzIHR3b3NsYXNoXG4gKiBpbXBvcnQgeyBQMjU2IH0gZnJvbSAnb3gnXG4gKiBpbXBvcnQgeyBBdXRob3JpemF0aW9uVGVtcG8sIFNpZ25hdHVyZUVudmVsb3BlIH0gZnJvbSAnb3gvdGVtcG8nXG4gKlxuICogY29uc3QgeyBwcml2YXRlS2V5LCBwdWJsaWNLZXkgfSA9IFAyNTYuY3JlYXRlS2V5UGFpcigpXG4gKlxuICogY29uc3QgYXV0aG9yaXphdGlvbiA9IEF1dGhvcml6YXRpb25UZW1wby5mcm9tKHtcbiAqICAgYWRkcmVzczogJzB4MTIzNDU2Nzg5MGFiY2RlZjEyMzQ1Njc4OTBhYmNkZWYxMjM0NTY3OCcsXG4gKiAgIGNoYWluSWQ6IDEsXG4gKiAgIG5vbmNlOiA2OW4sXG4gKiB9KVxuICpcbiAqIGNvbnN0IHBheWxvYWQgPSBBdXRob3JpemF0aW9uVGVtcG8uZ2V0U2lnblBheWxvYWQoYXV0aG9yaXphdGlvbikgLy8gWyFjb2RlIGZvY3VzXVxuICpcbiAqIGNvbnN0IHNpZ25hdHVyZSA9IFAyNTYuc2lnbih7IHBheWxvYWQsIHByaXZhdGVLZXkgfSlcbiAqIGNvbnN0IHNpZ25hdHVyZUVudmVsb3BlID0gU2lnbmF0dXJlRW52ZWxvcGUuZnJvbSh7XG4gKiAgIHByZWhhc2g6IGZhbHNlLFxuICogICBwdWJsaWNLZXksXG4gKiAgIHNpZ25hdHVyZSxcbiAqIH0pXG4gKiBjb25zdCBhdXRob3JpemF0aW9uX3NpZ25lZCA9IEF1dGhvcml6YXRpb25UZW1wby5mcm9tKFxuICogICBhdXRob3JpemF0aW9uLFxuICogICB7IHNpZ25hdHVyZTogc2lnbmF0dXJlRW52ZWxvcGUgfVxuICogKVxuICogYGBgXG4gKlxuICogQGV4YW1wbGVcbiAqICMjIyBQMjU2IChXZWJDcnlwdG8pXG4gKlxuICogV2hlbiB1c2luZyBXZWJDcnlwdG8ga2V5cywgYHByZWhhc2hgIG11c3QgYmUgYHRydWVgIHNpbmNlIFdlYkNyeXB0byBhbHdheXNcbiAqIGhhc2hlcyB0aGUgcGF5bG9hZCBpbnRlcm5hbGx5IGJlZm9yZSBzaWduaW5nLlxuICpcbiAqIGBgYHRzIHR3b3NsYXNoXG4gKiAvLyBAbm9FcnJvcnNcbiAqIGltcG9ydCB7IFdlYkNyeXB0b1AyNTYgfSBmcm9tICdveCdcbiAqIGltcG9ydCB7IEF1dGhvcml6YXRpb25UZW1wbywgU2lnbmF0dXJlRW52ZWxvcGUgfSBmcm9tICdveC90ZW1wbydcbiAqXG4gKiBjb25zdCB7IHByaXZhdGVLZXksIHB1YmxpY0tleSB9ID0gYXdhaXQgV2ViQ3J5cHRvUDI1Ni5jcmVhdGVLZXlQYWlyKClcbiAqXG4gKiBjb25zdCBhdXRob3JpemF0aW9uID0gQXV0aG9yaXphdGlvblRlbXBvLmZyb20oe1xuICogICBhZGRyZXNzOiAnMHgxMjM0NTY3ODkwYWJjZGVmMTIzNDU2Nzg5MGFiY2RlZjEyMzQ1Njc4JyxcbiAqICAgY2hhaW5JZDogMSxcbiAqICAgbm9uY2U6IDY5bixcbiAqIH0pXG4gKlxuICogY29uc3QgcGF5bG9hZCA9IEF1dGhvcml6YXRpb25UZW1wby5nZXRTaWduUGF5bG9hZChhdXRob3JpemF0aW9uKSAvLyBbIWNvZGUgZm9jdXNdXG4gKlxuICogY29uc3Qgc2lnbmF0dXJlID0gYXdhaXQgV2ViQ3J5cHRvUDI1Ni5zaWduKHsgcGF5bG9hZCwgcHJpdmF0ZUtleSB9KVxuICogY29uc3Qgc2lnbmF0dXJlRW52ZWxvcGUgPSBTaWduYXR1cmVFbnZlbG9wZS5mcm9tKHtcbiAqICAgcHJlaGFzaDogdHJ1ZSxcbiAqICAgcHVibGljS2V5LFxuICogICBzaWduYXR1cmUsXG4gKiB9KVxuICogY29uc3QgYXV0aG9yaXphdGlvbl9zaWduZWQgPSBBdXRob3JpemF0aW9uVGVtcG8uZnJvbShcbiAqICAgYXV0aG9yaXphdGlvbixcbiAqICAgeyBzaWduYXR1cmU6IHNpZ25hdHVyZUVudmVsb3BlIH1cbiAqIClcbiAqIGBgYFxuICpcbiAqIEBleGFtcGxlXG4gKiAjIyMgV2ViQXV0aG5cbiAqXG4gKiBQYXNza2V5LWJhc2VkIHNpZ25hdHVyZSB1c2luZyBXZWJBdXRobi4gSW5jbHVkZXMgYXV0aGVudGljYXRvciBtZXRhZGF0YVxuICogKGF1dGhlbnRpY2F0b3JEYXRhIGFuZCBjbGllbnREYXRhSlNPTikgYWxvbmcgd2l0aCB0aGUgUC0yNTYgc2lnbmF0dXJlIGFuZFxuICogcHVibGljIGtleS5cbiAqXG4gKiBgYGB0cyB0d29zbGFzaFxuICogLy8gQG5vRXJyb3JzXG4gKiBpbXBvcnQgeyBXZWJBdXRoblAyNTYgfSBmcm9tICdveCdcbiAqIGltcG9ydCB7IEF1dGhvcml6YXRpb25UZW1wbywgU2lnbmF0dXJlRW52ZWxvcGUgfSBmcm9tICdveC90ZW1wbydcbiAqXG4gKiBjb25zdCBjcmVkZW50aWFsID0gYXdhaXQgV2ViQXV0aG5QMjU2LmNyZWF0ZUNyZWRlbnRpYWwoeyBuYW1lOiAnRXhhbXBsZScgfSlcbiAqXG4gKiBjb25zdCBhdXRob3JpemF0aW9uID0gQXV0aG9yaXphdGlvblRlbXBvLmZyb20oe1xuICogICBhZGRyZXNzOiAnMHgxMjM0NTY3ODkwYWJjZGVmMTIzNDU2Nzg5MGFiY2RlZjEyMzQ1Njc4JyxcbiAqICAgY2hhaW5JZDogMSxcbiAqICAgbm9uY2U6IDY5bixcbiAqIH0pXG4gKlxuICogY29uc3QgY2hhbGxlbmdlID0gQXV0aG9yaXphdGlvblRlbXBvLmdldFNpZ25QYXlsb2FkKGF1dGhvcml6YXRpb24pIC8vIFshY29kZSBmb2N1c11cbiAqXG4gKiBjb25zdCB7IG1ldGFkYXRhLCBzaWduYXR1cmUgfSA9IGF3YWl0IFdlYkF1dGhuUDI1Ni5zaWduKHtcbiAqICAgY2hhbGxlbmdlLFxuICogICBjcmVkZW50aWFsSWQ6IGNyZWRlbnRpYWwuaWQsXG4gKiB9KVxuICogY29uc3Qgc2lnbmF0dXJlRW52ZWxvcGUgPSBTaWduYXR1cmVFbnZlbG9wZS5mcm9tKHtcbiAqICAgc2lnbmF0dXJlLFxuICogICBwdWJsaWNLZXk6IGNyZWRlbnRpYWwucHVibGljS2V5LFxuICogICBtZXRhZGF0YSxcbiAqIH0pXG4gKiBjb25zdCBhdXRob3JpemF0aW9uX3NpZ25lZCA9IEF1dGhvcml6YXRpb25UZW1wby5mcm9tKFxuICogICBhdXRob3JpemF0aW9uLFxuICogICB7IHNpZ25hdHVyZTogc2lnbmF0dXJlRW52ZWxvcGUgfVxuICogKVxuICogYGBgXG4gKlxuICogQHBhcmFtIGF1dGhvcml6YXRpb24gLSBUaGUge0BsaW5rIG94I0F1dGhvcml6YXRpb25UZW1wby5BdXRob3JpemF0aW9uVGVtcG99LlxuICogQHJldHVybnMgVGhlIHNpZ24gcGF5bG9hZC5cbiAqL1xuZXhwb3J0IGZ1bmN0aW9uIGdldFNpZ25QYXlsb2FkKGF1dGhvcml6YXRpb246IEF1dGhvcml6YXRpb25UZW1wbyk6IEhleC5IZXgge1xuICByZXR1cm4gaGFzaChhdXRob3JpemF0aW9uLCB7IHByZXNpZ246IHRydWUgfSlcbn1cblxuZXhwb3J0IGRlY2xhcmUgbmFtZXNwYWNlIGdldFNpZ25QYXlsb2FkIHtcbiAgdHlwZSBFcnJvclR5cGUgPSBoYXNoLkVycm9yVHlwZSB8IEVycm9ycy5HbG9iYWxFcnJvclR5cGVcbn1cblxuLyoqXG4gKiBDb21wdXRlcyB0aGUgaGFzaCBmb3IgYW4ge0BsaW5rIG94I0F1dGhvcml6YXRpb25UZW1wby5BdXRob3JpemF0aW9uVGVtcG99IGluIFtFSVAtNzcwMiBmb3JtYXRdKGh0dHBzOi8vZWlwcy5ldGhlcmV1bS5vcmcvRUlQUy9laXAtNzcwMik6IGBrZWNjYWsyNTYoJzB4MDUnIHx8IHJscChbY2hhaW5faWQsIGFkZHJlc3MsIG5vbmNlXSkpYC5cbiAqXG4gKiBAZXhhbXBsZVxuICogYGBgdHMgdHdvc2xhc2hcbiAqIGltcG9ydCB7IEF1dGhvcml6YXRpb25UZW1wbyB9IGZyb20gJ294L3RlbXBvJ1xuICpcbiAqIGNvbnN0IGF1dGhvcml6YXRpb24gPSBBdXRob3JpemF0aW9uVGVtcG8uZnJvbSh7XG4gKiAgIGFkZHJlc3M6ICcweDEyMzQ1Njc4OTBhYmNkZWYxMjM0NTY3ODkwYWJjZGVmMTIzNDU2NzgnLFxuICogICBjaGFpbklkOiAxLFxuICogICBub25jZTogNjluLFxuICogfSlcbiAqXG4gKiBjb25zdCBoYXNoID0gQXV0aG9yaXphdGlvblRlbXBvLmhhc2goYXV0aG9yaXphdGlvbikgLy8gWyFjb2RlIGZvY3VzXVxuICogYGBgXG4gKlxuICogQHBhcmFtIGF1dGhvcml6YXRpb24gLSBUaGUge0BsaW5rIG94I0F1dGhvcml6YXRpb25UZW1wby5BdXRob3JpemF0aW9uVGVtcG99LlxuICogQHJldHVybnMgVGhlIGhhc2guXG4gKi9cbmV4cG9ydCBmdW5jdGlvbiBoYXNoKFxuICBhdXRob3JpemF0aW9uOiBBdXRob3JpemF0aW9uVGVtcG8sXG4gIG9wdGlvbnM6IGhhc2guT3B0aW9ucyA9IHt9LFxuKTogSGV4LkhleCB7XG4gIGNvbnN0IHsgcHJlc2lnbiB9ID0gb3B0aW9uc1xuICByZXR1cm4gSGFzaC5rZWNjYWsyNTYoXG4gICAgSGV4LmNvbmNhdChcbiAgICAgICcweDA1JyxcbiAgICAgIFJscC5mcm9tSGV4KFxuICAgICAgICB0b1R1cGxlKFxuICAgICAgICAgIHByZXNpZ25cbiAgICAgICAgICAgID8ge1xuICAgICAgICAgICAgICAgIGFkZHJlc3M6IGF1dGhvcml6YXRpb24uYWRkcmVzcyxcbiAgICAgICAgICAgICAgICBjaGFpbklkOiBhdXRob3JpemF0aW9uLmNoYWluSWQsXG4gICAgICAgICAgICAgICAgbm9uY2U6IGF1dGhvcml6YXRpb24ubm9uY2UsXG4gICAgICAgICAgICAgIH1cbiAgICAgICAgICAgIDogYXV0aG9yaXphdGlvbixcbiAgICAgICAgKSxcbiAgICAgICksXG4gICAgKSxcbiAgKVxufVxuXG5leHBvcnQgZGVjbGFyZSBuYW1lc3BhY2UgaGFzaCB7XG4gIHR5cGUgRXJyb3JUeXBlID1cbiAgICB8IHRvVHVwbGUuRXJyb3JUeXBlXG4gICAgfCBIYXNoLmtlY2NhazI1Ni5FcnJvclR5cGVcbiAgICB8IEhleC5jb25jYXQuRXJyb3JUeXBlXG4gICAgfCBSbHAuZnJvbUhleC5FcnJvclR5cGVcbiAgICB8IEVycm9ycy5HbG9iYWxFcnJvclR5cGVcblxuICB0eXBlIE9wdGlvbnMgPSB7XG4gICAgLyoqIFdoZXRoZXIgdG8gaGFzaCB0aGlzIGF1dGhvcml6YXRpb24gZm9yIHNpZ25pbmcuIEBkZWZhdWx0IGZhbHNlICovXG4gICAgcHJlc2lnbj86IGJvb2xlYW4gfCB1bmRlZmluZWRcbiAgfVxufVxuXG4vKipcbiAqIENvbnZlcnRzIGFuIHtAbGluayBveCNBdXRob3JpemF0aW9uVGVtcG8uQXV0aG9yaXphdGlvblRlbXBvfSB0byBhbiB7QGxpbmsgb3gjQXV0aG9yaXphdGlvblRlbXBvLlJwY30uXG4gKlxuICogQGV4YW1wbGVcbiAqIGBgYHRzIHR3b3NsYXNoXG4gKiBpbXBvcnQgeyBBdXRob3JpemF0aW9uVGVtcG8gfSBmcm9tICdveC90ZW1wbydcbiAqXG4gKiBjb25zdCBhdXRob3JpemF0aW9uID0gQXV0aG9yaXphdGlvblRlbXBvLnRvUnBjKHtcbiAqICAgYWRkcmVzczogJzB4MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMCcsXG4gKiAgIGNoYWluSWQ6IDEsXG4gKiAgIG5vbmNlOiAxbixcbiAqICAgc2lnbmF0dXJlOiB7XG4gKiAgICAgdHlwZTogJ3NlY3AyNTZrMScsXG4gKiAgICAgc2lnbmF0dXJlOiB7XG4gKiAgICAgICByOiA0NDk0NDYyNzgxMzAwNzc3Mjg5NzM5MTUzMTIzMDA4MTY5NTEwMjcwMzI4OTEyMzMzMjE4NzY5NjExNTE4MTEwNDczOTIzOTE5NzUxN24sXG4gKiAgICAgICBzOiAzNjUyODUwMzUwNTE5MjQzODMwNzM1NTE2NDQ0MTEwNDAwMTMxMDU2NjUwNTM1MTk4MDM2OTA4NTIwODE3ODcxMjY3ODc5OTE4MTEyMG4sXG4gKiAgICAgICB5UGFyaXR5OiAwLFxuICogICAgIH0sXG4gKiAgIH0sXG4gKiB9KVxuICogYGBgXG4gKlxuICogQHBhcmFtIGF1dGhvcml6YXRpb24gLSBBbiBBQSBBdXRob3JpemF0aW9uLlxuICogQHJldHVybnMgQW4gUlBDLWZvcm1hdHRlZCBBQSBBdXRob3JpemF0aW9uLlxuICovXG5leHBvcnQgZnVuY3Rpb24gdG9ScGMoYXV0aG9yaXphdGlvbjogU2lnbmVkKTogUnBjIHtcbiAgY29uc3QgeyBhZGRyZXNzLCBjaGFpbklkLCBub25jZSwgc2lnbmF0dXJlIH0gPSBhdXRob3JpemF0aW9uXG5cbiAgcmV0dXJuIHtcbiAgICBhZGRyZXNzLFxuICAgIGNoYWluSWQ6IEhleC5mcm9tTnVtYmVyKGNoYWluSWQpLFxuICAgIG5vbmNlOiBIZXguZnJvbU51bWJlcihub25jZSksXG4gICAgc2lnbmF0dXJlOiBTaWduYXR1cmVFbnZlbG9wZS50b1JwYyhzaWduYXR1cmUpLFxuICB9XG59XG5cbmV4cG9ydCBkZWNsYXJlIG5hbWVzcGFjZSB0b1JwYyB7XG4gIHR5cGUgRXJyb3JUeXBlID0gRXJyb3JzLkdsb2JhbEVycm9yVHlwZVxufVxuXG4vKipcbiAqIENvbnZlcnRzIGFuIHtAbGluayBveCNBdXRob3JpemF0aW9uVGVtcG8uTGlzdH0gdG8gYW4ge0BsaW5rIG94I0F1dGhvcml6YXRpb25UZW1wby5MaXN0UnBjfS5cbiAqXG4gKiBAZXhhbXBsZVxuICogYGBgdHMgdHdvc2xhc2hcbiAqIGltcG9ydCB7IEF1dGhvcml6YXRpb25UZW1wbyB9IGZyb20gJ294L3RlbXBvJ1xuICpcbiAqIGNvbnN0IGF1dGhvcml6YXRpb24gPSBBdXRob3JpemF0aW9uVGVtcG8udG9ScGNMaXN0KFt7XG4gKiAgIGFkZHJlc3M6ICcweDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAnLFxuICogICBjaGFpbklkOiAxLFxuICogICBub25jZTogMW4sXG4gKiAgIHNpZ25hdHVyZToge1xuICogICAgIHR5cGU6ICdzZWNwMjU2azEnLFxuICogICAgIHNpZ25hdHVyZToge1xuICogICAgICAgcjogNDQ5NDQ2Mjc4MTMwMDc3NzI4OTczOTE1MzEyMzAwODE2OTUxMDI3MDMyODkxMjMzMzIxODc2OTYxMTUxODExMDQ3MzkyMzkxOTc1MTduLFxuICogICAgICAgczogMzY1Mjg1MDM1MDUxOTI0MzgzMDczNTUxNjQ0NDExMDQwMDEzMTA1NjY1MDUzNTE5ODAzNjkwODUyMDgxNzg3MTI2Nzg3OTkxODExMjBuLFxuICogICAgICAgeVBhcml0eTogMCxcbiAqICAgICB9LFxuICogICB9LFxuICogfV0pXG4gKiBgYGBcbiAqXG4gKiBAcGFyYW0gYXV0aG9yaXphdGlvbkxpc3QgLSBBbiBBQSBBdXRob3JpemF0aW9uIExpc3QuXG4gKiBAcmV0dXJucyBBbiBSUEMtZm9ybWF0dGVkIEFBIEF1dGhvcml6YXRpb24gTGlzdC5cbiAqL1xuZXhwb3J0IGZ1bmN0aW9uIHRvUnBjTGlzdChhdXRob3JpemF0aW9uTGlzdDogTGlzdFNpZ25lZCk6IExpc3RScGMge1xuICByZXR1cm4gYXV0aG9yaXphdGlvbkxpc3QubWFwKCh4KSA9PiB0b1JwYyh4IGFzIHVua25vd24gYXMgU2lnbmVkKSkgYXMgbmV2ZXJcbn1cblxuZXhwb3J0IGRlY2xhcmUgbmFtZXNwYWNlIHRvUnBjTGlzdCB7XG4gIHR5cGUgRXJyb3JUeXBlID0gRXJyb3JzLkdsb2JhbEVycm9yVHlwZVxufVxuXG4vKipcbiAqIENvbnZlcnRzIGFuIHtAbGluayBveCNBdXRob3JpemF0aW9uVGVtcG8uQXV0aG9yaXphdGlvblRlbXBvfSB0byBhbiB7QGxpbmsgb3gjQXV0aG9yaXphdGlvblRlbXBvLlR1cGxlfS5cbiAqXG4gKiBAZXhhbXBsZVxuICogYGBgdHMgdHdvc2xhc2hcbiAqIGltcG9ydCB7IEF1dGhvcml6YXRpb25UZW1wbyB9IGZyb20gJ294L3RlbXBvJ1xuICpcbiAqIGNvbnN0IGF1dGhvcml6YXRpb24gPSBBdXRob3JpemF0aW9uVGVtcG8uZnJvbSh7XG4gKiAgIGFkZHJlc3M6ICcweDEyMzQ1Njc4OTBhYmNkZWYxMjM0NTY3ODkwYWJjZGVmMTIzNDU2NzgnLFxuICogICBjaGFpbklkOiAxLFxuICogICBub25jZTogNjluLFxuICogfSlcbiAqXG4gKiBjb25zdCB0dXBsZSA9IEF1dGhvcml6YXRpb25UZW1wby50b1R1cGxlKGF1dGhvcml6YXRpb24pIC8vIFshY29kZSBmb2N1c11cbiAqIC8vIEBsb2c6IFtcbiAqIC8vIEBsb2c6ICAgYWRkcmVzczogJzB4MTIzNDU2Nzg5MGFiY2RlZjEyMzQ1Njc4OTBhYmNkZWYxMjM0NTY3OCcsXG4gKiAvLyBAbG9nOiAgIGNoYWluSWQ6IDEsXG4gKiAvLyBAbG9nOiAgIG5vbmNlOiA2OW4sXG4gKiAvLyBAbG9nOiBdXG4gKiBgYGBcbiAqXG4gKiBAcGFyYW0gYXV0aG9yaXphdGlvbiAtIFRoZSB7QGxpbmsgb3gjQXV0aG9yaXphdGlvblRlbXBvLkF1dGhvcml6YXRpb25UZW1wb30uXG4gKiBAcmV0dXJucyBBbiBbRUlQLTc3MDJdKGh0dHBzOi8vZWlwcy5ldGhlcmV1bS5vcmcvRUlQUy9laXAtNzcwMikgQUEgQXV0aG9yaXphdGlvbiB0dXBsZS5cbiAqL1xuZXhwb3J0IGZ1bmN0aW9uIHRvVHVwbGU8Y29uc3QgYXV0aG9yaXphdGlvbiBleHRlbmRzIEF1dGhvcml6YXRpb25UZW1wbz4oXG4gIGF1dGhvcml6YXRpb246IGF1dGhvcml6YXRpb24sXG4pOiB0b1R1cGxlLlJldHVyblR5cGU8YXV0aG9yaXphdGlvbj4ge1xuICBjb25zdCB7IGFkZHJlc3MsIGNoYWluSWQsIG5vbmNlIH0gPSBhdXRob3JpemF0aW9uXG4gIGNvbnN0IHNpZ25hdHVyZSA9IGF1dGhvcml6YXRpb24uc2lnbmF0dXJlXG4gICAgPyBTaWduYXR1cmVFbnZlbG9wZS5zZXJpYWxpemUoYXV0aG9yaXphdGlvbi5zaWduYXR1cmUpXG4gICAgOiB1bmRlZmluZWRcbiAgcmV0dXJuIFtcbiAgICBjaGFpbklkID8gSGV4LmZyb21OdW1iZXIoY2hhaW5JZCkgOiAnMHgnLFxuICAgIGFkZHJlc3MsXG4gICAgbm9uY2UgPyBIZXguZnJvbU51bWJlcihub25jZSkgOiAnMHgnLFxuICAgIC4uLihzaWduYXR1cmUgPyBbc2lnbmF0dXJlXSA6IFtdKSxcbiAgXSBhcyBuZXZlclxufVxuXG5leHBvcnQgZGVjbGFyZSBuYW1lc3BhY2UgdG9UdXBsZSB7XG4gIHR5cGUgUmV0dXJuVHlwZTxcbiAgICBhdXRob3JpemF0aW9uIGV4dGVuZHMgQXV0aG9yaXphdGlvblRlbXBvID0gQXV0aG9yaXphdGlvblRlbXBvLFxuICA+ID0gQ29tcHV0ZTxcbiAgICBUdXBsZTxhdXRob3JpemF0aW9uIGV4dGVuZHMgQXV0aG9yaXphdGlvblRlbXBvPHRydWU+ID8gdHJ1ZSA6IGZhbHNlPlxuICA+XG5cbiAgdHlwZSBFcnJvclR5cGUgPSBFcnJvcnMuR2xvYmFsRXJyb3JUeXBlXG59XG5cbi8qKlxuICogQ29udmVydHMgYW4ge0BsaW5rIG94I0F1dGhvcml6YXRpb25UZW1wby5MaXN0fSB0byBhbiB7QGxpbmsgb3gjQXV0aG9yaXphdGlvblRlbXBvLlR1cGxlTGlzdH0uXG4gKlxuICogQGV4YW1wbGVcbiAqIGBgYHRzIHR3b3NsYXNoXG4gKiBpbXBvcnQgeyBBdXRob3JpemF0aW9uVGVtcG8gfSBmcm9tICdveC90ZW1wbydcbiAqXG4gKiBjb25zdCBhdXRob3JpemF0aW9uXzEgPSBBdXRob3JpemF0aW9uVGVtcG8uZnJvbSh7XG4gKiAgIGFkZHJlc3M6ICcweDEyMzQ1Njc4OTBhYmNkZWYxMjM0NTY3ODkwYWJjZGVmMTIzNDU2NzgnLFxuICogICBjaGFpbklkOiAxLFxuICogICBub25jZTogNjluLFxuICogfSlcbiAqIGNvbnN0IGF1dGhvcml6YXRpb25fMiA9IEF1dGhvcml6YXRpb25UZW1wby5mcm9tKHtcbiAqICAgYWRkcmVzczogJzB4MTIzNDU2Nzg5MGFiY2RlZjEyMzQ1Njc4OTBhYmNkZWYxMjM0NTY3OCcsXG4gKiAgIGNoYWluSWQ6IDMsXG4gKiAgIG5vbmNlOiAyMG4sXG4gKiB9KVxuICpcbiAqIGNvbnN0IHR1cGxlID0gQXV0aG9yaXphdGlvblRlbXBvLnRvVHVwbGVMaXN0KFthdXRob3JpemF0aW9uXzEsIGF1dGhvcml6YXRpb25fMl0pIC8vIFshY29kZSBmb2N1c11cbiAqIC8vIEBsb2c6IFtcbiAqIC8vIEBsb2c6ICAgW1xuICogLy8gQGxvZzogICAgIGFkZHJlc3M6ICcweDEyMzQ1Njc4OTBhYmNkZWYxMjM0NTY3ODkwYWJjZGVmMTIzNDU2NzgnLFxuICogLy8gQGxvZzogICAgIGNoYWluSWQ6IDEsXG4gKiAvLyBAbG9nOiAgICAgbm9uY2U6IDY5bixcbiAqIC8vIEBsb2c6ICAgXSxcbiAqIC8vIEBsb2c6ICAgW1xuICogLy8gQGxvZzogICAgIGFkZHJlc3M6ICcweDEyMzQ1Njc4OTBhYmNkZWYxMjM0NTY3ODkwYWJjZGVmMTIzNDU2NzgnLFxuICogLy8gQGxvZzogICAgIGNoYWluSWQ6IDMsXG4gKiAvLyBAbG9nOiAgICAgbm9uY2U6IDIwbixcbiAqIC8vIEBsb2c6ICAgXSxcbiAqIC8vIEBsb2c6IF1cbiAqIGBgYFxuICpcbiAqIEBwYXJhbSBsaXN0IC0gQW4ge0BsaW5rIG94I0F1dGhvcml6YXRpb25UZW1wby5MaXN0fS5cbiAqIEByZXR1cm5zIEFuIFtFSVAtNzcwMl0oaHR0cHM6Ly9laXBzLmV0aGVyZXVtLm9yZy9FSVBTL2VpcC03NzAyKSBBQSBBdXRob3JpemF0aW9uIHR1cGxlIGxpc3QuXG4gKi9cbmV4cG9ydCBmdW5jdGlvbiB0b1R1cGxlTGlzdDxcbiAgY29uc3QgbGlzdCBleHRlbmRzXG4gICAgfCByZWFkb25seSBBdXRob3JpemF0aW9uVGVtcG88dHJ1ZT5bXVxuICAgIHwgcmVhZG9ubHkgQXV0aG9yaXphdGlvblRlbXBvPGZhbHNlPltdLFxuPihsaXN0PzogbGlzdCB8IHVuZGVmaW5lZCk6IHRvVHVwbGVMaXN0LlJldHVyblR5cGU8bGlzdD4ge1xuICBpZiAoIWxpc3QgfHwgbGlzdC5sZW5ndGggPT09IDApIHJldHVybiBbXVxuXG4gIGNvbnN0IHR1cGxlTGlzdDogTXV0YWJsZTxUdXBsZUxpc3Q+ID0gW11cbiAgZm9yIChjb25zdCBhdXRob3JpemF0aW9uIG9mIGxpc3QpIHR1cGxlTGlzdC5wdXNoKHRvVHVwbGUoYXV0aG9yaXphdGlvbikpXG5cbiAgcmV0dXJuIHR1cGxlTGlzdCBhcyBuZXZlclxufVxuXG5leHBvcnQgZGVjbGFyZSBuYW1lc3BhY2UgdG9UdXBsZUxpc3Qge1xuICB0eXBlIFJldHVyblR5cGU8XG4gICAgbGlzdCBleHRlbmRzXG4gICAgICB8IHJlYWRvbmx5IEF1dGhvcml6YXRpb25UZW1wbzx0cnVlPltdXG4gICAgICB8IHJlYWRvbmx5IEF1dGhvcml6YXRpb25UZW1wbzxmYWxzZT5bXSxcbiAgPiA9IENvbXB1dGU8XG4gICAgVHVwbGVMaXN0PGxpc3QgZXh0ZW5kcyByZWFkb25seSBBdXRob3JpemF0aW9uVGVtcG88dHJ1ZT5bXSA/IHRydWUgOiBmYWxzZT5cbiAgPlxuXG4gIHR5cGUgRXJyb3JUeXBlID0gRXJyb3JzLkdsb2JhbEVycm9yVHlwZVxufVxuIl0sInhfZ29vZ2xlX2lnbm9yZUxpc3QiOlswXX0=

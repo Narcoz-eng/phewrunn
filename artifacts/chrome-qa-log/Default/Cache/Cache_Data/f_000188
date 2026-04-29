@@ -1,0 +1,395 @@
+// Copyright (c) 2018-2023 Coinbase, Inc. <https://www.coinbase.com/>
+import { WalletLinkConnection, } from "/node_modules/@coinbase/wallet-sdk/dist/sign/walletlink/relay/connection/WalletLinkConnection.js?v=730f480c";
+import { LOCAL_STORAGE_ADDRESSES_KEY } from "/node_modules/@coinbase/wallet-sdk/dist/sign/walletlink/relay/constants.js?v=730f480c";
+import { RelayEventManager } from "/node_modules/@coinbase/wallet-sdk/dist/sign/walletlink/relay/RelayEventManager.js?v=730f480c";
+import { WalletLinkSession } from "/node_modules/@coinbase/wallet-sdk/dist/sign/walletlink/relay/type/WalletLinkSession.js?v=730f480c";
+import { isErrorResponse } from "/node_modules/@coinbase/wallet-sdk/dist/sign/walletlink/relay/type/Web3Response.js?v=730f480c";
+import { isMobileWeb } from "/node_modules/@coinbase/wallet-sdk/dist/sign/walletlink/relay/ui/components/util.js?v=730f480c";
+import { WalletLinkRelayUI } from "/node_modules/@coinbase/wallet-sdk/dist/sign/walletlink/relay/ui/WalletLinkRelayUI.js?v=730f480c";
+import { WLMobileRelayUI } from "/node_modules/@coinbase/wallet-sdk/dist/sign/walletlink/relay/ui/WLMobileRelayUI.js?v=730f480c";
+import { standardErrors } from "/node_modules/@coinbase/wallet-sdk/dist/core/error/errors.js?v=730f480c";
+import { ScopedLocalStorage } from "/node_modules/@coinbase/wallet-sdk/dist/core/storage/ScopedLocalStorage.js?v=730f480c";
+import { bigIntStringFromBigInt, hexStringFromBuffer, randomBytesHex } from "/node_modules/@coinbase/wallet-sdk/dist/core/type/util.js?v=730f480c";
+export class WalletLinkRelay {
+    constructor(options) {
+        this.chainCallbackParams = { chainId: '', jsonRpcUrl: '' }; // to implement distinctUntilChanged
+        this.isMobileWeb = isMobileWeb();
+        this.linkedUpdated = (linked) => {
+            this.isLinked = linked;
+            const cachedAddresses = this.storage.getItem(LOCAL_STORAGE_ADDRESSES_KEY);
+            if (linked) {
+                // Only set linked session variable one way
+                this._session.linked = linked;
+            }
+            this.isUnlinkedErrorState = false;
+            if (cachedAddresses) {
+                const addresses = cachedAddresses.split(' ');
+                const wasConnectedViaStandalone = this.storage.getItem('IsStandaloneSigning') === 'true';
+                if (addresses[0] !== '' && !linked && this._session.linked && !wasConnectedViaStandalone) {
+                    this.isUnlinkedErrorState = true;
+                }
+            }
+        };
+        this.metadataUpdated = (key, value) => {
+            this.storage.setItem(key, value);
+        };
+        this.chainUpdated = (chainId, jsonRpcUrl) => {
+            if (this.chainCallbackParams.chainId === chainId &&
+                this.chainCallbackParams.jsonRpcUrl === jsonRpcUrl) {
+                return;
+            }
+            this.chainCallbackParams = {
+                chainId,
+                jsonRpcUrl,
+            };
+            if (this.chainCallback) {
+                this.chainCallback(jsonRpcUrl, Number.parseInt(chainId, 10));
+            }
+        };
+        this.accountUpdated = (selectedAddress) => {
+            if (this.accountsCallback) {
+                this.accountsCallback([selectedAddress]);
+            }
+            if (WalletLinkRelay.accountRequestCallbackIds.size > 0) {
+                // We get the ethereum address from the metadata.  If for whatever
+                // reason we don't get a response via an explicit web3 message
+                // we can still fulfill the eip1102 request.
+                Array.from(WalletLinkRelay.accountRequestCallbackIds.values()).forEach((id) => {
+                    this.invokeCallback(id, {
+                        method: 'requestEthereumAccounts',
+                        result: [selectedAddress],
+                    });
+                });
+                WalletLinkRelay.accountRequestCallbackIds.clear();
+            }
+        };
+        this.resetAndReload = this.resetAndReload.bind(this);
+        this.linkAPIUrl = options.linkAPIUrl;
+        this.storage = options.storage;
+        this.metadata = options.metadata;
+        this.accountsCallback = options.accountsCallback;
+        this.chainCallback = options.chainCallback;
+        const { session, ui, connection } = this.subscribe();
+        this._session = session;
+        this.connection = connection;
+        this.relayEventManager = new RelayEventManager();
+        this.ui = ui;
+        this.ui.attach();
+    }
+    subscribe() {
+        const session = WalletLinkSession.load(this.storage) || WalletLinkSession.create(this.storage);
+        const { linkAPIUrl } = this;
+        const connection = new WalletLinkConnection({
+            session,
+            linkAPIUrl,
+            listener: this,
+        });
+        const ui = this.isMobileWeb ? new WLMobileRelayUI() : new WalletLinkRelayUI();
+        connection.connect();
+        return { session, ui, connection };
+    }
+    resetAndReload() {
+        this.connection
+            .destroy()
+            .then(() => {
+            /**
+             * Only clear storage if the session id we have in memory matches the one on disk
+             * Otherwise, in the case where we have 2 tabs, another tab might have cleared
+             * storage already.  In that case if we clear storage again, the user will be in
+             * a state where the first tab allows the user to connect but the session that
+             * was used isn't persisted.  This leaves the user in a state where they aren't
+             * connected to the mobile app.
+             */
+            const storedSession = WalletLinkSession.load(this.storage);
+            if ((storedSession === null || storedSession === void 0 ? void 0 : storedSession.id) === this._session.id) {
+                ScopedLocalStorage.clearAll();
+            }
+            document.location.reload();
+        })
+            .catch((_) => { });
+    }
+    signEthereumTransaction(params) {
+        return this.sendRequest({
+            method: 'signEthereumTransaction',
+            params: {
+                fromAddress: params.fromAddress,
+                toAddress: params.toAddress,
+                weiValue: bigIntStringFromBigInt(params.weiValue),
+                data: hexStringFromBuffer(params.data, true),
+                nonce: params.nonce,
+                gasPriceInWei: params.gasPriceInWei ? bigIntStringFromBigInt(params.gasPriceInWei) : null,
+                maxFeePerGas: params.gasPriceInWei ? bigIntStringFromBigInt(params.gasPriceInWei) : null,
+                maxPriorityFeePerGas: params.gasPriceInWei
+                    ? bigIntStringFromBigInt(params.gasPriceInWei)
+                    : null,
+                gasLimit: params.gasLimit ? bigIntStringFromBigInt(params.gasLimit) : null,
+                chainId: params.chainId,
+                shouldSubmit: false,
+            },
+        });
+    }
+    signAndSubmitEthereumTransaction(params) {
+        return this.sendRequest({
+            method: 'signEthereumTransaction',
+            params: {
+                fromAddress: params.fromAddress,
+                toAddress: params.toAddress,
+                weiValue: bigIntStringFromBigInt(params.weiValue),
+                data: hexStringFromBuffer(params.data, true),
+                nonce: params.nonce,
+                gasPriceInWei: params.gasPriceInWei ? bigIntStringFromBigInt(params.gasPriceInWei) : null,
+                maxFeePerGas: params.maxFeePerGas ? bigIntStringFromBigInt(params.maxFeePerGas) : null,
+                maxPriorityFeePerGas: params.maxPriorityFeePerGas
+                    ? bigIntStringFromBigInt(params.maxPriorityFeePerGas)
+                    : null,
+                gasLimit: params.gasLimit ? bigIntStringFromBigInt(params.gasLimit) : null,
+                chainId: params.chainId,
+                shouldSubmit: true,
+            },
+        });
+    }
+    submitEthereumTransaction(signedTransaction, chainId) {
+        return this.sendRequest({
+            method: 'submitEthereumTransaction',
+            params: {
+                signedTransaction: hexStringFromBuffer(signedTransaction, true),
+                chainId,
+            },
+        });
+    }
+    getWalletLinkSession() {
+        return this._session;
+    }
+    sendRequest(request) {
+        let hideSnackbarItem = null;
+        const id = randomBytesHex(8);
+        const cancel = (error) => {
+            this.publishWeb3RequestCanceledEvent(id);
+            this.handleErrorResponse(id, request.method, error);
+            hideSnackbarItem === null || hideSnackbarItem === void 0 ? void 0 : hideSnackbarItem();
+        };
+        return new Promise((resolve, reject) => {
+            {
+                hideSnackbarItem = this.ui.showConnecting({
+                    isUnlinkedErrorState: this.isUnlinkedErrorState,
+                    onCancel: cancel,
+                    onResetConnection: this.resetAndReload, // eslint-disable-line @typescript-eslint/unbound-method
+                });
+            }
+            this.relayEventManager.callbacks.set(id, (response) => {
+                hideSnackbarItem === null || hideSnackbarItem === void 0 ? void 0 : hideSnackbarItem();
+                if (isErrorResponse(response)) {
+                    return reject(new Error(response.errorMessage));
+                }
+                resolve(response);
+            });
+            this.publishWeb3RequestEvent(id, request);
+        });
+    }
+    publishWeb3RequestEvent(id, request) {
+        const message = { type: 'WEB3_REQUEST', id, request };
+        this.publishEvent('Web3Request', message, true)
+            .then((_) => { })
+            .catch((err) => {
+            this.handleWeb3ResponseMessage(message.id, {
+                method: request.method,
+                errorMessage: err.message,
+            });
+        });
+        if (this.isMobileWeb) {
+            this.openCoinbaseWalletDeeplink(request.method);
+        }
+    }
+    // copied from MobileRelay
+    openCoinbaseWalletDeeplink(method) {
+        if (!(this.ui instanceof WLMobileRelayUI))
+            return;
+        // For mobile relay requests, open the Coinbase Wallet app
+        switch (method) {
+            case 'requestEthereumAccounts': // requestEthereumAccounts is handled via popup
+            case 'switchEthereumChain': // switchEthereumChain doesn't need to open the app
+                return;
+            default:
+                window.addEventListener('blur', () => {
+                    window.addEventListener('focus', () => {
+                        this.connection.checkUnseenEvents();
+                    }, { once: true });
+                }, { once: true });
+                this.ui.openCoinbaseWalletDeeplink();
+                break;
+        }
+    }
+    publishWeb3RequestCanceledEvent(id) {
+        const message = {
+            type: 'WEB3_REQUEST_CANCELED',
+            id,
+        };
+        this.publishEvent('Web3RequestCanceled', message, false).then();
+    }
+    publishEvent(event, message, callWebhook) {
+        return this.connection.publishEvent(event, message, callWebhook);
+    }
+    handleWeb3ResponseMessage(id, response) {
+        if (response.method === 'requestEthereumAccounts') {
+            WalletLinkRelay.accountRequestCallbackIds.forEach((id) => this.invokeCallback(id, response));
+            WalletLinkRelay.accountRequestCallbackIds.clear();
+            return;
+        }
+        this.invokeCallback(id, response);
+    }
+    handleErrorResponse(id, method, error) {
+        var _a;
+        const errorMessage = (_a = error === null || error === void 0 ? void 0 : error.message) !== null && _a !== void 0 ? _a : 'Unspecified error message.';
+        this.handleWeb3ResponseMessage(id, {
+            method,
+            errorMessage,
+        });
+    }
+    invokeCallback(id, response) {
+        const callback = this.relayEventManager.callbacks.get(id);
+        if (callback) {
+            callback(response);
+            this.relayEventManager.callbacks.delete(id);
+        }
+    }
+    requestEthereumAccounts() {
+        const { appName, appLogoUrl } = this.metadata;
+        const request = {
+            method: 'requestEthereumAccounts',
+            params: {
+                appName,
+                appLogoUrl,
+            },
+        };
+        const hideSnackbarItem = null;
+        const id = randomBytesHex(8);
+        return new Promise((resolve, reject) => {
+            this.relayEventManager.callbacks.set(id, (response) => {
+                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+                // @ts-ignore
+                hideSnackbarItem === null || hideSnackbarItem === void 0 ? void 0 : hideSnackbarItem();
+                if (isErrorResponse(response)) {
+                    return reject(new Error(response.errorMessage));
+                }
+                resolve(response);
+            });
+            WalletLinkRelay.accountRequestCallbackIds.add(id);
+            this.publishWeb3RequestEvent(id, request);
+        });
+    }
+    watchAsset(type, address, symbol, decimals, image, chainId) {
+        const request = {
+            method: 'watchAsset',
+            params: {
+                type,
+                options: {
+                    address,
+                    symbol,
+                    decimals,
+                    image,
+                },
+                chainId,
+            },
+        };
+        let hideSnackbarItem = null;
+        const id = randomBytesHex(8);
+        const cancel = (error) => {
+            this.publishWeb3RequestCanceledEvent(id);
+            this.handleErrorResponse(id, request.method, error);
+            hideSnackbarItem === null || hideSnackbarItem === void 0 ? void 0 : hideSnackbarItem();
+        };
+        {
+            hideSnackbarItem = this.ui.showConnecting({
+                isUnlinkedErrorState: this.isUnlinkedErrorState,
+                onCancel: cancel,
+                onResetConnection: this.resetAndReload, // eslint-disable-line @typescript-eslint/unbound-method
+            });
+        }
+        return new Promise((resolve, reject) => {
+            this.relayEventManager.callbacks.set(id, (response) => {
+                hideSnackbarItem === null || hideSnackbarItem === void 0 ? void 0 : hideSnackbarItem();
+                if (isErrorResponse(response)) {
+                    return reject(new Error(response.errorMessage));
+                }
+                resolve(response);
+            });
+            this.publishWeb3RequestEvent(id, request);
+        });
+    }
+    addEthereumChain(chainId, rpcUrls, iconUrls, blockExplorerUrls, chainName, nativeCurrency) {
+        const request = {
+            method: 'addEthereumChain',
+            params: {
+                chainId,
+                rpcUrls,
+                blockExplorerUrls,
+                chainName,
+                iconUrls,
+                nativeCurrency,
+            },
+        };
+        let hideSnackbarItem = null;
+        const id = randomBytesHex(8);
+        const cancel = (error) => {
+            this.publishWeb3RequestCanceledEvent(id);
+            this.handleErrorResponse(id, request.method, error);
+            hideSnackbarItem === null || hideSnackbarItem === void 0 ? void 0 : hideSnackbarItem();
+        };
+        {
+            hideSnackbarItem = this.ui.showConnecting({
+                isUnlinkedErrorState: this.isUnlinkedErrorState,
+                onCancel: cancel,
+                onResetConnection: this.resetAndReload, // eslint-disable-line @typescript-eslint/unbound-method
+            });
+        }
+        return new Promise((resolve, reject) => {
+            this.relayEventManager.callbacks.set(id, (response) => {
+                hideSnackbarItem === null || hideSnackbarItem === void 0 ? void 0 : hideSnackbarItem();
+                if (isErrorResponse(response)) {
+                    return reject(new Error(response.errorMessage));
+                }
+                resolve(response);
+            });
+            this.publishWeb3RequestEvent(id, request);
+        });
+    }
+    switchEthereumChain(chainId, address) {
+        const request = {
+            method: 'switchEthereumChain',
+            params: Object.assign({ chainId }, { address }),
+        };
+        let hideSnackbarItem = null;
+        const id = randomBytesHex(8);
+        const cancel = (error) => {
+            this.publishWeb3RequestCanceledEvent(id);
+            this.handleErrorResponse(id, request.method, error);
+            hideSnackbarItem === null || hideSnackbarItem === void 0 ? void 0 : hideSnackbarItem();
+        };
+        {
+            hideSnackbarItem = this.ui.showConnecting({
+                isUnlinkedErrorState: this.isUnlinkedErrorState,
+                onCancel: cancel,
+                onResetConnection: this.resetAndReload, // eslint-disable-line @typescript-eslint/unbound-method
+            });
+        }
+        return new Promise((resolve, reject) => {
+            this.relayEventManager.callbacks.set(id, (response) => {
+                hideSnackbarItem === null || hideSnackbarItem === void 0 ? void 0 : hideSnackbarItem();
+                if (isErrorResponse(response) && response.errorCode) {
+                    return reject(standardErrors.provider.custom({
+                        code: response.errorCode,
+                        message: `Unrecognized chain ID. Try adding the chain using addEthereumChain first.`,
+                    }));
+                }
+                else if (isErrorResponse(response)) {
+                    return reject(new Error(response.errorMessage));
+                }
+                resolve(response);
+            });
+            this.publishWeb3RequestEvent(id, request);
+        });
+    }
+}
+WalletLinkRelay.accountRequestCallbackIds = new Set();
+                                           
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiV2FsbGV0TGlua1JlbGF5LmpzIiwic291cmNlUm9vdCI6IiIsInNvdXJjZXMiOlsiLi4vLi4vLi4vLi4vc3JjL3NpZ24vd2FsbGV0bGluay9yZWxheS9XYWxsZXRMaW5rUmVsYXkudHMiXSwibmFtZXMiOltdLCJtYXBwaW5ncyI6IkFBQUEscUVBQXFFO0FBRXJFLE9BQU8sRUFDTCxvQkFBb0IsR0FFckIsTUFBTSxzQ0FBc0MsQ0FBQztBQUM5QyxPQUFPLEVBQUUsMkJBQTJCLEVBQUUsTUFBTSxnQkFBZ0IsQ0FBQztBQUM3RCxPQUFPLEVBQUUsaUJBQWlCLEVBQUUsTUFBTSx3QkFBd0IsQ0FBQztBQUczRCxPQUFPLEVBQUUsaUJBQWlCLEVBQUUsTUFBTSw2QkFBNkIsQ0FBQztBQUVoRSxPQUFPLEVBQUUsZUFBZSxFQUFnQixNQUFNLHdCQUF3QixDQUFDO0FBQ3ZFLE9BQU8sRUFBRSxXQUFXLEVBQUUsTUFBTSx5QkFBeUIsQ0FBQztBQUV0RCxPQUFPLEVBQUUsaUJBQWlCLEVBQUUsTUFBTSwyQkFBMkIsQ0FBQztBQUM5RCxPQUFPLEVBQUUsZUFBZSxFQUFFLE1BQU0seUJBQXlCLENBQUM7QUFDMUQsT0FBTyxFQUFFLGNBQWMsRUFBRSxNQUFNLHVCQUF1QixDQUFDO0FBRXZELE9BQU8sRUFBRSxrQkFBa0IsRUFBRSxNQUFNLHFDQUFxQyxDQUFDO0FBRXpFLE9BQU8sRUFBRSxzQkFBc0IsRUFBRSxtQkFBbUIsRUFBRSxjQUFjLEVBQUUsTUFBTSxvQkFBb0IsQ0FBQztBQVVqRyxNQUFNLE9BQU8sZUFBZTtJQW1CMUIsWUFBWSxPQUF5QztRQVY3Qyx3QkFBbUIsR0FBRyxFQUFFLE9BQU8sRUFBRSxFQUFFLEVBQUUsVUFBVSxFQUFFLEVBQUUsRUFBRSxDQUFDLENBQUMsb0NBQW9DO1FBSTNGLGdCQUFXLEdBQUcsV0FBVyxFQUFFLENBQUM7UUEyQ3BDLGtCQUFhLEdBQUcsQ0FBQyxNQUFlLEVBQUUsRUFBRTtZQUNsQyxJQUFJLENBQUMsUUFBUSxHQUFHLE1BQU0sQ0FBQztZ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

@@ -1,0 +1,1266 @@
+import { createHotContext as __vite__createHotContext } from "/@vite/client";import.meta.hot = __vite__createHotContext("/src/App.tsx");import.meta.env = {"BASE_URL": "/", "DEV": true, "MODE": "development", "PROD": false, "SSR": false, "VITE_BACKEND_URL": "http://localhost:3000", "VITE_PRIVY_APP_ID": "cmkij22oz00xwju0cu1m876bz"};import * as RefreshRuntime from "/@react-refresh";
+const inWebWorker = typeof WorkerGlobalScope !== 'undefined' && self instanceof WorkerGlobalScope;
+
+let prevRefreshReg;
+let prevRefreshSig;
+
+if (import.meta.hot && !inWebWorker) {
+  if (!window.$RefreshReg$) {
+    throw new Error(
+      "@vitejs/plugin-react-swc can't detect preamble. Something is wrong."
+    );
+  }
+
+  prevRefreshReg = window.$RefreshReg$;
+  prevRefreshSig = window.$RefreshSig$;
+  window.$RefreshReg$ = RefreshRuntime.getRefreshReg("C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx");
+  window.$RefreshSig$ = RefreshRuntime.createSignatureFunctionForTransform;
+}
+
+function _define_property(obj, key, value) {
+    if (key in obj) {
+        Object.defineProperty(obj, key, {
+            value: value,
+            enumerable: true,
+            configurable: true,
+            writable: true
+        });
+    } else {
+        obj[key] = value;
+    }
+    return obj;
+}
+import { jsxDEV as _jsxDEV, Fragment as _Fragment } from "/@id/__x00__vibecode-jsx-source/jsx-dev-runtime";
+var _s = $RefreshSig$(), _s1 = $RefreshSig$(), _s2 = $RefreshSig$(), _s3 = $RefreshSig$(), _s4 = $RefreshSig$();
+import __vite__cjsImport3_react from "/node_modules/.vite/deps/react.js?v=730f480c"; const Component = __vite__cjsImport3_react["Component"]; const lazy = __vite__cjsImport3_react["lazy"]; const Suspense = __vite__cjsImport3_react["Suspense"]; const useEffect = __vite__cjsImport3_react["useEffect"];
+import { Toaster } from "/src/components/ui/toaster.tsx";
+import { Toaster as Sonner } from "/src/components/ui/sonner.tsx";
+import { TooltipProvider } from "/src/components/ui/tooltip.tsx";
+import { QueryClient, QueryClientProvider, useQueryClient } from "/node_modules/.vite/deps/@tanstack_react-query.js?v=730f480c";
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams } from "/node_modules/.vite/deps/react-router-dom.js?v=730f480c";
+import { AnimatePresence, motion } from "/node_modules/.vite/deps/framer-motion.js?v=730f480c";
+import { ThemeProvider } from "/src/components/ThemeProvider.tsx";
+import { AuthProvider, useAuth } from "/src/lib/auth-client.ts";
+import { ProtectedRoute } from "/src/components/ProtectedRoute.tsx?t=1777464863378";
+import { GuestRoute } from "/src/components/GuestRoute.tsx";
+import { Skeleton } from "/src/components/ui/skeleton.tsx";
+import { AuthInitializer } from "/src/components/AuthInitializer.tsx";
+import { V2AppShell } from "/src/components/layout/V2AppShell.tsx?t=1777464863378";
+import { PrivyWalletProvider } from "/src/components/PrivyWalletProvider.tsx";
+import { isPossiblePublicProfileSegment } from "/src/lib/profile-path.ts";
+import { importWithRecovery } from "/src/lib/lazy-with-recovery.ts";
+import { subscribeToAppRealtime } from "/src/lib/realtime/app-realtime-client.ts";
+const lazyPage = (loader, scope)=>/*#__PURE__*/ lazy(()=>importWithRecovery(loader, scope));
+// Lazy load page components
+const Feed = lazyPage(_c = ()=>import("/src/pages/Feed.tsx?t=1777464859420"), "route:feed");
+_c1 = Feed;
+const Profile = lazyPage(_c2 = ()=>import("/src/pages/Profile.tsx"), "route:profile");
+_c3 = Profile;
+const UserProfile = lazyPage(()=>import("/src/pages/UserProfile.tsx"), "route:user-profile");
+_c4 = UserProfile;
+const Notifications = lazyPage(_c5 = ()=>import("/src/pages/Notifications.tsx"), "route:notifications");
+_c6 = Notifications;
+const Leaderboard = lazyPage(_c7 = ()=>import("/src/pages/Leaderboard.tsx"), "route:leaderboard");
+_c8 = Leaderboard;
+const Admin = lazyPage(_c9 = ()=>import("/src/pages/Admin.tsx"), "route:admin");
+_c10 = Admin;
+const HandleOnboarding = lazyPage(_c11 = ()=>import("/src/pages/HandleOnboarding.tsx"), "route:welcome");
+_c12 = HandleOnboarding;
+const Login = lazyPage(_c13 = ()=>import("/src/pages/Login.tsx"), "route:login");
+_c14 = Login;
+const PostDetail = lazyPage(_c15 = ()=>import("/src/pages/PostDetail.tsx"), "route:post-detail");
+_c16 = PostDetail;
+const TokenPage = lazyPage(_c17 = ()=>import("/src/pages/TokenPage.tsx"), "route:token-page");
+_c18 = TokenPage;
+const Terminal = lazyPage(_c19 = ()=>import("/src/pages/Terminal.tsx"), "route:terminal");
+_c20 = Terminal;
+const BundleChecker = lazyPage(_c21 = ()=>import("/src/pages/BundleChecker.tsx"), "route:bundle-checker");
+_c22 = BundleChecker;
+const CommunitiesIndexPage = lazyPage(_c23 = ()=>import("/src/pages/CommunitiesIndexPage.tsx"), "route:communities-index");
+_c24 = CommunitiesIndexPage;
+const CommunityPage = lazyPage(_c25 = ()=>import("/src/pages/CommunityPage.tsx"), "route:community-page");
+_c26 = CommunityPage;
+const RaidsIndexPage = lazyPage(_c27 = ()=>import("/src/pages/RaidsIndexPage.tsx"), "route:raids-index");
+_c28 = RaidsIndexPage;
+const RaidPage = lazyPage(_c29 = ()=>import("/src/pages/RaidPage.tsx"), "route:raid-page");
+_c30 = RaidPage;
+const Terms = lazyPage(_c31 = ()=>import("/src/pages/Terms.tsx"), "route:terms");
+_c32 = Terms;
+const Privacy = lazyPage(_c33 = ()=>import("/src/pages/Privacy.tsx"), "route:privacy");
+_c34 = Privacy;
+const Docs = lazyPage(_c35 = ()=>import("/src/pages/Docs.tsx"), "route:docs");
+_c36 = Docs;
+const NotFound = lazyPage(()=>import("/src/pages/NotFound.tsx"), "route:not-found");
+_c37 = NotFound;
+const AccessCodeEntry = lazyPage(_c38 = ()=>import("/src/pages/AccessCodeEntry.tsx"), "route:access-code");
+_c39 = AccessCodeEntry;
+const FeedCardLab = import.meta.env.DEV ? lazyPage(()=>import("/src/pages/dev/FeedCardLab.tsx"), "route:dev-feed-card-lab") : null;
+// Loading fallback component
+function PageSkeleton() {
+    return /*#__PURE__*/ _jsxDEV("div", {
+        className: "min-h-screen bg-background",
+        children: /*#__PURE__*/ _jsxDEV("div", {
+            className: "app-page-shell space-y-4",
+            children: [
+                /*#__PURE__*/ _jsxDEV(Skeleton, {
+                    className: "h-16 w-full rounded-[28px]"
+                }, void 0, false, {
+                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                    lineNumber: 64,
+                    columnNumber: 9
+                }, this),
+                /*#__PURE__*/ _jsxDEV(Skeleton, {
+                    className: "h-64 w-full rounded-[28px]"
+                }, void 0, false, {
+                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                    lineNumber: 65,
+                    columnNumber: 9
+                }, this),
+                /*#__PURE__*/ _jsxDEV(Skeleton, {
+                    className: "h-32 w-full rounded-[28px]"
+                }, void 0, false, {
+                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                    lineNumber: 66,
+                    columnNumber: 9
+                }, this),
+                /*#__PURE__*/ _jsxDEV(Skeleton, {
+                    className: "h-32 w-full rounded-[28px]"
+                }, void 0, false, {
+                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                    lineNumber: 67,
+                    columnNumber: 9
+                }, this)
+            ]
+        }, void 0, true, {
+            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+            lineNumber: 63,
+            columnNumber: 7
+        }, this)
+    }, void 0, false, {
+        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+        lineNumber: 62,
+        columnNumber: 5
+    }, this);
+}
+_c40 = PageSkeleton;
+function PublicHandleProfileRoute() {
+    _s();
+    const { userId } = useParams();
+    if (!isPossiblePublicProfileSegment(userId)) {
+        return /*#__PURE__*/ _jsxDEV(NotFound, {}, void 0, false, {
+            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+            lineNumber: 77,
+            columnNumber: 12
+        }, this);
+    }
+    return /*#__PURE__*/ _jsxDEV(UserProfile, {}, void 0, false, {
+        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+        lineNumber: 80,
+        columnNumber: 10
+    }, this);
+}
+_s(PublicHandleProfileRoute, "r0rqsLfWJTH7w5cXk9h+Af0W8oI=", false, function() {
+    return [
+        useParams
+    ];
+});
+_c41 = PublicHandleProfileRoute;
+function ProductContentSkeleton() {
+    return /*#__PURE__*/ _jsxDEV("div", {
+        className: "grid gap-3 lg:grid-cols-[minmax(0,1fr)_320px]",
+        children: [
+            /*#__PURE__*/ _jsxDEV("div", {
+                className: "space-y-3",
+                children: [
+                    /*#__PURE__*/ _jsxDEV(Skeleton, {
+                        className: "h-20 w-full rounded-[18px] bg-white/[0.05]"
+                    }, void 0, false, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                        lineNumber: 87,
+                        columnNumber: 9
+                    }, this),
+                    /*#__PURE__*/ _jsxDEV(Skeleton, {
+                        className: "h-32 w-full rounded-[18px] bg-white/[0.05]"
+                    }, void 0, false, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                        lineNumber: 88,
+                        columnNumber: 9
+                    }, this),
+                    /*#__PURE__*/ _jsxDEV(Skeleton, {
+                        className: "h-56 w-full rounded-[18px] bg-white/[0.05]"
+                    }, void 0, false, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                        lineNumber: 89,
+                        columnNumber: 9
+                    }, this)
+                ]
+            }, void 0, true, {
+                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                lineNumber: 86,
+                columnNumber: 7
+            }, this),
+            /*#__PURE__*/ _jsxDEV("div", {
+                className: "hidden space-y-3 lg:block",
+                children: [
+                    /*#__PURE__*/ _jsxDEV(Skeleton, {
+                        className: "h-28 w-full rounded-[18px] bg-white/[0.05]"
+                    }, void 0, false, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                        lineNumber: 92,
+                        columnNumber: 9
+                    }, this),
+                    /*#__PURE__*/ _jsxDEV(Skeleton, {
+                        className: "h-44 w-full rounded-[18px] bg-white/[0.05]"
+                    }, void 0, false, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                        lineNumber: 93,
+                        columnNumber: 9
+                    }, this)
+                ]
+            }, void 0, true, {
+                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                lineNumber: 91,
+                columnNumber: 7
+            }, this)
+        ]
+    }, void 0, true, {
+        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+        lineNumber: 85,
+        columnNumber: 5
+    }, this);
+}
+_c42 = ProductContentSkeleton;
+class AppRouteErrorBoundary extends Component {
+    static getDerivedStateFromError(error) {
+        return {
+            hasError: true,
+            message: error instanceof Error ? error.message : "Route failed to render."
+        };
+    }
+    componentDidCatch(error, info) {
+        console.error("[AppRouteErrorBoundary] route render failed", error, info);
+    }
+    render() {
+        if (!this.state.hasError) {
+            return this.props.children;
+        }
+        return /*#__PURE__*/ _jsxDEV("div", {
+            className: "flex min-h-screen items-center justify-center bg-background px-6 text-white",
+            children: /*#__PURE__*/ _jsxDEV("div", {
+                className: "max-w-md rounded-[24px] border border-white/10 bg-white/[0.04] p-6 text-center shadow-2xl",
+                children: [
+                    /*#__PURE__*/ _jsxDEV("div", {
+                        className: "text-sm font-semibold uppercase tracking-[0.18em] text-lime-300/80",
+                        children: "App runtime recovered"
+                    }, void 0, false, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                        lineNumber: 124,
+                        columnNumber: 11
+                    }, this),
+                    /*#__PURE__*/ _jsxDEV("h1", {
+                        className: "mt-3 text-2xl font-bold",
+                        children: "This route failed to load."
+                    }, void 0, false, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                        lineNumber: 127,
+                        columnNumber: 11
+                    }, this),
+                    /*#__PURE__*/ _jsxDEV("p", {
+                        className: "mt-2 text-sm leading-6 text-white/60",
+                        children: this.state.message ?? "Reload the app to request a fresh route chunk."
+                    }, void 0, false, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                        lineNumber: 128,
+                        columnNumber: 11
+                    }, this),
+                    /*#__PURE__*/ _jsxDEV("button", {
+                        type: "button",
+                        className: "mt-5 rounded-[14px] border border-lime-300/30 bg-lime-300/15 px-4 py-2 text-sm font-semibold text-lime-100",
+                        onClick: ()=>window.location.reload(),
+                        children: "Reload"
+                    }, void 0, false, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                        lineNumber: 131,
+                        columnNumber: 11
+                    }, this)
+                ]
+            }, void 0, true, {
+                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                lineNumber: 123,
+                columnNumber: 9
+            }, this)
+        }, void 0, false, {
+            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+            lineNumber: 122,
+            columnNumber: 7
+        }, this);
+    }
+    constructor(...args){
+        super(...args), _define_property(this, "state", {
+            hasError: false,
+            message: null
+        });
+    }
+}
+const WithSolanaRuntime = /*#__PURE__*/ lazy(_c43 = ()=>import("/src/components/SolanaRouteProvider.tsx").then((mod)=>({
+            default: mod.default
+        })));
+_c44 = WithSolanaRuntime;
+function WithProductShell({ children }) {
+    return /*#__PURE__*/ _jsxDEV(V2AppShell, {
+        children: /*#__PURE__*/ _jsxDEV(Suspense, {
+            fallback: /*#__PURE__*/ _jsxDEV(ProductContentSkeleton, {}, void 0, false, {
+                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                lineNumber: 153,
+                columnNumber: 27
+            }, void 0),
+            children: children
+        }, void 0, false, {
+            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+            lineNumber: 153,
+            columnNumber: 7
+        }, this)
+    }, void 0, false, {
+        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+        lineNumber: 152,
+        columnNumber: 5
+    }, this);
+}
+_c45 = WithProductShell;
+function hasCompletedHandle(username) {
+    return typeof username === "string" && username.trim().length > 0;
+}
+function MissingHandleGate({ children }) {
+    _s1();
+    const location = useLocation();
+    const { user, isAuthenticated, isReady } = useAuth();
+    if (!isReady || !isAuthenticated || !user || hasCompletedHandle(user.username)) {
+        return /*#__PURE__*/ _jsxDEV(_Fragment, {
+            children: children
+        }, void 0, false);
+    }
+    if (location.pathname === "/welcome") {
+        return /*#__PURE__*/ _jsxDEV(_Fragment, {
+            children: children
+        }, void 0, false);
+    }
+    return /*#__PURE__*/ _jsxDEV(Navigate, {
+        to: "/welcome",
+        replace: true,
+        state: {
+            from: `${location.pathname}${location.search}${location.hash}`
+        }
+    }, void 0, false, {
+        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+        lineNumber: 175,
+        columnNumber: 5
+    }, this);
+}
+_s1(MissingHandleGate, "j373Y693XenjlEhiK37g4O50yVQ=", false, function() {
+    return [
+        useLocation,
+        useAuth
+    ];
+});
+_c46 = MissingHandleGate;
+function AuthAwareNotFoundRoute() {
+    _s2();
+    const location = useLocation();
+    const { isAuthenticated, hasLiveSession, isReady } = useAuth();
+    if (!isReady) {
+        return /*#__PURE__*/ _jsxDEV(PageSkeleton, {}, void 0, false, {
+            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+            lineNumber: 188,
+            columnNumber: 12
+        }, this);
+    }
+    if (!isAuthenticated || !hasLiveSession) {
+        return /*#__PURE__*/ _jsxDEV(Navigate, {
+            to: "/login",
+            replace: true,
+            state: {
+                from: `${location.pathname}${location.search}${location.hash}`
+            }
+        }, void 0, false, {
+            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+            lineNumber: 193,
+            columnNumber: 7
+        }, this);
+    }
+    return /*#__PURE__*/ _jsxDEV(NotFound, {}, void 0, false, {
+        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+        lineNumber: 201,
+        columnNumber: 10
+    }, this);
+}
+_s2(AuthAwareNotFoundRoute, "ODhOoOIocqhHsmH9k/hrTuj5WoU=", false, function() {
+    return [
+        useLocation,
+        useAuth
+    ];
+});
+_c47 = AuthAwareNotFoundRoute;
+const queryClient = new QueryClient({
+    defaultOptions: {
+        queries: {
+            refetchOnWindowFocus: false,
+            refetchOnReconnect: true,
+            retry: (failureCount, error)=>{
+                const maybeStatus = typeof error === "object" && error !== null && "status" in error ? Number(error.status) : null;
+                if (maybeStatus === 401 || maybeStatus === 403 || maybeStatus === 404) {
+                    return false;
+                }
+                if (maybeStatus === 429) {
+                    return failureCount < 1;
+                }
+                return failureCount < 2;
+            },
+            retryDelay: (attempt)=>Math.min(1000 * 2 ** attempt, 5000),
+            staleTime: 15000,
+            gcTime: 5 * 60 * 1000
+        }
+    }
+});
+const pageTransition = {
+    initial: {
+        opacity: 0,
+        y: 8
+    },
+    animate: {
+        opacity: 1,
+        y: 0
+    },
+    exit: {
+        opacity: 0,
+        y: -6
+    },
+    transition: {
+        duration: 0.22,
+        ease: [
+            0.22,
+            1,
+            0.36,
+            1
+        ]
+    }
+};
+function AnimatedRoutes() {
+    _s3();
+    const location = useLocation();
+    return /*#__PURE__*/ _jsxDEV(AnimatePresence, {
+        mode: "wait",
+        initial: false,
+        children: /*#__PURE__*/ _jsxDEV(motion.div, {
+            ...pageTransition,
+            style: {
+                minHeight: "100vh"
+            },
+            children: /*#__PURE__*/ _jsxDEV(Routes, {
+                location: location,
+                children: [
+                    /*#__PURE__*/ _jsxDEV(Route, {
+                        path: "/",
+                        element: /*#__PURE__*/ _jsxDEV(ProtectedRoute, {
+                            children: /*#__PURE__*/ _jsxDEV(WithProductShell, {
+                                children: /*#__PURE__*/ _jsxDEV(WithSolanaRuntime, {
+                                    children: /*#__PURE__*/ _jsxDEV(Feed, {}, void 0, false, {
+                                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                        lineNumber: 253,
+                                        columnNumber: 21
+                                    }, void 0)
+                                }, void 0, false, {
+                                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                    lineNumber: 252,
+                                    columnNumber: 19
+                                }, void 0)
+                            }, void 0, false, {
+                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                lineNumber: 251,
+                                columnNumber: 17
+                            }, void 0)
+                        }, void 0, false, {
+                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                            lineNumber: 250,
+                            columnNumber: 15
+                        }, void 0)
+                    }, void 0, false, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                        lineNumber: 247,
+                        columnNumber: 11
+                    }, this),
+                    /*#__PURE__*/ _jsxDEV(Route, {
+                        path: "/profile",
+                        element: /*#__PURE__*/ _jsxDEV(ProtectedRoute, {
+                            children: /*#__PURE__*/ _jsxDEV(WithProductShell, {
+                                children: /*#__PURE__*/ _jsxDEV(WithSolanaRuntime, {
+                                    children: /*#__PURE__*/ _jsxDEV(Profile, {}, void 0, false, {
+                                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                        lineNumber: 265,
+                                        columnNumber: 21
+                                    }, void 0)
+                                }, void 0, false, {
+                                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                    lineNumber: 264,
+                                    columnNumber: 19
+                                }, void 0)
+                            }, void 0, false, {
+                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                lineNumber: 263,
+                                columnNumber: 17
+                            }, void 0)
+                        }, void 0, false, {
+                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                            lineNumber: 262,
+                            columnNumber: 15
+                        }, void 0)
+                    }, void 0, false, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                        lineNumber: 259,
+                        columnNumber: 11
+                    }, this),
+                    /*#__PURE__*/ _jsxDEV(Route, {
+                        path: "/welcome",
+                        element: /*#__PURE__*/ _jsxDEV(ProtectedRoute, {
+                            allowMissingUsername: true,
+                            children: /*#__PURE__*/ _jsxDEV(HandleOnboarding, {}, void 0, false, {
+                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                lineNumber: 275,
+                                columnNumber: 17
+                            }, void 0)
+                        }, void 0, false, {
+                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                            lineNumber: 274,
+                            columnNumber: 15
+                        }, void 0)
+                    }, void 0, false, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                        lineNumber: 271,
+                        columnNumber: 11
+                    }, this),
+                    /*#__PURE__*/ _jsxDEV(Route, {
+                        path: "/profile/:userId",
+                        element: /*#__PURE__*/ _jsxDEV(ProtectedRoute, {
+                            children: /*#__PURE__*/ _jsxDEV(WithProductShell, {
+                                children: /*#__PURE__*/ _jsxDEV(WithSolanaRuntime, {
+                                    children: /*#__PURE__*/ _jsxDEV(UserProfile, {}, void 0, false, {
+                                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                        lineNumber: 285,
+                                        columnNumber: 21
+                                    }, void 0)
+                                }, void 0, false, {
+                                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                    lineNumber: 284,
+                                    columnNumber: 19
+                                }, void 0)
+                            }, void 0, false, {
+                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                lineNumber: 283,
+                                columnNumber: 17
+                            }, void 0)
+                        }, void 0, false, {
+                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                            lineNumber: 282,
+                            columnNumber: 15
+                        }, void 0)
+                    }, void 0, false, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                        lineNumber: 279,
+                        columnNumber: 11
+                    }, this),
+                    /*#__PURE__*/ _jsxDEV(Route, {
+                        path: "/admin",
+                        element: /*#__PURE__*/ _jsxDEV(ProtectedRoute, {
+                            children: /*#__PURE__*/ _jsxDEV(Admin, {}, void 0, false, {
+                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                lineNumber: 295,
+                                columnNumber: 17
+                            }, void 0)
+                        }, void 0, false, {
+                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                            lineNumber: 294,
+                            columnNumber: 15
+                        }, void 0)
+                    }, void 0, false, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                        lineNumber: 291,
+                        columnNumber: 11
+                    }, this),
+                    /*#__PURE__*/ _jsxDEV(Route, {
+                        path: "/notifications",
+                        element: /*#__PURE__*/ _jsxDEV(ProtectedRoute, {
+                            children: /*#__PURE__*/ _jsxDEV(WithProductShell, {
+                                children: /*#__PURE__*/ _jsxDEV(Notifications, {}, void 0, false, {
+                                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                    lineNumber: 304,
+                                    columnNumber: 19
+                                }, void 0)
+                            }, void 0, false, {
+                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                lineNumber: 303,
+                                columnNumber: 17
+                            }, void 0)
+                        }, void 0, false, {
+                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                            lineNumber: 302,
+                            columnNumber: 15
+                        }, void 0)
+                    }, void 0, false, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                        lineNumber: 299,
+                        columnNumber: 11
+                    }, this),
+                    /*#__PURE__*/ _jsxDEV(Route, {
+                        path: "/leaderboard",
+                        element: /*#__PURE__*/ _jsxDEV(ProtectedRoute, {
+                            children: /*#__PURE__*/ _jsxDEV(WithProductShell, {
+                                children: /*#__PURE__*/ _jsxDEV(Leaderboard, {}, void 0, false, {
+                                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                    lineNumber: 314,
+                                    columnNumber: 19
+                                }, void 0)
+                            }, void 0, false, {
+                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                lineNumber: 313,
+                                columnNumber: 17
+                            }, void 0)
+                        }, void 0, false, {
+                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                            lineNumber: 312,
+                            columnNumber: 15
+                        }, void 0)
+                    }, void 0, false, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                        lineNumber: 309,
+                        columnNumber: 11
+                    }, this),
+                    /*#__PURE__*/ _jsxDEV(Route, {
+                        path: "/post/:postId",
+                        element: /*#__PURE__*/ _jsxDEV(ProtectedRoute, {
+                            children: /*#__PURE__*/ _jsxDEV(WithProductShell, {
+                                children: /*#__PURE__*/ _jsxDEV(WithSolanaRuntime, {
+                                    children: /*#__PURE__*/ _jsxDEV(PostDetail, {}, void 0, false, {
+                                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                        lineNumber: 325,
+                                        columnNumber: 21
+                                    }, void 0)
+                                }, void 0, false, {
+                                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                    lineNumber: 324,
+                                    columnNumber: 19
+                                }, void 0)
+                            }, void 0, false, {
+                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                lineNumber: 323,
+                                columnNumber: 17
+                            }, void 0)
+                        }, void 0, false, {
+                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                            lineNumber: 322,
+                            columnNumber: 15
+                        }, void 0)
+                    }, void 0, false, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                        lineNumber: 319,
+                        columnNumber: 11
+                    }, this),
+                    /*#__PURE__*/ _jsxDEV(Route, {
+                        path: "/token/:tokenAddress",
+                        element: /*#__PURE__*/ _jsxDEV(ProtectedRoute, {
+                            children: /*#__PURE__*/ _jsxDEV(WithProductShell, {
+                                children: /*#__PURE__*/ _jsxDEV(WithSolanaRuntime, {
+                                    children: /*#__PURE__*/ _jsxDEV(TokenPage, {}, void 0, false, {
+                                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                        lineNumber: 337,
+                                        columnNumber: 21
+                                    }, void 0)
+                                }, void 0, false, {
+                                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                    lineNumber: 336,
+                                    columnNumber: 19
+                                }, void 0)
+                            }, void 0, false, {
+                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                lineNumber: 335,
+                                columnNumber: 17
+                            }, void 0)
+                        }, void 0, false, {
+                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                            lineNumber: 334,
+                            columnNumber: 15
+                        }, void 0)
+                    }, void 0, false, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                        lineNumber: 331,
+                        columnNumber: 11
+                    }, this),
+                    /*#__PURE__*/ _jsxDEV(Route, {
+                        path: "/terminal",
+                        element: /*#__PURE__*/ _jsxDEV(ProtectedRoute, {
+                            children: /*#__PURE__*/ _jsxDEV(WithProductShell, {
+                                children: /*#__PURE__*/ _jsxDEV(WithSolanaRuntime, {
+                                    children: /*#__PURE__*/ _jsxDEV(Terminal, {}, void 0, false, {
+                                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                        lineNumber: 349,
+                                        columnNumber: 21
+                                    }, void 0)
+                                }, void 0, false, {
+                                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                    lineNumber: 348,
+                                    columnNumber: 19
+                                }, void 0)
+                            }, void 0, false, {
+                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                lineNumber: 347,
+                                columnNumber: 17
+                            }, void 0)
+                        }, void 0, false, {
+                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                            lineNumber: 346,
+                            columnNumber: 15
+                        }, void 0)
+                    }, void 0, false, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                        lineNumber: 343,
+                        columnNumber: 11
+                    }, this),
+                    /*#__PURE__*/ _jsxDEV(Route, {
+                        path: "/bundle-checker",
+                        element: /*#__PURE__*/ _jsxDEV(ProtectedRoute, {
+                            children: /*#__PURE__*/ _jsxDEV(WithProductShell, {
+                                children: /*#__PURE__*/ _jsxDEV(BundleChecker, {}, void 0, false, {
+                                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                    lineNumber: 360,
+                                    columnNumber: 19
+                                }, void 0)
+                            }, void 0, false, {
+                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                lineNumber: 359,
+                                columnNumber: 17
+                            }, void 0)
+                        }, void 0, false, {
+                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                            lineNumber: 358,
+                            columnNumber: 15
+                        }, void 0)
+                    }, void 0, false, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                        lineNumber: 355,
+                        columnNumber: 11
+                    }, this),
+                    /*#__PURE__*/ _jsxDEV(Route, {
+                        path: "/communities",
+                        element: /*#__PURE__*/ _jsxDEV(ProtectedRoute, {
+                            children: /*#__PURE__*/ _jsxDEV(WithProductShell, {
+                                children: /*#__PURE__*/ _jsxDEV(CommunitiesIndexPage, {}, void 0, false, {
+                                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                    lineNumber: 370,
+                                    columnNumber: 19
+                                }, void 0)
+                            }, void 0, false, {
+                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                lineNumber: 369,
+                                columnNumber: 17
+                            }, void 0)
+                        }, void 0, false, {
+                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                            lineNumber: 368,
+                            columnNumber: 15
+                        }, void 0)
+                    }, void 0, false, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                        lineNumber: 365,
+                        columnNumber: 11
+                    }, this),
+                    /*#__PURE__*/ _jsxDEV(Route, {
+                        path: "/communities/:tokenAddress",
+                        element: /*#__PURE__*/ _jsxDEV(ProtectedRoute, {
+                            children: /*#__PURE__*/ _jsxDEV(WithProductShell, {
+                                children: /*#__PURE__*/ _jsxDEV(CommunityPage, {}, void 0, false, {
+                                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                    lineNumber: 380,
+                                    columnNumber: 19
+                                }, void 0)
+                            }, void 0, false, {
+                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                lineNumber: 379,
+                                columnNumber: 17
+                            }, void 0)
+                        }, void 0, false, {
+                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                            lineNumber: 378,
+                            columnNumber: 15
+                        }, void 0)
+                    }, void 0, false, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                        lineNumber: 375,
+                        columnNumber: 11
+                    }, this),
+                    /*#__PURE__*/ _jsxDEV(Route, {
+                        path: "/raids",
+                        element: /*#__PURE__*/ _jsxDEV(ProtectedRoute, {
+                            children: /*#__PURE__*/ _jsxDEV(WithProductShell, {
+                                children: /*#__PURE__*/ _jsxDEV(RaidsIndexPage, {}, void 0, false, {
+                                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                    lineNumber: 390,
+                                    columnNumber: 19
+                                }, void 0)
+                            }, void 0, false, {
+                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                lineNumber: 389,
+                                columnNumber: 17
+                            }, void 0)
+                        }, void 0, false, {
+                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                            lineNumber: 388,
+                            columnNumber: 15
+                        }, void 0)
+                    }, void 0, false, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                        lineNumber: 385,
+                        columnNumber: 11
+                    }, this),
+                    /*#__PURE__*/ _jsxDEV(Route, {
+                        path: "/raids/:tokenAddress/:raidId",
+                        element: /*#__PURE__*/ _jsxDEV(ProtectedRoute, {
+                            children: /*#__PURE__*/ _jsxDEV(WithProductShell, {
+                                children: /*#__PURE__*/ _jsxDEV(RaidPage, {}, void 0, false, {
+                                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                    lineNumber: 400,
+                                    columnNumber: 19
+                                }, void 0)
+                            }, void 0, false, {
+                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                lineNumber: 399,
+                                columnNumber: 17
+                            }, void 0)
+                        }, void 0, false, {
+                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                            lineNumber: 398,
+                            columnNumber: 15
+                        }, void 0)
+                    }, void 0, false, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                        lineNumber: 395,
+                        columnNumber: 11
+                    }, this),
+                    /*#__PURE__*/ _jsxDEV(Route, {
+                        path: "/login",
+                        element: /*#__PURE__*/ _jsxDEV(GuestRoute, {
+                            children: /*#__PURE__*/ _jsxDEV(Login, {}, void 0, false, {
+                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                lineNumber: 409,
+                                columnNumber: 17
+                            }, void 0)
+                        }, void 0, false, {
+                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                            lineNumber: 408,
+                            columnNumber: 15
+                        }, void 0)
+                    }, void 0, false, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                        lineNumber: 405,
+                        columnNumber: 11
+                    }, this),
+                    /*#__PURE__*/ _jsxDEV(Route, {
+                        path: "/terms",
+                        element: /*#__PURE__*/ _jsxDEV(Terms, {}, void 0, false, {
+                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                            lineNumber: 413,
+                            columnNumber: 41
+                        }, void 0)
+                    }, void 0, false, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                        lineNumber: 413,
+                        columnNumber: 11
+                    }, this),
+                    /*#__PURE__*/ _jsxDEV(Route, {
+                        path: "/privacy",
+                        element: /*#__PURE__*/ _jsxDEV(Privacy, {}, void 0, false, {
+                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                            lineNumber: 414,
+                            columnNumber: 43
+                        }, void 0)
+                    }, void 0, false, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                        lineNumber: 414,
+                        columnNumber: 11
+                    }, this),
+                    /*#__PURE__*/ _jsxDEV(Route, {
+                        path: "/docs",
+                        element: /*#__PURE__*/ _jsxDEV(Docs, {}, void 0, false, {
+                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                            lineNumber: 415,
+                            columnNumber: 40
+                        }, void 0)
+                    }, void 0, false, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                        lineNumber: 415,
+                        columnNumber: 11
+                    }, this),
+                    /*#__PURE__*/ _jsxDEV(Route, {
+                        path: "/access-code",
+                        element: /*#__PURE__*/ _jsxDEV(AccessCodeEntry, {}, void 0, false, {
+                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                            lineNumber: 416,
+                            columnNumber: 47
+                        }, void 0)
+                    }, void 0, false, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                        lineNumber: 416,
+                        columnNumber: 11
+                    }, this),
+                    FeedCardLab ? /*#__PURE__*/ _jsxDEV(Route, {
+                        path: "/dev/feed-cards",
+                        element: /*#__PURE__*/ _jsxDEV(WithProductShell, {
+                            children: /*#__PURE__*/ _jsxDEV(FeedCardLab, {}, void 0, false, {
+                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                lineNumber: 422,
+                                columnNumber: 19
+                            }, void 0)
+                        }, void 0, false, {
+                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                            lineNumber: 421,
+                            columnNumber: 17
+                        }, void 0)
+                    }, void 0, false, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                        lineNumber: 418,
+                        columnNumber: 13
+                    }, this) : null,
+                    /*#__PURE__*/ _jsxDEV(Route, {
+                        path: "/:userId",
+                        element: /*#__PURE__*/ _jsxDEV(ProtectedRoute, {
+                            children: /*#__PURE__*/ _jsxDEV(WithProductShell, {
+                                children: /*#__PURE__*/ _jsxDEV(WithSolanaRuntime, {
+                                    children: /*#__PURE__*/ _jsxDEV(PublicHandleProfileRoute, {}, void 0, false, {
+                                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                        lineNumber: 433,
+                                        columnNumber: 21
+                                    }, void 0)
+                                }, void 0, false, {
+                                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                    lineNumber: 432,
+                                    columnNumber: 19
+                                }, void 0)
+                            }, void 0, false, {
+                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                lineNumber: 431,
+                                columnNumber: 17
+                            }, void 0)
+                        }, void 0, false, {
+                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                            lineNumber: 430,
+                            columnNumber: 15
+                        }, void 0)
+                    }, void 0, false, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                        lineNumber: 427,
+                        columnNumber: 11
+                    }, this),
+                    /*#__PURE__*/ _jsxDEV(Route, {
+                        path: "*",
+                        element: /*#__PURE__*/ _jsxDEV(AuthAwareNotFoundRoute, {}, void 0, false, {
+                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                            lineNumber: 439,
+                            columnNumber: 36
+                        }, void 0)
+                    }, void 0, false, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                        lineNumber: 439,
+                        columnNumber: 11
+                    }, this)
+                ]
+            }, void 0, true, {
+                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                lineNumber: 246,
+                columnNumber: 9
+            }, this)
+        }, location.pathname, false, {
+            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+            lineNumber: 241,
+            columnNumber: 7
+        }, this)
+    }, void 0, false, {
+        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+        lineNumber: 240,
+        columnNumber: 5
+    }, this);
+}
+_s3(AnimatedRoutes, "pkHmaVRPskBaU4tMJuJJpV42k1I=", false, function() {
+    return [
+        useLocation
+    ];
+});
+_c48 = AnimatedRoutes;
+function RealtimeInvalidationBridge() {
+    _s4();
+    const queryClient = useQueryClient();
+    useEffect(()=>{
+        return subscribeToAppRealtime({
+            onInvalidate: (payload)=>{
+                const scopes = new Set(payload.scopes ?? []);
+                if (scopes.has("feed")) {
+                    void queryClient.invalidateQueries({
+                        queryKey: [
+                            "posts"
+                        ],
+                        refetchType: "active"
+                    });
+                }
+                if (scopes.has("leaderboard")) {
+                    void queryClient.invalidateQueries({
+                        queryKey: [
+                            "leaderboard"
+                        ],
+                        refetchType: "active"
+                    });
+                    void queryClient.invalidateQueries({
+                        queryKey: [
+                            "leaderboards"
+                        ],
+                        refetchType: "active"
+                    });
+                }
+                if (scopes.has("profiles")) {
+                    void queryClient.invalidateQueries({
+                        queryKey: [
+                            "profile",
+                            "me"
+                        ],
+                        refetchType: "active"
+                    });
+                    void queryClient.invalidateQueries({
+                        queryKey: [
+                            "userProfile"
+                        ],
+                        refetchType: "active"
+                    });
+                }
+                if (scopes.has("profile-performance")) {
+                    void queryClient.invalidateQueries({
+                        queryKey: [
+                            "profile",
+                            "performance"
+                        ],
+                        refetchType: "active"
+                    });
+                    void queryClient.invalidateQueries({
+                        queryKey: [
+                            "userProfilePerformance"
+                        ],
+                        refetchType: "active"
+                    });
+                }
+                if (scopes.has("user-posts")) {
+                    void queryClient.invalidateQueries({
+                        queryKey: [
+                            "profile",
+                            "posts"
+                        ],
+                        refetchType: "active"
+                    });
+                    void queryClient.invalidateQueries({
+                        queryKey: [
+                            "profile",
+                            "reposts"
+                        ],
+                        refetchType: "active"
+                    });
+                    void queryClient.invalidateQueries({
+                        queryKey: [
+                            "userPosts"
+                        ],
+                        refetchType: "active"
+                    });
+                    void queryClient.invalidateQueries({
+                        queryKey: [
+                            "userReposts"
+                        ],
+                        refetchType: "active"
+                    });
+                }
+                if (scopes.has("token-page")) {
+                    void queryClient.invalidateQueries({
+                        queryKey: [
+                            "token-page"
+                        ],
+                        refetchType: "active"
+                    });
+                }
+            }
+        });
+    }, [
+        queryClient
+    ]);
+    return null;
+}
+_s4(RealtimeInvalidationBridge, "aixO0mo1bdM1nWLRolCdKzppx/I=", false, function() {
+    return [
+        useQueryClient
+    ];
+});
+_c49 = RealtimeInvalidationBridge;
+const App = ()=>/*#__PURE__*/ _jsxDEV(QueryClientProvider, {
+        client: queryClient,
+        children: /*#__PURE__*/ _jsxDEV(ThemeProvider, {
+            children: /*#__PURE__*/ _jsxDEV(PrivyWalletProvider, {
+                children: /*#__PURE__*/ _jsxDEV(AuthProvider, {
+                    children: /*#__PURE__*/ _jsxDEV(AuthInitializer, {
+                        children: [
+                            /*#__PURE__*/ _jsxDEV(RealtimeInvalidationBridge, {}, void 0, false, {
+                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                lineNumber: 491,
+                                columnNumber: 13
+                            }, this),
+                            /*#__PURE__*/ _jsxDEV(TooltipProvider, {
+                                children: [
+                                    /*#__PURE__*/ _jsxDEV(Toaster, {}, void 0, false, {
+                                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                        lineNumber: 493,
+                                        columnNumber: 15
+                                    }, this),
+                                    /*#__PURE__*/ _jsxDEV(Sonner, {}, void 0, false, {
+                                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                        lineNumber: 494,
+                                        columnNumber: 15
+                                    }, this),
+                                    /*#__PURE__*/ _jsxDEV(BrowserRouter, {
+                                        children: /*#__PURE__*/ _jsxDEV(AppRouteErrorBoundary, {
+                                            children: /*#__PURE__*/ _jsxDEV(Suspense, {
+                                                fallback: /*#__PURE__*/ _jsxDEV(PageSkeleton, {}, void 0, false, {
+                                                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                                    lineNumber: 497,
+                                                    columnNumber: 39
+                                                }, void 0),
+                                                children: /*#__PURE__*/ _jsxDEV(MissingHandleGate, {
+                                                    children: /*#__PURE__*/ _jsxDEV(AnimatedRoutes, {}, void 0, false, {
+                                                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                                        lineNumber: 499,
+                                                        columnNumber: 23
+                                                    }, this)
+                                                }, void 0, false, {
+                                                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                                    lineNumber: 498,
+                                                    columnNumber: 21
+                                                }, this)
+                                            }, void 0, false, {
+                                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                                lineNumber: 497,
+                                                columnNumber: 19
+                                            }, this)
+                                        }, void 0, false, {
+                                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                            lineNumber: 496,
+                                            columnNumber: 17
+                                        }, this)
+                                    }, void 0, false, {
+                                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                        lineNumber: 495,
+                                        columnNumber: 15
+                                    }, this)
+                                ]
+                            }, void 0, true, {
+                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                                lineNumber: 492,
+                                columnNumber: 13
+                            }, this)
+                        ]
+                    }, void 0, true, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                        lineNumber: 490,
+                        columnNumber: 11
+                    }, this)
+                }, void 0, false, {
+                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                    lineNumber: 489,
+                    columnNumber: 9
+                }, this)
+            }, void 0, false, {
+                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+                lineNumber: 488,
+                columnNumber: 7
+            }, this)
+        }, void 0, false, {
+            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+            lineNumber: 487,
+            columnNumber: 5
+        }, this)
+    }, void 0, false, {
+        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx",
+        lineNumber: 486,
+        columnNumber: 3
+    }, this);
+_c50 = App;
+export default App;
+var _c, _c1, _c2, _c3, _c4, _c5, _c6, _c7, _c8, _c9, _c10, _c11, _c12, _c13, _c14, _c15, _c16, _c17, _c18, _c19, _c20, _c21, _c22, _c23, _c24, _c25, _c26, _c27, _c28, _c29, _c30, _c31, _c32, _c33, _c34, _c35, _c36, _c37, _c38, _c39, _c40, _c41, _c42, _c43, _c44, _c45, _c46, _c47, _c48, _c49, _c50;
+$RefreshReg$(_c, "Feed$lazyPage");
+$RefreshReg$(_c1, "Feed");
+$RefreshReg$(_c2, "Profile$lazyPage");
+$RefreshReg$(_c3, "Profile");
+$RefreshReg$(_c4, "UserProfile");
+$RefreshReg$(_c5, "Notifications$lazyPage");
+$RefreshReg$(_c6, "Notifications");
+$RefreshReg$(_c7, "Leaderboard$lazyPage");
+$RefreshReg$(_c8, "Leaderboard");
+$RefreshReg$(_c9, "Admin$lazyPage");
+$RefreshReg$(_c10, "Admin");
+$RefreshReg$(_c11, "HandleOnboarding$lazyPage");
+$RefreshReg$(_c12, "HandleOnboarding");
+$RefreshReg$(_c13, "Login$lazyPage");
+$RefreshReg$(_c14, "Login");
+$RefreshReg$(_c15, "PostDetail$lazyPage");
+$RefreshReg$(_c16, "PostDetail");
+$RefreshReg$(_c17, "TokenPage$lazyPage");
+$RefreshReg$(_c18, "TokenPage");
+$RefreshReg$(_c19, "Terminal$lazyPage");
+$RefreshReg$(_c20, "Terminal");
+$RefreshReg$(_c21, "BundleChecker$lazyPage");
+$RefreshReg$(_c22, "BundleChecker");
+$RefreshReg$(_c23, "CommunitiesIndexPage$lazyPage");
+$RefreshReg$(_c24, "CommunitiesIndexPage");
+$RefreshReg$(_c25, "CommunityPage$lazyPage");
+$RefreshReg$(_c26, "CommunityPage");
+$RefreshReg$(_c27, "RaidsIndexPage$lazyPage");
+$RefreshReg$(_c28, "RaidsIndexPage");
+$RefreshReg$(_c29, "RaidPage$lazyPage");
+$RefreshReg$(_c30, "RaidPage");
+$RefreshReg$(_c31, "Terms$lazyPage");
+$RefreshReg$(_c32, "Terms");
+$RefreshReg$(_c33, "Privacy$lazyPage");
+$RefreshReg$(_c34, "Privacy");
+$RefreshReg$(_c35, "Docs$lazyPage");
+$RefreshReg$(_c36, "Docs");
+$RefreshReg$(_c37, "NotFound");
+$RefreshReg$(_c38, "AccessCodeEntry$lazyPage");
+$RefreshReg$(_c39, "AccessCodeEntry");
+$RefreshReg$(_c40, "PageSkeleton");
+$RefreshReg$(_c41, "PublicHandleProfileRoute");
+$RefreshReg$(_c42, "ProductContentSkeleton");
+$RefreshReg$(_c43, "WithSolanaRuntime$lazy");
+$RefreshReg$(_c44, "WithSolanaRuntime");
+$RefreshReg$(_c45, "WithProductShell");
+$RefreshReg$(_c46, "MissingHandleGate");
+$RefreshReg$(_c47, "AuthAwareNotFoundRoute");
+$RefreshReg$(_c48, "AnimatedRoutes");
+$RefreshReg$(_c49, "RealtimeInvalidationBridge");
+$RefreshReg$(_c50, "App");
+
+
+if (import.meta.hot && !inWebWorker) {
+  window.$RefreshReg$ = prevRefreshReg;
+  window.$RefreshSig$ = prevRefreshSig;
+}
+
+
+if (import.meta.hot && !inWebWorker) {
+  RefreshRuntime.__hmr_import(import.meta.url).then((currentExports) => {
+    RefreshRuntime.registerExportsForReactRefresh("C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx", currentExports);
+    import.meta.hot.accept((nextExports) => {
+      if (!nextExports) return;
+      const invalidateMessage = RefreshRuntime.validateRefreshBoundaryAndEnqueueUpdate("C:/Users/renga/Documents/phewrunn/webapp/src/App.tsx", currentExports, nextExports);
+      if (invalidateMessage) import.meta.hot.invalidate(invalidateMessage);
+    });
+  });
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIkFwcC50c3giXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IHtcbiAgQ29tcG9uZW50LFxuICBsYXp5LFxuICBTdXNwZW5zZSxcbiAgdXNlRWZmZWN0LFxuICB0eXBlIENvbXBvbmVudFR5cGUsXG4gIHR5cGUgRXJyb3JJbmZvLFxuICB0eXBlIFJlYWN0Tm9kZSxcbn0gZnJvbSBcInJlYWN0XCI7XG5pbXBvcnQgeyBUb2FzdGVyIH0gZnJvbSBcIkAvY29tcG9uZW50cy91aS90b2FzdGVyXCI7XG5pbXBvcnQgeyBUb2FzdGVyIGFzIFNvbm5lciB9IGZyb20gXCJAL2NvbXBvbmVudHMvdWkvc29ubmVyXCI7XG5pbXBvcnQgeyBUb29sdGlwUHJvdmlkZXIgfSBmcm9tIFwiQC9jb21wb25lbnRzL3VpL3Rvb2x0aXBcIjtcbmltcG9ydCB7IFF1ZXJ5Q2xpZW50LCBRdWVyeUNsaWVudFByb3ZpZGVyLCB1c2VRdWVyeUNsaWVudCB9IGZyb20gXCJAdGFuc3RhY2svcmVhY3QtcXVlcnlcIjtcbmltcG9ydCB7IEJyb3dzZXJSb3V0ZXIsIFJvdXRlcywgUm91dGUsIE5hdmlnYXRlLCB1c2VMb2NhdGlvbiwgdXNlUGFyYW1zIH0gZnJvbSBcInJlYWN0LXJvdXRlci1kb21cIjtcclxuaW1wb3J0IHsgQW5pbWF0ZVByZXNlbmNlLCBtb3Rpb24gfSBmcm9tIFwiZnJhbWVyLW1vdGlvblwiO1xyXG5pbXBvcnQgeyBUaGVtZVByb3ZpZGVyIH0gZnJvbSBcIkAvY29tcG9uZW50cy9UaGVtZVByb3ZpZGVyXCI7XG5pbXBvcnQgeyBBdXRoUHJvdmlkZXIsIHVzZUF1dGggfSBmcm9tIFwiQC9saWIvYXV0aC1jbGllbnRcIjtcbmltcG9ydCB7IFByb3RlY3RlZFJvdXRlIH0gZnJvbSBcIkAvY29tcG9uZW50cy9Qcm90ZWN0ZWRSb3V0ZVwiO1xuaW1wb3J0IHsgR3Vlc3RSb3V0ZSB9IGZyb20gXCJAL2NvbXBvbmVudHMvR3Vlc3RSb3V0ZVwiO1xuaW1wb3J0IHsgU2tlbGV0b24gfSBmcm9tIFwiQC9jb21wb25lbnRzL3VpL3NrZWxldG9uXCI7XG5pbXBvcnQgeyBBdXRoSW5pdGlhbGl6ZXIgfSBmcm9tIFwiQC9jb21wb25lbnRzL0F1dGhJbml0aWFsaXplclwiO1xuaW1wb3J0IHsgVjJBcHBTaGVsbCB9IGZyb20gXCJAL2NvbXBvbmVudHMvbGF5b3V0L1YyQXBwU2hlbGxcIjtcbmltcG9ydCB7IFByaXZ5V2FsbGV0UHJvdmlkZXIgfSBmcm9tIFwiQC9jb21wb25lbnRzL1ByaXZ5V2FsbGV0UHJvdmlkZXJcIjtcbmltcG9ydCB7IGlzUG9zc2libGVQdWJsaWNQcm9maWxlU2VnbWVudCB9IGZyb20gXCJAL2xpYi9wcm9maWxlLXBhdGhcIjtcbmltcG9ydCB7IGltcG9ydFdpdGhSZWNvdmVyeSB9IGZyb20gXCJAL2xpYi9sYXp5LXdpdGgtcmVjb3ZlcnlcIjtcbmltcG9ydCB7IHN1YnNjcmliZVRvQXBwUmVhbHRpbWUgfSBmcm9tIFwiQC9saWIvcmVhbHRpbWUvYXBwLXJlYWx0aW1lLWNsaWVudFwiO1xuXHJcbmNvbnN0IGxhenlQYWdlID0gPFQgZXh0ZW5kcyB7IGRlZmF1bHQ6IENvbXBvbmVudFR5cGU8dW5rbm93bj4gfT4oXG4gIGxvYWRlcjogKCkgPT4gUHJvbWlzZTxUPixcclxuICBzY29wZTogc3RyaW5nXHJcbikgPT4gbGF6eSgoKSA9PiBpbXBvcnRXaXRoUmVjb3ZlcnkobG9hZGVyLCBzY29wZSkpO1xyXG5cclxuLy8gTGF6eSBsb2FkIHBhZ2UgY29tcG9uZW50c1xyXG5jb25zdCBGZWVkID0gbGF6eVBhZ2UoKCkgPT4gaW1wb3J0KFwiLi9wYWdlcy9GZWVkXCIpLCBcInJvdXRlOmZlZWRcIik7XHJcbmNvbnN0IFByb2ZpbGUgPSBsYXp5UGFnZSgoKSA9PiBpbXBvcnQoXCIuL3BhZ2VzL1Byb2ZpbGVcIiksIFwicm91dGU6cHJvZmlsZVwiKTtcclxuY29uc3QgVXNlclByb2ZpbGUgPSBsYXp5UGFnZSgoKSA9PiBpbXBvcnQoXCIuL3BhZ2VzL1VzZXJQcm9maWxlXCIpLCBcInJvdXRlOnVzZXItcHJvZmlsZVwiKTtcclxuY29uc3QgTm90aWZpY2F0aW9ucyA9IGxhenlQYWdlKCgpID0+IGltcG9ydChcIi4vcGFnZXMvTm90aWZpY2F0aW9uc1wiKSwgXCJyb3V0ZTpub3RpZmljYXRpb25zXCIpO1xyXG5jb25zdCBMZWFkZXJib2FyZCA9IGxhenlQYWdlKCgpID0+IGltcG9ydChcIi4vcGFnZXMvTGVhZGVyYm9hcmRcIiksIFwicm91dGU6bGVhZGVyYm9hcmRcIik7XHJcbmNvbnN0IEFkbWluID0gbGF6eVBhZ2UoKCkgPT4gaW1wb3J0KFwiLi9wYWdlcy9BZG1pblwiKSwgXCJyb3V0ZTphZG1pblwiKTtcclxuY29uc3QgSGFuZGxlT25ib2FyZGluZyA9IGxhenlQYWdlKCgpID0+IGltcG9ydChcIi4vcGFnZXMvSGFuZGxlT25ib2FyZGluZ1wiKSwgXCJyb3V0ZTp3ZWxjb21lXCIpO1xyXG5jb25zdCBMb2dpbiA9IGxhenlQYWdlKCgpID0+IGltcG9ydChcIi4vcGFnZXMvTG9naW5cIiksIFwicm91dGU6bG9naW5cIik7XHJcbmNvbnN0IFBvc3REZXRhaWwgPSBsYXp5UGFnZSgoKSA9PiBpbXBvcnQoXCIuL3BhZ2VzL1Bvc3REZXRhaWxcIiksIFwicm91dGU6cG9zdC1kZXRhaWxcIik7XHJcbmNvbnN0IFRva2VuUGFnZSA9IGxhenlQYWdlKCgpID0+IGltcG9ydChcIi4vcGFnZXMvVG9rZW5QYWdlXCIpLCBcInJvdXRlOnRva2VuLXBhZ2VcIik7XG5jb25zdCBUZXJtaW5hbCA9IGxhenlQYWdlKCgpID0+IGltcG9ydChcIi4vcGFnZXMvVGVybWluYWxcIiksIFwicm91dGU6dGVybWluYWxcIik7XG5jb25zdCBCdW5kbGVDaGVja2VyID0gbGF6eVBhZ2UoKCkgPT4gaW1wb3J0KFwiLi9wYWdlcy9CdW5kbGVDaGVja2VyXCIpLCBcInJvdXRlOmJ1bmRsZS1jaGVja2VyXCIpO1xuY29uc3QgQ29tbXVuaXRpZXNJbmRleFBhZ2UgPSBsYXp5UGFnZSgoKSA9PiBpbXBvcnQoXCIuL3BhZ2VzL0NvbW11bml0aWVzSW5kZXhQYWdlXCIpLCBcInJvdXRlOmNvbW11bml0aWVzLWluZGV4XCIpO1xuY29uc3QgQ29tbXVuaXR5UGFnZSA9IGxhenlQYWdlKCgpID0+IGltcG9ydChcIi4vcGFnZXMvQ29tbXVuaXR5UGFnZVwiKSwgXCJyb3V0ZTpjb21tdW5pdHktcGFnZVwiKTtcbmNvbnN0IFJhaWRzSW5kZXhQYWdlID0gbGF6eVBhZ2UoKCkgPT4gaW1wb3J0KFwiLi9wYWdlcy9SYWlkc0luZGV4UGFnZVwiKSwgXCJyb3V0ZTpyYWlkcy1pbmRleFwiKTtcbmNvbnN0IFJhaWRQYWdlID0gbGF6eVBhZ2UoKCkgPT4gaW1wb3J0KFwiLi9wYWdlcy9SYWlkUGFnZVwiKSwgXCJyb3V0ZTpyYWlkLXBhZ2VcIik7XG5jb25zdCBUZXJtcyA9IGxhenlQYWdlKCgpID0+IGltcG9ydChcIi4vcGFnZXMvVGVybXNcIiksIFwicm91dGU6dGVybXNcIik7XG5jb25zdCBQcml2YWN5ID0gbGF6eVBhZ2UoKCkgPT4gaW1wb3J0KFwiLi9wYWdlcy9Qcml2YWN5XCIpLCBcInJvdXRlOnByaXZhY3lcIik7XG5jb25zdCBEb2NzID0gbGF6eVBhZ2UoKCkgPT4gaW1wb3J0KFwiLi9wYWdlcy9Eb2NzXCIpLCBcInJvdXRlOmRvY3NcIik7XG5jb25zdCBOb3RGb3VuZCA9IGxhenlQYWdlKCgpID0+IGltcG9ydChcIi4vcGFnZXMvTm90Rm91bmRcIiksIFwicm91dGU6bm90LWZvdW5kXCIpO1xuY29uc3QgQWNjZXNzQ29kZUVudHJ5ID0gbGF6eVBhZ2UoKCkgPT4gaW1wb3J0KFwiLi9wYWdlcy9BY2Nlc3NDb2RlRW50cnlcIiksIFwicm91dGU6YWNjZXNzLWNvZGVcIik7XG5jb25zdCBGZWVkQ2FyZExhYiA9IGltcG9ydC5tZXRhLmVudi5ERVZcbiAgPyBsYXp5UGFnZSgoKSA9PiBpbXBvcnQoXCIuL3BhZ2VzL2Rldi9GZWVkQ2FyZExhYlwiKSwgXCJyb3V0ZTpkZXYtZmVlZC1jYXJkLWxhYlwiKVxuICA6IG51bGw7XG5cbi8vIExvYWRpbmcgZmFsbGJhY2sgY29tcG9uZW50XG5mdW5jdGlvbiBQYWdlU2tlbGV0b24oKSB7XG4gIHJldHVybiAoXHJcbiAgICA8ZGl2IGNsYXNzTmFtZT1cIm1pbi1oLXNjcmVlbiBiZy1iYWNrZ3JvdW5kXCI+XHJcbiAgICAgIDxkaXYgY2xhc3NOYW1lPVwiYXBwLXBhZ2Utc2hlbGwgc3BhY2UteS00XCI+XHJcbiAgICAgICAgPFNrZWxldG9uIGNsYXNzTmFtZT1cImgtMTYgdy1mdWxsIHJvdW5kZWQtWzI4cHhdXCIgLz5cclxuICAgICAgICA8U2tlbGV0b24gY2xhc3NOYW1lPVwiaC02NCB3LWZ1bGwgcm91bmRlZC1bMjhweF1cIiAvPlxyXG4gICAgICAgIDxTa2VsZXRvbiBjbGFzc05hbWU9XCJoLTMyIHctZnVsbCByb3VuZGVkLVsyOHB4XVwiIC8+XHJcbiAgICAgICAgPFNrZWxldG9uIGNsYXNzTmFtZT1cImgtMzIgdy1mdWxsIHJvdW5kZWQtWzI4cHhdXCIgLz5cclxuICAgICAgPC9kaXY+XHJcbiAgICA8L2Rpdj5cclxuICApO1xyXG59XHJcblxyXG5mdW5jdGlvbiBQdWJsaWNIYW5kbGVQcm9maWxlUm91dGUoKSB7XG4gIGNvbnN0IHsgdXNlcklkIH0gPSB1c2VQYXJhbXM8eyB1c2VySWQ6IHN0cmluZyB9PigpO1xuXHJcbiAgaWYgKCFpc1Bvc3NpYmxlUHVibGljUHJvZmlsZVNlZ21lbnQodXNlcklkKSkge1xyXG4gICAgcmV0dXJuIDxOb3RGb3VuZCAvPjtcclxuICB9XHJcblxyXG4gIHJldHVybiA8VXNlclByb2ZpbGUgLz47XHJcbn1cblxuZnVuY3Rpb24gUHJvZHVjdENvbnRlbnRTa2VsZXRvbigpIHtcbiAgcmV0dXJuIChcbiAgICA8ZGl2IGNsYXNzTmFtZT1cImdyaWQgZ2FwLTMgbGc6Z3JpZC1jb2xzLVttaW5tYXgoMCwxZnIpXzMyMHB4XVwiPlxuICAgICAgPGRpdiBjbGFzc05hbWU9XCJzcGFjZS15LTNcIj5cbiAgICAgICAgPFNrZWxldG9uIGNsYXNzTmFtZT1cImgtMjAgdy1mdWxsIHJvdW5kZWQtWzE4cHhdIGJnLXdoaXRlL1swLjA1XVwiIC8+XG4gICAgICAgIDxTa2VsZXRvbiBjbGFzc05hbWU9XCJoLTMyIHctZnVsbCByb3VuZGVkLVsxOHB4XSBiZy13aGl0ZS9bMC4wNV1cIiAvPlxuICAgICAgICA8U2tlbGV0b24gY2xhc3NOYW1lPVwiaC01NiB3LWZ1bGwgcm91bmRlZC1bMThweF0gYmctd2hpdGUvWzAuMDVdXCIgLz5cbiAgICAgIDwvZGl2PlxuICAgICAgPGRpdiBjbGFzc05hbWU9XCJoaWRkZW4gc3BhY2UteS0zIGxnOmJsb2NrXCI+XG4gICAgICAgIDxTa2VsZXRvbiBjbGFzc05hbWU9XCJoLTI4IHctZnVsbCByb3VuZGVkLVsxOHB4XSBiZy13aGl0ZS9bMC4wNV1cIiAvPlxuICAgICAgICA8U2tlbGV0b24gY2xhc3NOYW1lPVwiaC00NCB3LWZ1bGwgcm91bmRlZC1bMThweF0gYmctd2hpdGUvWzAuMDVdXCIgLz5cbiAgICAgIDwvZGl2PlxuICAgIDwvZGl2PlxuICApO1xufVxuXG5jbGFzcyBBcHBSb3V0ZUVycm9yQm91bmRhcnkgZXh0ZW5kcyBDb21wb25lbnQ8XG4gIHsgY2hpbGRyZW46IFJlYWN0Tm9kZSB9LFxuICB7IGhhc0Vycm9yOiBib29sZWFuOyBtZXNzYWdlOiBzdHJpbmcgfCBudWxsIH1cbj4ge1xuICBzdGF0ZSA9IHsgaGFzRXJyb3I6IGZhbHNlLCBtZXNzYWdlOiBudWxsIH07XG5cbiAgc3RhdGljIGdldERlcml2ZWRTdGF0ZUZyb21FcnJvcihlcnJvcjogdW5rbm93bikge1xuICAgIHJldHVybiB7XG4gICAgICBoYXNFcnJvcjogdHJ1ZSxcbiAgICAgIG1lc3NhZ2U6IGVycm9yIGluc3RhbmNlb2YgRXJyb3IgPyBlcnJvci5tZXNzYWdlIDogXCJSb3V0ZSBmYWlsZWQgdG8gcmVuZGVyLlwiLFxuICAgIH07XG4gIH1cblxuICBjb21wb25lbnREaWRDYXRjaChlcnJvcjogdW5rbm93biwgaW5mbzogRXJyb3JJbmZvKSB7XG4gICAgY29uc29sZS5lcnJvcihcIltBcHBSb3V0ZUVycm9yQm91bmRhcnldIHJvdXRlIHJlbmRlciBmYWlsZWRcIiwgZXJyb3IsIGluZm8pO1xuICB9XG5cbiAgcmVuZGVyKCkge1xuICAgIGlmICghdGhpcy5zdGF0ZS5oYXNFcnJvcikge1xuICAgICAgcmV0dXJuIHRoaXMucHJvcHMuY2hpbGRyZW47XG4gICAgfVxuXG4gICAgcmV0dXJuIChcbiAgICAgIDxkaXYgY2xhc3NOYW1lPVwiZmxleCBtaW4taC1zY3JlZW4gaXRlbXMtY2VudGVyIGp1c3RpZnktY2VudGVyIGJnLWJhY2tncm91bmQgcHgtNiB0ZXh0LXdoaXRlXCI+XG4gICAgICAgIDxkaXYgY2xhc3NOYW1lPVwibWF4LXctbWQgcm91bmRlZC1bMjRweF0gYm9yZGVyIGJvcmRlci13aGl0ZS8xMCBiZy13aGl0ZS9bMC4wNF0gcC02IHRleHQtY2VudGVyIHNoYWRvdy0yeGxcIj5cbiAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cInRleHQtc20gZm9udC1zZW1pYm9sZCB1cHBlcmNhc2UgdHJhY2tpbmctWzAuMThlbV0gdGV4dC1saW1lLTMwMC84MFwiPlxuICAgICAgICAgICAgQXBwIHJ1bnRpbWUgcmVjb3ZlcmVkXG4gICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgPGgxIGNsYXNzTmFtZT1cIm10LTMgdGV4dC0yeGwgZm9udC1ib2xkXCI+VGhpcyByb3V0ZSBmYWlsZWQgdG8gbG9hZC48L2gxPlxuICAgICAgICAgIDxwIGNsYXNzTmFtZT1cIm10LTIgdGV4dC1zbSBsZWFkaW5nLTYgdGV4dC13aGl0ZS82MFwiPlxuICAgICAgICAgICAge3RoaXMuc3RhdGUubWVzc2FnZSA/PyBcIlJlbG9hZCB0aGUgYXBwIHRvIHJlcXVlc3QgYSBmcmVzaCByb3V0ZSBjaHVuay5cIn1cbiAgICAgICAgICA8L3A+XG4gICAgICAgICAgPGJ1dHRvblxuICAgICAgICAgICAgdHlwZT1cImJ1dHRvblwiXG4gICAgICAgICAgICBjbGFzc05hbWU9XCJtdC01IHJvdW5kZWQtWzE0cHhdIGJvcmRlciBib3JkZXItbGltZS0zMDAvMzAgYmctbGltZS0zMDAvMTUgcHgtNCBweS0yIHRleHQtc20gZm9udC1zZW1pYm9sZCB0ZXh0LWxpbWUtMTAwXCJcbiAgICAgICAgICAgIG9uQ2xpY2s9eygpID0+IHdpbmRvdy5sb2NhdGlvbi5yZWxvYWQoKX1cbiAgICAgICAgICA+XG4gICAgICAgICAgICBSZWxvYWRcbiAgICAgICAgICA8L2J1dHRvbj5cbiAgICAgICAgPC9kaXY+XG4gICAgICA8L2Rpdj5cbiAgICApO1xuICB9XG59XG5cbmNvbnN0IFdpdGhTb2xhbmFSdW50aW1lID0gbGF6eSgoKSA9PlxuICBpbXBvcnQoXCJAL2NvbXBvbmVudHMvU29sYW5hUm91dGVQcm92aWRlclwiKS50aGVuKChtb2QpID0+ICh7XG4gICAgZGVmYXVsdDogbW9kLmRlZmF1bHQsXG4gIH0pKVxuKTtcblxuZnVuY3Rpb24gV2l0aFByb2R1Y3RTaGVsbCh7IGNoaWxkcmVuIH06IHsgY2hpbGRyZW46IFJlYWN0Tm9kZSB9KSB7XG4gIHJldHVybiAoXG4gICAgPFYyQXBwU2hlbGw+XG4gICAgICA8U3VzcGVuc2UgZmFsbGJhY2s9ezxQcm9kdWN0Q29udGVudFNrZWxldG9uIC8+fT57Y2hpbGRyZW59PC9TdXNwZW5zZT5cbiAgICA8L1YyQXBwU2hlbGw+XG4gICk7XG59XG5cclxuZnVuY3Rpb24gaGFzQ29tcGxldGVkSGFuZGxlKHVzZXJuYW1lOiBzdHJpbmcgfCBudWxsIHwgdW5kZWZpbmVkKTogYm9vbGVhbiB7XHJcbiAgcmV0dXJuIHR5cGVvZiB1c2VybmFtZSA9PT0gXCJzdHJpbmdcIiAmJiB1c2VybmFtZS50cmltKCkubGVuZ3RoID4gMDtcclxufVxyXG5cclxuZnVuY3Rpb24gTWlzc2luZ0hhbmRsZUdhdGUoeyBjaGlsZHJlbiB9OiB7IGNoaWxkcmVuOiBSZWFjdE5vZGUgfSkge1xuICBjb25zdCBsb2NhdGlvbiA9IHVzZUxvY2F0aW9uKCk7XG4gIGNvbnN0IHsgdXNlciwgaXNBdXRoZW50aWNhdGVkLCBpc1JlYWR5IH0gPSB1c2VBdXRoKCk7XG5cclxuICBpZiAoIWlzUmVhZHkgfHwgIWlzQXV0aGVudGljYXRlZCB8fCAhdXNlciB8fCBoYXNDb21wbGV0ZWRIYW5kbGUodXNlci51c2VybmFtZSkpIHtcclxuICAgIHJldHVybiA8PntjaGlsZHJlbn08Lz47XHJcbiAgfVxyXG5cclxuICBpZiAobG9jYXRpb24ucGF0aG5hbWUgPT09IFwiL3dlbGNvbWVcIikge1xyXG4gICAgcmV0dXJuIDw+e2NoaWxkcmVufTwvPjtcclxuICB9XHJcblxyXG4gIHJldHVybiAoXHJcbiAgICA8TmF2aWdhdGVcclxuICAgICAgdG89XCIvd2VsY29tZVwiXHJcbiAgICAgIHJlcGxhY2VcclxuICAgICAgc3RhdGU9e3sgZnJvbTogYCR7bG9jYXRpb24ucGF0aG5hbWV9JHtsb2NhdGlvbi5zZWFyY2h9JHtsb2NhdGlvbi5oYXNofWAgfX1cclxuICAgIC8+XHJcbiAgKTtcbn1cblxuZnVuY3Rpb24gQXV0aEF3YXJlTm90Rm91bmRSb3V0ZSgpIHtcbiAgY29uc3QgbG9jYXRpb24gPSB1c2VMb2NhdGlvbigpO1xuICBjb25zdCB7IGlzQXV0aGVudGljYXRlZCwgaGFzTGl2ZVNlc3Npb24sIGlzUmVhZHkgfSA9IHVzZUF1dGgoKTtcblxuICBpZiAoIWlzUmVhZHkpIHtcbiAgICByZXR1cm4gPFBhZ2VTa2VsZXRvbiAvPjtcbiAgfVxuXG4gIGlmICghaXNBdXRoZW50aWNhdGVkIHx8ICFoYXNMaXZlU2Vzc2lvbikge1xuICAgIHJldHVybiAoXG4gICAgICA8TmF2aWdhdGVcbiAgICAgICAgdG89XCIvbG9naW5cIlxuICAgICAgICByZXBsYWNlXG4gICAgICAgIHN0YXRlPXt7IGZyb206IGAke2xvY2F0aW9uLnBhdGhuYW1lfSR7bG9jYXRpb24uc2VhcmNofSR7bG9jYXRpb24uaGFzaH1gIH19XG4gICAgICAvPlxuICAgICk7XG4gIH1cblxuICByZXR1cm4gPE5vdEZvdW5kIC8+O1xufVxuXG5jb25zdCBxdWVyeUNsaWVudCA9IG5ldyBRdWVyeUNsaWVudCh7XG4gIGRlZmF1bHRPcHRpb25zOiB7XHJcbiAgICBxdWVyaWVzOiB7XHJcbiAgICAgIHJlZmV0Y2hPbldpbmRvd0ZvY3VzOiBmYWxzZSxcclxuICAgICAgcmVmZXRjaE9uUmVjb25uZWN0OiB0cnVlLFxyXG4gICAgICByZXRyeTogKGZhaWx1cmVDb3VudCwgZXJyb3IpID0+IHtcclxuICAgICAgICBjb25zdCBtYXliZVN0YXR1cyA9XHJcbiAgICAgICAgICB0eXBlb2YgZXJyb3IgPT09IFwib2JqZWN0XCIgJiYgZXJyb3IgIT09IG51bGwgJiYgXCJzdGF0dXNcIiBpbiBlcnJvclxyXG4gICAgICAgICAgICA/IE51bWJlcigoZXJyb3IgYXMgeyBzdGF0dXM/OiB1bmtub3duIH0pLnN0YXR1cylcclxuICAgICAgICAgICAgOiBudWxsO1xyXG5cclxuICAgICAgICBpZiAobWF5YmVTdGF0dXMgPT09IDQwMSB8fCBtYXliZVN0YXR1cyA9PT0gNDAzIHx8IG1heWJlU3RhdHVzID09PSA0MDQpIHtcclxuICAgICAgICAgIHJldHVybiBmYWxzZTtcclxuICAgICAgICB9XHJcbiAgICAgICAgaWYgKG1heWJlU3RhdHVzID09PSA0MjkpIHtcclxuICAgICAgICAgIHJldHVybiBmYWlsdXJlQ291bnQgPCAxO1xyXG4gICAgICAgIH1cclxuICAgICAgICByZXR1cm4gZmFpbHVyZUNvdW50IDwgMjtcclxuICAgICAgfSxcclxuICAgICAgcmV0cnlEZWxheTogKGF0dGVtcHQpID0+IE1hdGgubWluKDEwMDAgKiAyICoqIGF0dGVtcHQsIDUwMDApLFxyXG4gICAgICBzdGFsZVRpbWU6IDE1XzAwMCxcclxuICAgICAgZ2NUaW1lOiA1ICogNjAgKiAxMDAwLFxyXG4gICAgfSxcclxuICB9LFxyXG59KTtcclxuXHJcbmNvbnN0IHBhZ2VUcmFuc2l0aW9uID0ge1xyXG4gIGluaXRpYWw6IHsgb3BhY2l0eTogMCwgeTogOCB9LFxyXG4gIGFuaW1hdGU6IHsgb3BhY2l0eTogMSwgeTogMCB9LFxyXG4gIGV4aXQ6IHsgb3BhY2l0eTogMCwgeTogLTYgfSxcclxuICB0cmFuc2l0aW9uOiB7IGR1cmF0aW9uOiAwLjIyLCBlYXNlOiBbMC4yMiwgMSwgMC4zNiwgMV0gYXMgY29uc3QgfSxcclxufTtcclxuXHJcbmZ1bmN0aW9uIEFuaW1hdGVkUm91dGVzKCkge1xuICBjb25zdCBsb2NhdGlvbiA9IHVzZUxvY2F0aW9uKCk7XHJcbiAgcmV0dXJuIChcclxuICAgIDxBbmltYXRlUHJlc2VuY2UgbW9kZT1cIndhaXRcIiBpbml0aWFsPXtmYWxzZX0+XHJcbiAgICAgIDxtb3Rpb24uZGl2XHJcbiAgICAgICAga2V5PXtsb2NhdGlvbi5wYXRobmFtZX1cclxuICAgICAgICB7Li4ucGFnZVRyYW5zaXRpb259XHJcbiAgICAgICAgc3R5bGU9e3sgbWluSGVpZ2h0OiBcIjEwMHZoXCIgfX1cclxuICAgICAgPlxyXG4gICAgICAgIDxSb3V0ZXMgbG9jYXRpb249e2xvY2F0aW9ufT5cclxuICAgICAgICAgIDxSb3V0ZVxuICAgICAgICAgICAgcGF0aD1cIi9cIlxuICAgICAgICAgICAgZWxlbWVudD17XG4gICAgICAgICAgICAgIDxQcm90ZWN0ZWRSb3V0ZT5cbiAgICAgICAgICAgICAgICA8V2l0aFByb2R1Y3RTaGVsbD5cbiAgICAgICAgICAgICAgICAgIDxXaXRoU29sYW5hUnVudGltZT5cbiAgICAgICAgICAgICAgICAgICAgPEZlZWQgLz5cbiAgICAgICAgICAgICAgICAgIDwvV2l0aFNvbGFuYVJ1bnRpbWU+XG4gICAgICAgICAgICAgICAgPC9XaXRoUHJvZHVjdFNoZWxsPlxuICAgICAgICAgICAgICA8L1Byb3RlY3RlZFJvdXRlPlxuICAgICAgICAgICAgfVxuICAgICAgICAgIC8+XG4gICAgICAgICAgPFJvdXRlXG4gICAgICAgICAgICBwYXRoPVwiL3Byb2ZpbGVcIlxuICAgICAgICAgICAgZWxlbWVudD17XG4gICAgICAgICAgICAgIDxQcm90ZWN0ZWRSb3V0ZT5cbiAgICAgICAgICAgICAgICA8V2l0aFByb2R1Y3RTaGVsbD5cbiAgICAgICAgICAgICAgICAgIDxXaXRoU29sYW5hUnVudGltZT5cbiAgICAgICAgICAgICAgICAgICAgPFByb2ZpbGUgLz5cbiAgICAgICAgICAgICAgICAgIDwvV2l0aFNvbGFuYVJ1bnRpbWU+XG4gICAgICAgICAgICAgICAgPC9XaXRoUHJvZHVjdFNoZWxsPlxuICAgICAgICAgICAgICA8L1Byb3RlY3RlZFJvdXRlPlxuICAgICAgICAgICAgfVxuICAgICAgICAgIC8+XG4gICAgICAgICAgPFJvdXRlXHJcbiAgICAgICAgICAgIHBhdGg9XCIvd2VsY29tZVwiXHJcbiAgICAgICAgICAgIGVsZW1lbnQ9e1xyXG4gICAgICAgICAgICAgIDxQcm90ZWN0ZWRSb3V0ZSBhbGxvd01pc3NpbmdVc2VybmFtZT5cclxuICAgICAgICAgICAgICAgIDxIYW5kbGVPbmJvYXJkaW5nIC8+XHJcbiAgICAgICAgICAgICAgPC9Qcm90ZWN0ZWRSb3V0ZT5cclxuICAgICAgICAgICAgfVxyXG4gICAgICAgICAgLz5cclxuICAgICAgICAgIDxSb3V0ZVxuICAgICAgICAgICAgcGF0aD1cIi9wcm9maWxlLzp1c2VySWRcIlxuICAgICAgICAgICAgZWxlbWVudD17XG4gICAgICAgICAgICAgIDxQcm90ZWN0ZWRSb3V0ZT5cbiAgICAgICAgICAgICAgICA8V2l0aFByb2R1Y3RTaGVsbD5cbiAgICAgICAgICAgICAgICAgIDxXaXRoU29sYW5hUnVudGltZT5cbiAgICAgICAgICAgICAgICAgICAgPFVzZXJQcm9maWxlIC8+XG4gICAgICAgICAgICAgICAgICA8L1dpdGhTb2xhbmFSdW50aW1lPlxuICAgICAgICAgICAgICAgIDwvV2l0aFByb2R1Y3RTaGVsbD5cbiAgICAgICAgICAgICAgPC9Qcm90ZWN0ZWRSb3V0ZT5cbiAgICAgICAgICAgIH1cbiAgICAgICAgICAvPlxuICAgICAgICAgIDxSb3V0ZVxyXG4gICAgICAgICAgICBwYXRoPVwiL2FkbWluXCJcclxuICAgICAgICAgICAgZWxlbWVudD17XHJcbiAgICAgICAgICAgICAgPFByb3RlY3RlZFJvdXRlPlxyXG4gICAgICAgICAgICAgICAgPEFkbWluIC8+XHJcbiAgICAgICAgICAgICAgPC9Qcm90ZWN0ZWRSb3V0ZT5cclxuICAgICAgICAgICAgfVxyXG4gICAgICAgICAgLz5cclxuICAgICAgICAgIDxSb3V0ZVxuICAgICAgICAgICAgcGF0aD1cIi9ub3RpZmljYXRpb25zXCJcbiAgICAgICAgICAgIGVsZW1lbnQ9e1xuICAgICAgICAgICAgICA8UHJvdGVjdGVkUm91dGU+XG4gICAgICAgICAgICAgICAgPFdpdGhQcm9kdWN0U2hlbGw+XG4gICAgICAgICAgICAgICAgICA8Tm90aWZpY2F0aW9ucyAvPlxuICAgICAgICAgICAgICAgIDwvV2l0aFByb2R1Y3RTaGVsbD5cbiAgICAgICAgICAgICAgPC9Qcm90ZWN0ZWRSb3V0ZT5cbiAgICAgICAgICAgIH1cbiAgICAgICAgICAvPlxuICAgICAgICAgIDxSb3V0ZVxuICAgICAgICAgICAgcGF0aD1cIi9sZWFkZXJib2FyZFwiXG4gICAgICAgICAgICBlbGVtZW50PXtcbiAgICAgICAgICAgICAgPFByb3RlY3RlZFJvdXRlPlxuICAgICAgICAgICAgICAgIDxXaXRoUHJvZHVjdFNoZWxsPlxuICAgICAgICAgICAgICAgICAgPExlYWRlcmJvYXJkIC8+XG4gICAgICAgICAgICAgICAgPC9XaXRoUHJvZHVjdFNoZWxsPlxuICAgICAgICAgICAgICA8L1Byb3RlY3RlZFJvdXRlPlxuICAgICAgICAgICAgfVxuICAgICAgICAgIC8+XG4gICAgICAgICAgPFJvdXRlXG4gICAgICAgICAgICBwYXRoPVwiL3Bvc3QvOnBvc3RJZFwiXG4gICAgICAgICAgICBlbGVtZW50PXtcbiAgICAgICAgICAgICAgPFByb3RlY3RlZFJvdXRlPlxuICAgICAgICAgICAgICAgIDxXaXRoUHJvZHVjdFNoZWxsPlxuICAgICAgICAgICAgICAgICAgPFdpdGhTb2xhbmFSdW50aW1lPlxuICAgICAgICAgICAgICAgICAgICA8UG9zdERldGFpbCAvPlxuICAgICAgICAgICAgICAgICAgPC9XaXRoU29sYW5hUnVudGltZT5cbiAgICAgICAgICAgICAgICA8L1dpdGhQcm9kdWN0U2hlbGw+XG4gICAgICAgICAgICAgIDwvUHJvdGVjdGVkUm91dGU+XG4gICAgICAgICAgICB9XG4gICAgICAgICAgLz5cbiAgICAgICAgICA8Um91dGVcbiAgICAgICAgICAgIHBhdGg9XCIvdG9rZW4vOnRva2VuQWRkcmVzc1wiXG4gICAgICAgICAgICBlbGVtZW50PXtcbiAgICAgICAgICAgICAgPFByb3RlY3RlZFJvdXRlPlxuICAgICAgICAgICAgICAgIDxXaXRoUHJvZHVjdFNoZWxsPlxuICAgICAgICAgICAgICAgICAgPFdpdGhTb2xhbmFSdW50aW1lPlxuICAgICAgICAgICAgICAgICAgICA8VG9rZW5QYWdlIC8+XG4gICAgICAgICAgICAgICAgICA8L1dpdGhTb2xhbmFSdW50aW1lPlxuICAgICAgICAgICAgICAgIDwvV2l0aFByb2R1Y3RTaGVsbD5cbiAgICAgICAgICAgICAgPC9Qcm90ZWN0ZWRSb3V0ZT5cbiAgICAgICAgICAgIH1cbiAgICAgICAgICAvPlxuICAgICAgICAgIDxSb3V0ZVxuICAgICAgICAgICAgcGF0aD1cIi90ZXJtaW5hbFwiXG4gICAgICAgICAgICBlbGVtZW50PXtcbiAgICAgICAgICAgICAgPFByb3RlY3RlZFJvdXRlPlxuICAgICAgICAgICAgICAgIDxXaXRoUHJvZHVjdFNoZWxsPlxuICAgICAgICAgICAgICAgICAgPFdpdGhTb2xhbmFSdW50aW1lPlxuICAgICAgICAgICAgICAgICAgICA8VGVybWluYWwgLz5cbiAgICAgICAgICAgICAgICAgIDwvV2l0aFNvbGFuYVJ1bnRpbWU+XG4gICAgICAgICAgICAgICAgPC9XaXRoUHJvZHVjdFNoZWxsPlxuICAgICAgICAgICAgICA8L1Byb3RlY3RlZFJvdXRlPlxuICAgICAgICAgICAgfVxuICAgICAgICAgIC8+XG4gICAgICAgICAgPFJvdXRlXG4gICAgICAgICAgICBwYXRoPVwiL2J1bmRsZS1jaGVja2VyXCJcbiAgICAgICAgICAgIGVsZW1lbnQ9e1xuICAgICAgICAgICAgICA8UHJvdGVjdGVkUm91dGU+XG4gICAgICAgICAgICAgICAgPFdpdGhQcm9kdWN0U2hlbGw+XG4gICAgICAgICAgICAgICAgICA8QnVuZGxlQ2hlY2tlciAvPlxuICAgICAgICAgICAgICAgIDwvV2l0aFByb2R1Y3RTaGVsbD5cbiAgICAgICAgICAgICAgPC9Qcm90ZWN0ZWRSb3V0ZT5cbiAgICAgICAgICAgIH1cbiAgICAgICAgICAvPlxuICAgICAgICAgIDxSb3V0ZVxuICAgICAgICAgICAgcGF0aD1cIi9jb21tdW5pdGllc1wiXG4gICAgICAgICAgICBlbGVtZW50PXtcbiAgICAgICAgICAgICAgPFByb3RlY3RlZFJvdXRlPlxuICAgICAgICAgICAgICAgIDxXaXRoUHJvZHVjdFNoZWxsPlxuICAgICAgICAgICAgICAgICAgPENvbW11bml0aWVzSW5kZXhQYWdlIC8+XG4gICAgICAgICAgICAgICAgPC9XaXRoUHJvZHVjdFNoZWxsPlxuICAgICAgICAgICAgICA8L1Byb3RlY3RlZFJvdXRlPlxuICAgICAgICAgICAgfVxuICAgICAgICAgIC8+XG4gICAgICAgICAgPFJvdXRlXG4gICAgICAgICAgICBwYXRoPVwiL2NvbW11bml0aWVzLzp0b2tlbkFkZHJlc3NcIlxuICAgICAgICAgICAgZWxlbWVudD17XG4gICAgICAgICAgICAgIDxQcm90ZWN0ZWRSb3V0ZT5cbiAgICAgICAgICAgICAgICA8V2l0aFByb2R1Y3RTaGVsbD5cbiAgICAgICAgICAgICAgICAgIDxDb21tdW5pdHlQYWdlIC8+XG4gICAgICAgICAgICAgICAgPC9XaXRoUHJvZHVjdFNoZWxsPlxuICAgICAgICAgICAgICA8L1Byb3RlY3RlZFJvdXRlPlxuICAgICAgICAgICAgfVxuICAgICAgICAgIC8+XG4gICAgICAgICAgPFJvdXRlXG4gICAgICAgICAgICBwYXRoPVwiL3JhaWRzXCJcbiAgICAgICAgICAgIGVsZW1lbnQ9e1xuICAgICAgICAgICAgICA8UHJvdGVjdGVkUm91dGU+XG4gICAgICAgICAgICAgICAgPFdpdGhQcm9kdWN0U2hlbGw+XG4gICAgICAgICAgICAgICAgICA8UmFpZHNJbmRleFBhZ2UgLz5cbiAgICAgICAgICAgICAgICA8L1dpdGhQcm9kdWN0U2hlbGw+XG4gICAgICAgICAgICAgIDwvUHJvdGVjdGVkUm91dGU+XG4gICAgICAgICAgICB9XG4gICAgICAgICAgLz5cbiAgICAgICAgICA8Um91dGVcbiAgICAgICAgICAgIHBhdGg9XCIvcmFpZHMvOnRva2VuQWRkcmVzcy86cmFpZElkXCJcbiAgICAgICAgICAgIGVsZW1lbnQ9e1xuICAgICAgICAgICAgICA8UHJvdGVjdGVkUm91dGU+XG4gICAgICAgICAgICAgICAgPFdpdGhQcm9kdWN0U2hlbGw+XG4gICAgICAgICAgICAgICAgICA8UmFpZFBhZ2UgLz5cbiAgICAgICAgICAgICAgICA8L1dpdGhQcm9kdWN0U2hlbGw+XG4gICAgICAgICAgICAgIDwvUHJvdGVjdGVkUm91dGU+XG4gICAgICAgICAgICB9XG4gICAgICAgICAgLz5cbiAgICAgICAgICA8Um91dGVcclxuICAgICAgICAgICAgcGF0aD1cIi9sb2dpblwiXHJcbiAgICAgICAgICAgIGVsZW1lbnQ9e1xyXG4gICAgICAgICAgICAgIDxHdWVzdFJvdXRlPlxyXG4gICAgICAgICAgICAgICAgPExvZ2luIC8+XHJcbiAgICAgICAgICAgICAgPC9HdWVzdFJvdXRlPlxyXG4gICAgICAgICAgICB9XHJcbiAgICAgICAgICAvPlxyXG4gICAgICAgICAgPFJvdXRlIHBhdGg9XCIvdGVybXNcIiBlbGVtZW50PXs8VGVybXMgLz59IC8+XHJcbiAgICAgICAgICA8Um91dGUgcGF0aD1cIi9wcml2YWN5XCIgZWxlbWVudD17PFByaXZhY3kgLz59IC8+XHJcbiAgICAgICAgICA8Um91dGUgcGF0aD1cIi9kb2NzXCIgZWxlbWVudD17PERvY3MgLz59IC8+XHJcbiAgICAgICAgICA8Um91dGUgcGF0aD1cIi9hY2Nlc3MtY29kZVwiIGVsZW1lbnQ9ezxBY2Nlc3NDb2RlRW50cnkgLz59IC8+XG4gICAgICAgICAge0ZlZWRDYXJkTGFiID8gKFxuICAgICAgICAgICAgPFJvdXRlXG4gICAgICAgICAgICAgIHBhdGg9XCIvZGV2L2ZlZWQtY2FyZHNcIlxuICAgICAgICAgICAgICBlbGVtZW50PXtcbiAgICAgICAgICAgICAgICA8V2l0aFByb2R1Y3RTaGVsbD5cbiAgICAgICAgICAgICAgICAgIDxGZWVkQ2FyZExhYiAvPlxuICAgICAgICAgICAgICAgIDwvV2l0aFByb2R1Y3RTaGVsbD5cbiAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgLz5cbiAgICAgICAgICApIDogbnVsbH1cbiAgICAgICAgICA8Um91dGVcbiAgICAgICAgICAgIHBhdGg9XCIvOnVzZXJJZFwiXG4gICAgICAgICAgICBlbGVtZW50PXtcbiAgICAgICAgICAgICAgPFByb3RlY3RlZFJvdXRlPlxuICAgICAgICAgICAgICAgIDxXaXRoUHJvZHVjdFNoZWxsPlxuICAgICAgICAgICAgICAgICAgPFdpdGhTb2xhbmFSdW50aW1lPlxuICAgICAgICAgICAgICAgICAgICA8UHVibGljSGFuZGxlUHJvZmlsZVJvdXRlIC8+XG4gICAgICAgICAgICAgICAgICA8L1dpdGhTb2xhbmFSdW50aW1lPlxuICAgICAgICAgICAgICAgIDwvV2l0aFByb2R1Y3RTaGVsbD5cbiAgICAgICAgICAgICAgPC9Qcm90ZWN0ZWRSb3V0ZT5cbiAgICAgICAgICAgIH1cbiAgICAgICAgICAvPlxuICAgICAgICAgIDxSb3V0ZSBwYXRoPVwiKlwiIGVsZW1lbnQ9ezxBdXRoQXdhcmVOb3RGb3VuZFJvdXRlIC8+fSAvPlxuICAgICAgICA8L1JvdXRlcz5cbiAgICAgIDwvbW90aW9uLmRpdj5cbiAgICA8L0FuaW1hdGVQcmVzZW5jZT5cclxuICApO1xufVxuXG5mdW5jdGlvbiBSZWFsdGltZUludmFsaWRhdGlvbkJyaWRnZSgpIHtcbiAgY29uc3QgcXVlcnlDbGllbnQgPSB1c2VRdWVyeUNsaWVudCgpO1xuXG4gIHVzZUVmZmVjdCgoKSA9PiB7XG4gICAgcmV0dXJuIHN1YnNjcmliZVRvQXBwUmVhbHRpbWUoe1xuICAgICAgb25JbnZhbGlkYXRlOiAocGF5bG9hZCkgPT4ge1xuICAgICAgICBjb25zdCBzY29wZXMgPSBuZXcgU2V0KHBheWxvYWQuc2NvcGVzID8/IFtdKTtcblxuICAgICAgICBpZiAoc2NvcGVzLmhhcyhcImZlZWRcIikpIHtcbiAgICAgICAgICB2b2lkIHF1ZXJ5Q2xpZW50LmludmFsaWRhdGVRdWVyaWVzKHsgcXVlcnlLZXk6IFtcInBvc3RzXCJdLCByZWZldGNoVHlwZTogXCJhY3RpdmVcIiB9KTtcbiAgICAgICAgfVxuICAgICAgICBpZiAoc2NvcGVzLmhhcyhcImxlYWRlcmJvYXJkXCIpKSB7XG4gICAgICAgICAgdm9pZCBxdWVyeUNsaWVudC5pbnZhbGlkYXRlUXVlcmllcyh7IHF1ZXJ5S2V5OiBbXCJsZWFkZXJib2FyZFwiXSwgcmVmZXRjaFR5cGU6IFwiYWN0aXZlXCIgfSk7XG4gICAgICAgICAgdm9pZCBxdWVyeUNsaWVudC5pbnZhbGlkYXRlUXVlcmllcyh7IHF1ZXJ5S2V5OiBbXCJsZWFkZXJib2FyZHNcIl0sIHJlZmV0Y2hUeXBlOiBcImFjdGl2ZVwiIH0pO1xuICAgICAgICB9XG4gICAgICAgIGlmIChzY29wZXMuaGFzKFwicHJvZmlsZXNcIikpIHtcbiAgICAgICAgICB2b2lkIHF1ZXJ5Q2xpZW50LmludmFsaWRhdGVRdWVyaWVzKHsgcXVlcnlLZXk6IFtcInByb2ZpbGVcIiwgXCJtZVwiXSwgcmVmZXRjaFR5cGU6IFwiYWN0aXZlXCIgfSk7XG4gICAgICAgICAgdm9pZCBxdWVyeUNsaWVudC5pbnZhbGlkYXRlUXVlcmllcyh7IHF1ZXJ5S2V5OiBbXCJ1c2VyUHJvZmlsZVwiXSwgcmVmZXRjaFR5cGU6IFwiYWN0aXZlXCIgfSk7XG4gICAgICAgIH1cbiAgICAgICAgaWYgKHNjb3Blcy5oYXMoXCJwcm9maWxlLXBlcmZvcm1hbmNlXCIpKSB7XG4gICAgICAgICAgdm9pZCBxdWVyeUNsaWVudC5pbnZhbGlkYXRlUXVlcmllcyh7IHF1ZXJ5S2V5OiBbXCJwcm9maWxlXCIsIFwicGVyZm9ybWFuY2VcIl0sIHJlZmV0Y2hUeXBlOiBcImFjdGl2ZVwiIH0pO1xuICAgICAgICAgIHZvaWQgcXVlcnlDbGllbnQuaW52YWxpZGF0ZVF1ZXJpZXMoeyBxdWVyeUtleTogW1widXNlclByb2ZpbGVQZXJmb3JtYW5jZVwiXSwgcmVmZXRjaFR5cGU6IFwiYWN0aXZlXCIgfSk7XG4gICAgICAgIH1cbiAgICAgICAgaWYgKHNjb3Blcy5oYXMoXCJ1c2VyLXBvc3RzXCIpKSB7XG4gICAgICAgICAgdm9pZCBxdWVyeUNsaWVudC5pbnZhbGlkYXRlUXVlcmllcyh7IHF1ZXJ5S2V5OiBbXCJwcm9maWxlXCIsIFwicG9zdHNcIl0sIHJlZmV0Y2hUeXBlOiBcImFjdGl2ZVwiIH0pO1xuICAgICAgICAgIHZvaWQgcXVlcnlDbGllbnQuaW52YWxpZGF0ZVF1ZXJpZXMoeyBxdWVyeUtleTogW1wicHJvZmlsZVwiLCBcInJlcG9zdHNcIl0sIHJlZmV0Y2hUeXBlOiBcImFjdGl2ZVwiIH0pO1xuICAgICAgICAgIHZvaWQgcXVlcnlDbGllbnQuaW52YWxpZGF0ZVF1ZXJpZXMoeyBxdWVyeUtleTogW1widXNlclBvc3RzXCJdLCByZWZldGNoVHlwZTogXCJhY3RpdmVcIiB9KTtcbiAgICAgICAgICB2b2lkIHF1ZXJ5Q2xpZW50LmludmFsaWRhdGVRdWVyaWVzKHsgcXVlcnlLZXk6IFtcInVzZXJSZXBvc3RzXCJdLCByZWZldGNoVHlwZTogXCJhY3RpdmVcIiB9KTtcbiAgICAgICAgfVxuICAgICAgICBpZiAoc2NvcGVzLmhhcyhcInRva2VuLXBhZ2VcIikpIHtcbiAgICAgICAgICB2b2lkIHF1ZXJ5Q2xpZW50LmludmFsaWRhdGVRdWVyaWVzKHsgcXVlcnlLZXk6IFtcInRva2VuLXBhZ2VcIl0sIHJlZmV0Y2hUeXBlOiBcImFjdGl2ZVwiIH0pO1xuICAgICAgICB9XG4gICAgICB9LFxuICAgIH0pO1xuICB9LCBbcXVlcnlDbGllbnRdKTtcblxuICByZXR1cm4gbnVsbDtcbn1cblxyXG5jb25zdCBBcHAgPSAoKSA9PiAoXG4gIDxRdWVyeUNsaWVudFByb3ZpZGVyIGNsaWVudD17cXVlcnlDbGllbnR9PlxuICAgIDxUaGVtZVByb3ZpZGVyPlxuICAgICAgPFByaXZ5V2FsbGV0UHJvdmlkZXI+XG4gICAgICAgIDxBdXRoUHJvdmlkZXI+XG4gICAgICAgICAgPEF1dGhJbml0aWFsaXplcj5cbiAgICAgICAgICAgIDxSZWFsdGltZUludmFsaWRhdGlvbkJyaWRnZSAvPlxuICAgICAgICAgICAgPFRvb2x0aXBQcm92aWRlcj5cbiAgICAgICAgICAgICAgPFRvYXN0ZXIgLz5cbiAgICAgICAgICAgICAgPFNvbm5lciAvPlxuICAgICAgICAgICAgICA8QnJvd3NlclJvdXRlcj5cbiAgICAgICAgICAgICAgICA8QXBwUm91dGVFcnJvckJvdW5kYXJ5PlxuICAgICAgICAgICAgICAgICAgPFN1c3BlbnNlIGZhbGxiYWNrPXs8UGFnZVNrZWxldG9uIC8+fT5cbiAgICAgICAgICAgICAgICAgICAgPE1pc3NpbmdIYW5kbGVHYXRlPlxuICAgICAgICAgICAgICAgICAgICAgIDxBbmltYXRlZFJvdXRlcyAvPlxuICAgICAgICAgICAgICAgICAgICA8L01pc3NpbmdIYW5kbGVHYXRlPlxuICAgICAgICAgICAgICAgICAgPC9TdXNwZW5zZT5cbiAgICAgICAgICAgICAgICA8L0FwcFJvdXRlRXJyb3JCb3VuZGFyeT5cbiAgICAgICAgICAgICAgPC9Ccm93c2VyUm91dGVyPlxuICAgICAgICAgICAgPC9Ub29sdGlwUHJvdmlkZXI+XG4gICAgICAgICAgPC9BdXRoSW5pdGlhbGl6ZXI+XG4gICAgICAgIDwvQXV0aFByb3ZpZGVyPlxuICAgICAgPC9Qcml2eVdhbGxldFByb3ZpZGVyPlxuICAgIDwvVGhlbWVQcm92aWRlcj5cbiAgPC9RdWVyeUNsaWVudFByb3ZpZGVyPlxuKTtcblxyXG5leHBvcnQgZGVmYXVsdCBBcHA7XHJcbiJdLCJuYW1lcyI6WyJDb21wb25lbnQiLCJsYXp5IiwiU3VzcGVuc2UiLCJ1c2VFZmZlY3QiLCJUb2FzdGVyIiwiU29ubmVyIiwiVG9vbHRpcFByb3ZpZGVyIiwiUXVlcnlDbGllbnQiLCJRdWVyeUNsaWVudFByb3ZpZGVyIiwidXNlUXVlcnlDbGllbnQiLCJCcm93c2VyUm91dGVyIiwiUm91dGVzIiwiUm91dGUiLCJOYXZpZ2F0ZSIsInVzZUxvY2F0aW9uIiwidXNlUGFyYW1zIiwiQW5pbWF0ZVByZXNlbmNlIiwibW90aW9uIiwiVGhlbWVQcm92aWRlciIsIkF1dGhQcm92aWRlciIsInVzZUF1dGgiLCJQcm90ZWN0ZWRSb3V0ZSIsIkd1ZXN0Um91dGUiLCJTa2VsZXRvbiIsIkF1dGhJbml0aWFsaXplciIsIlYyQXBwU2hlbGwiLCJQcml2eVdhbGxldFByb3ZpZGVyIiwiaXNQb3NzaWJsZVB1YmxpY1Byb2ZpbGVTZWdtZW50IiwiaW1wb3J0V2l0aFJlY292ZXJ5Iiwic3Vic2NyaWJlVG9BcHBSZWFsdGltZSIsImxhenlQYWdlIiwibG9hZGVyIiwic2NvcGUiLCJGZWVkIiwiUHJvZmlsZSIsIlVzZXJQcm9maWxlIiwiTm90aWZpY2F0aW9ucyIsIkxlYWRlcmJvYXJkIiwiQWRtaW4iLCJIYW5kbGVPbmJvYXJkaW5nIiwiTG9naW4iLCJQb3N0RGV0YWlsIiwiVG9rZW5QYWdlIiwiVGVybWluYWwiLCJCdW5kbGVDaGVja2VyIiwiQ29tbXVuaXRpZXNJbmRleFBhZ2UiLCJDb21tdW5pdHlQYWdlIiwiUmFpZHNJbmRleFBhZ2UiLCJSYWlkUGFnZSIsIlRlcm1zIiwiUHJpdmFjeSIsIkRvY3MiLCJOb3RGb3VuZCIsIkFjY2Vzc0NvZGVFbnRyeSIsIkZlZWRDYXJkTGFiIiwiZW52IiwiREVWIiwiUGFnZVNrZWxldG9uIiwiZGl2IiwiY2xhc3NOYW1lIiwiUHVibGljSGFuZGxlUHJvZmlsZVJvdXRlIiwidXNlcklkIiwiUHJvZHVjdENvbnRlbnRTa2VsZXRvbiIsIkFwcFJvdXRlRXJyb3JCb3VuZGFyeSIsImdldERlcml2ZWRTdGF0ZUZyb21FcnJvciIsImVycm9yIiwiaGFzRXJyb3IiLCJtZXNzYWdlIiwiRXJyb3IiLCJjb21wb25lbnREaWRDYXRjaCIsImluZm8iLCJjb25zb2xlIiwicmVuZGVyIiwic3RhdGUiLCJwcm9wcyIsImNoaWxkcmVuIiwiaDEiLCJwIiwiYnV0dG9uIiwidHlwZSIsIm9uQ2xpY2siLCJ3aW5kb3ciLCJsb2NhdGlvbiIsInJlbG9hZCIsIldpdGhTb2xhbmFSdW50aW1lIiwidGhlbiIsIm1vZCIsImRlZmF1bHQiLCJXaXRoUHJvZHVjdFNoZWxsIiwiZmFsbGJhY2siLCJoYXNDb21wbGV0ZWRIYW5kbGUiLCJ1c2VybmFtZSIsInRyaW0iLCJsZW5ndGgiLCJNaXNzaW5nSGFuZGxlR2F0ZSIsInVzZXIiLCJpc0F1dGhlbnRpY2F0ZWQiLCJpc1JlYWR5IiwicGF0aG5hbWUiLCJ0byIsInJlcGxhY2UiLCJmcm9tIiwic2VhcmNoIiwiaGFzaCIsIkF1dGhBd2FyZU5vdEZvdW5kUm91dGUiLCJoYXNMaXZlU2Vzc2lvbiIsInF1ZXJ5Q2xpZW50IiwiZGVmYXVsdE9wdGlvbnMiLCJxdWVyaWVzIiwicmVmZXRjaE9uV2luZG93Rm9jdXMiLCJyZWZldGNoT25SZWNvbm5lY3QiLCJyZXRyeSIsImZhaWx1cmVDb3VudCIsIm1heWJlU3RhdHVzIiwiTnVtYmVyIiwic3RhdHVzIiwicmV0cnlEZWxheSIsImF0dGVtcHQiLCJNYXRoIiwibWluIiwic3RhbGVUaW1lIiwiZ2NUaW1lIiwicGFnZVRyYW5zaXRpb24iLCJpbml0aWFsIiwib3BhY2l0eSIsInkiLCJhbmltYXRlIiwiZXhpdCIsInRyYW5zaXRpb24iLCJkdXJhdGlvbiIsImVhc2UiLCJBbmltYXRlZFJvdXRlcyIsIm1vZGUiLCJzdHlsZSIsIm1pbkhlaWdodCIsInBhdGgiLCJlbGVtZW50IiwiYWxsb3dNaXNzaW5nVXNlcm5hbWUiLCJSZWFsdGltZUludmFsaWRhdGlvbkJyaWRnZSIsIm9uSW52YWxpZGF0ZSIsInBheWxvYWQiLCJzY29wZXMiLCJTZXQiLCJoYXMiLCJpbnZhbGlkYXRlUXVlcmllcyIsInF1ZXJ5S2V5IiwicmVmZXRjaFR5cGUiLCJBcHAiLCJjbGllbnQiXSwibWFwcGluZ3MiOiI7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7QUFBQSxTQUNFQSxTQUFTLEVBQ1RDLElBQUksRUFDSkMsUUFBUSxFQUNSQyxTQUFTLFFBSUosUUFBUTtBQUNmLFNBQVNDLE9BQU8sUUFBUSwwQkFBMEI7QUFDbEQsU0FBU0EsV0FBV0MsTUFBTSxRQUFRLHlCQUF5QjtBQUMzRCxTQUFTQyxlQUFlLFFBQVEsMEJBQTBCO0FBQzFELFNBQVNDLFdBQVcsRUFBRUMsbUJBQW1CLEVBQUVDLGNBQWMsUUFBUSx3QkFBd0I7QUFDekYsU0FBU0MsYUFBYSxFQUFFQyxNQUFNLEVBQUVDLEtBQUssRUFBRUMsUUFBUSxFQUFFQyxXQUFXLEVBQUVDLFNBQVMsUUFBUSxtQkFBbUI7QUFDbEcsU0FBU0MsZUFBZSxFQUFFQyxNQUFNLFFBQVEsZ0JBQWdCO0FBQ3hELFNBQVNDLGFBQWEsUUFBUSw2QkFBNkI7QUFDM0QsU0FBU0MsWUFBWSxFQUFFQyxPQUFPLFFBQVEsb0JBQW9CO0FBQzFELFNBQVNDLGNBQWMsUUFBUSw4QkFBOEI7QUFDN0QsU0FBU0MsVUFBVSxRQUFRLDBCQUEwQjtBQUNyRCxTQUFTQyxRQUFRLFFBQVEsMkJBQTJCO0FBQ3BELFNBQVNDLGVBQWUsUUFBUSwrQkFBK0I7QUFDL0QsU0FBU0MsVUFBVSxRQUFRLGlDQUFpQztBQUM1RCxTQUFTQyxtQkFBbUIsUUFBUSxtQ0FBbUM7QUFDdkUsU0FBU0MsOEJBQThCLFFBQVEscUJBQXFCO0FBQ3BFLFNBQVNDLGtCQUFrQixRQUFRLDJCQUEyQjtBQUM5RCxTQUFTQyxzQkFBc0IsUUFBUSxxQ0FBcUM7QUFFNUUsTUFBTUMsV0FBVyxDQUNmQyxRQUNBQyxzQkFDRy9CLEtBQUssSUFBTTJCLG1CQUFtQkcsUUFBUUM7QUFFM0MsNEJBQTRCO0FBQzVCLE1BQU1DLE9BQU9ILGNBQVMsSUFBTSxN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

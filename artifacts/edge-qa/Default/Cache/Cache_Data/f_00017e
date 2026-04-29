@@ -1,0 +1,103 @@
+/**
+ * Strips any national prefix (such as 0, 1) present in a
+ * (possibly incomplete) number provided.
+ * "Carrier codes" are only used  in Colombia and Brazil,
+ * and only when dialing within those countries from a mobile phone to a fixed line number.
+ * Sometimes it won't actually strip national prefix
+ * and will instead prepend some digits to the `number`:
+ * for example, when number `2345678` is passed with `VI` country selected,
+ * it will return `{ number: "3402345678" }`, because `340` area code is prepended.
+ * @param {string} number — National number digits.
+ * @param {object} metadata — Metadata with country selected.
+ * @return {object} `{ nationalNumber: string, nationalPrefix: string? carrierCode: string? }`. Even if a national prefix was extracted, it's not necessarily present in the returned object, so don't rely on its presence in the returned object in order to find out whether a national prefix has been extracted or not.
+ */
+export default function extractNationalNumberFromPossiblyIncompleteNumber(number, metadata) {
+  if (number && metadata.numberingPlan.nationalPrefixForParsing()) {
+    // See METADATA.md for the description of
+    // `national_prefix_for_parsing` and `national_prefix_transform_rule`.
+    // Attempt to parse the first digits as a national prefix.
+    var prefixPattern = new RegExp('^(?:' + metadata.numberingPlan.nationalPrefixForParsing() + ')');
+    var prefixMatch = prefixPattern.exec(number);
+    if (prefixMatch) {
+      var nationalNumber;
+      var carrierCode;
+      // https://gitlab.com/catamphetamine/libphonenumber-js/-/blob/master/METADATA.md#national_prefix_for_parsing--national_prefix_transform_rule
+      // If a `national_prefix_for_parsing` has any "capturing groups"
+      // then it means that the national (significant) number is equal to
+      // those "capturing groups" transformed via `national_prefix_transform_rule`,
+      // and nothing could be said about the actual national prefix:
+      // what is it and was it even there.
+      // If a `national_prefix_for_parsing` doesn't have any "capturing groups",
+      // then everything it matches is a national prefix.
+      // To determine whether `national_prefix_for_parsing` matched any
+      // "capturing groups", the value of the result of calling `.exec()`
+      // is looked at, and if it has non-undefined values where there're
+      // "capturing groups" in the regular expression, then it means
+      // that "capturing groups" have been matched.
+      // It's not possible to tell whether there'll be any "capturing gropus"
+      // before the matching process, because a `national_prefix_for_parsing`
+      // could exhibit both behaviors.
+      var capturedGroupsCount = prefixMatch.length - 1;
+      var hasCapturedGroups = capturedGroupsCount > 0 && prefixMatch[capturedGroupsCount];
+      if (metadata.nationalPrefixTransformRule() && hasCapturedGroups) {
+        nationalNumber = number.replace(prefixPattern, metadata.nationalPrefixTransformRule());
+        // If there's more than one captured group,
+        // then carrier code is the second one.
+        if (capturedGroupsCount > 1) {
+          carrierCode = prefixMatch[1];
+        }
+      }
+      // If there're no "capturing groups",
+      // or if there're "capturing groups" but no
+      // `national_prefix_transform_rule`,
+      // then just strip the national prefix from the number,
+      // and possibly a carrier code.
+      // Seems like there could be more.
+      else {
+        // `prefixBeforeNationalNumber` is the whole substring matched by
+        // the `national_prefix_for_parsing` regular expression.
+        // There seem to be no guarantees that it's just a national prefix.
+        // For example, if there's a carrier code, it's gonna be a
+        // part of `prefixBeforeNationalNumber` too.
+        var prefixBeforeNationalNumber = prefixMatch[0];
+        nationalNumber = number.slice(prefixBeforeNationalNumber.length);
+        // If there's at least one captured group,
+        // then carrier code is the first one.
+        if (hasCapturedGroups) {
+          carrierCode = prefixMatch[1];
+        }
+      }
+      // Tries to guess whether a national prefix was present in the input.
+      // This is not something copy-pasted from Google's library:
+      // they don't seem to have an equivalent for that.
+      // So this isn't an "officially approved" way of doing something like that.
+      // But since there seems no other existing method, this library uses it.
+      var nationalPrefix;
+      if (hasCapturedGroups) {
+        var possiblePositionOfTheFirstCapturedGroup = number.indexOf(prefixMatch[1]);
+        var possibleNationalPrefix = number.slice(0, possiblePositionOfTheFirstCapturedGroup);
+        // Example: an Argentinian (AR) phone number `0111523456789`.
+        // `prefixMatch[0]` is `01115`, and `$1` is `11`,
+        // and the rest of the phone number is `23456789`.
+        // The national number is transformed via `9$1` to `91123456789`.
+        // National prefix `0` is detected being present at the start.
+        // if (possibleNationalPrefix.indexOf(metadata.numberingPlan.nationalPrefix()) === 0) {
+        if (possibleNationalPrefix === metadata.numberingPlan.nationalPrefix()) {
+          nationalPrefix = metadata.numberingPlan.nationalPrefix();
+        }
+      } else {
+        nationalPrefix = prefixMatch[0];
+      }
+      return {
+        nationalNumber: nationalNumber,
+        nationalPrefix: nationalPrefix,
+        carrierCode: carrierCode
+      };
+    }
+  }
+  return {
+    nationalNumber: number
+  };
+}
+                                                                             
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiZXh0cmFjdE5hdGlvbmFsTnVtYmVyRnJvbVBvc3NpYmx5SW5jb21wbGV0ZU51bWJlci5qcyIsIm5hbWVzIjpbImV4dHJhY3ROYXRpb25hbE51bWJlckZyb21Qb3NzaWJseUluY29tcGxldGVOdW1iZXIiLCJudW1iZXIiLCJtZXRhZGF0YSIsIm51bWJlcmluZ1BsYW4iLCJuYXRpb25hbFByZWZpeEZvclBhcnNpbmciLCJwcmVmaXhQYXR0ZXJuIiwiUmVnRXhwIiwicHJlZml4TWF0Y2giLCJleGVjIiwibmF0aW9uYWxOdW1iZXIiLCJjYXJyaWVyQ29kZSIsImNhcHR1cmVkR3JvdXBzQ291bnQiLCJsZW5ndGgiLCJoYXNDYXB0dXJlZEdyb3VwcyIsIm5hdGlvbmFsUHJlZml4VHJhbnNmb3JtUnVsZSIsInJlcGxhY2UiLCJwcmVmaXhCZWZvcmVOYXRpb25hbE51bWJlciIsInNsaWNlIiwibmF0aW9uYWxQcmVmaXgiLCJwb3NzaWJsZVBvc2l0aW9uT2ZUaGVGaXJzdENhcHR1cmVkR3JvdXAiLCJpbmRleE9mIiwicG9zc2libGVOYXRpb25hbFByZWZpeCJdLCJzb3VyY2VzIjpbIi4uLy4uL3NvdXJjZS9oZWxwZXJzL2V4dHJhY3ROYXRpb25hbE51bWJlckZyb21Qb3NzaWJseUluY29tcGxldGVOdW1iZXIuanMiXSwic291cmNlc0NvbnRlbnQiOlsiLyoqXHJcbiAqIFN0cmlwcyBhbnkgbmF0aW9uYWwgcHJlZml4IChzdWNoIGFzIDAsIDEpIHByZXNlbnQgaW4gYVxyXG4gKiAocG9zc2libHkgaW5jb21wbGV0ZSkgbnVtYmVyIHByb3ZpZGVkLlxyXG4gKiBcIkNhcnJpZXIgY29kZXNcIiBhcmUgb25seSB1c2VkICBpbiBDb2xvbWJpYSBhbmQgQnJhemlsLFxyXG4gKiBhbmQgb25seSB3aGVuIGRpYWxpbmcgd2l0aGluIHRob3NlIGNvdW50cmllcyBmcm9tIGEgbW9iaWxlIHBob25lIHRvIGEgZml4ZWQgbGluZSBudW1iZXIuXHJcbiAqIFNvbWV0aW1lcyBpdCB3b24ndCBhY3R1YWxseSBzdHJpcCBuYXRpb25hbCBwcmVmaXhcclxuICogYW5kIHdpbGwgaW5zdGVhZCBwcmVwZW5kIHNvbWUgZGlnaXRzIHRvIHRoZSBgbnVtYmVyYDpcclxuICogZm9yIGV4YW1wbGUsIHdoZW4gbnVtYmVyIGAyMzQ1Njc4YCBpcyBwYXNzZWQgd2l0aCBgVklgIGNvdW50cnkgc2VsZWN0ZWQsXHJcbiAqIGl0IHdpbGwgcmV0dXJuIGB7IG51bWJlcjogXCIzNDAyMzQ1Njc4XCIgfWAsIGJlY2F1c2UgYDM0MGAgYXJlYSBjb2RlIGlzIHByZXBlbmRlZC5cclxuICogQHBhcmFtIHtzdHJpbmd9IG51bWJlciDigJQgTmF0aW9uYWwgbnVtYmVyIGRpZ2l0cy5cclxuICogQHBhcmFtIHtvYmplY3R9IG1ldGFkYXRhIOKAlCBNZXRhZGF0YSB3aXRoIGNvdW50cnkgc2VsZWN0ZWQuXHJcbiAqIEByZXR1cm4ge29iamVjdH0gYHsgbmF0aW9uYWxOdW1iZXI6IHN0cmluZywgbmF0aW9uYWxQcmVmaXg6IHN0cmluZz8gY2FycmllckNvZGU6IHN0cmluZz8gfWAuIEV2ZW4gaWYgYSBuYXRpb25hbCBwcmVmaXggd2FzIGV4dHJhY3RlZCwgaXQncyBub3QgbmVjZXNzYXJpbHkgcHJlc2VudCBpbiB0aGUgcmV0dXJuZWQgb2JqZWN0LCBzbyBkb24ndCByZWx5IG9uIGl0cyBwcmVzZW5jZSBpbiB0aGUgcmV0dXJuZWQgb2JqZWN0IGluIG9yZGVyIHRvIGZpbmQgb3V0IHdoZXRoZXIgYSBuYXRpb25hbCBwcmVmaXggaGFzIGJlZW4gZXh0cmFjdGVkIG9yIG5vdC5cclxuICovXHJcbmV4cG9ydCBkZWZhdWx0IGZ1bmN0aW9uIGV4dHJhY3ROYXRpb25hbE51bWJlckZyb21Qb3NzaWJseUluY29tcGxldGVOdW1iZXIobnVtYmVyLCBtZXRhZGF0YSkge1xyXG5cdGlmIChudW1iZXIgJiYgbWV0YWRhdGEubnVtYmVyaW5nUGxhbi5uYXRpb25hbFByZWZpeEZvclBhcnNpbmcoKSkge1xyXG5cdFx0Ly8gU2VlIE1FVEFEQVRBLm1kIGZvciB0aGUgZGVzY3JpcHRpb24gb2ZcclxuXHRcdC8vIGBuYXRpb25hbF9wcmVmaXhfZm9yX3BhcnNpbmdgIGFuZCBgbmF0aW9uYWxfcHJlZml4X3RyYW5zZm9ybV9ydWxlYC5cclxuXHRcdC8vIEF0dGVtcHQgdG8gcGFyc2UgdGhlIGZpcnN0IGRpZ2l0cyBhcyBhIG5hdGlvbmFsIHByZWZpeC5cclxuXHRcdGNvbnN0IHByZWZpeFBhdHRlcm4gPSBuZXcgUmVnRXhwKCdeKD86JyArIG1ldGFkYXRhLm51bWJlcmluZ1BsYW4ubmF0aW9uYWxQcmVmaXhGb3JQYXJzaW5nKCkgKyAnKScpXHJcblx0XHRjb25zdCBwcmVmaXhNYXRjaCA9IHByZWZpeFBhdHRlcm4uZXhlYyhudW1iZXIpXHJcblx0XHRpZiAocHJlZml4TWF0Y2gpIHtcclxuXHRcdFx0bGV0IG5hdGlvbmFsTnVtYmVyXHJcblx0XHRcdGxldCBjYXJyaWVyQ29kZVxyXG5cdFx0XHQvLyBodHRwczovL2dpdGxhYi5jb20vY2F0YW1waGV0YW1pbmUvbGlicGhvbmVudW1iZXItanMvLS9ibG9iL21hc3Rlci9NRVRBREFUQS5tZCNuYXRpb25hbF9wcmVmaXhfZm9yX3BhcnNpbmctLW5hdGlvbmFsX3ByZWZpeF90cmFuc2Zvcm1fcnVsZVxyXG5cdFx0XHQvLyBJZiBhIGBuYXRpb25hbF9wcmVmaXhfZm9yX3BhcnNpbmdgIGhhcyBhbnkgXCJjYXB0dXJpbmcgZ3JvdXBzXCJcclxuXHRcdFx0Ly8gdGhlbiBpdCBtZWFucyB0aGF0IHRoZSBuYXRpb25hbCAoc2lnbmlmaWNhbnQpIG51bWJlciBpcyBlcXVhbCB0b1xyXG5cdFx0XHQvLyB0aG9zZSBcImNhcHR1cmluZyBncm91cHNcIiB0cmFuc2Zvcm1lZCB2aWEgYG5hdGlvbmFsX3ByZWZpeF90cmFuc2Zvcm1fcnVsZWAsXHJcblx0XHRcdC8vIGFuZCBub3RoaW5nIGNvdWxkIGJlIHNhaWQgYWJvdXQgdGhlIGFjdHVhbCBuYXRpb25hbCBwcmVmaXg6XHJcblx0XHRcdC8vIHdoYXQgaXMgaXQgYW5kIHdhcyBpdCBldmVuIHRoZXJlLlxyXG5cdFx0XHQvLyBJZiBhIGBuYXRpb25hbF9wcmVmaXhfZm9yX3BhcnNpbmdgIGRvZXNuJ3QgaGF2ZSBhbnkgXCJjYXB0dXJpbmcgZ3JvdXBzXCIsXHJcblx0XHRcdC8vIHRoZW4gZXZlcnl0aGluZyBpdCBtYXRjaGVzIGlzIGEgbmF0aW9uYWwgcHJlZml4LlxyXG5cdFx0XHQvLyBUbyBkZXRlcm1pbmUgd2hldGhlciBgbmF0aW9uYWxfcHJlZml4X2Zvcl9wYXJzaW5nYCBtYXRjaGVkIGFueVxyXG5cdFx0XHQvLyBcImNhcHR1cmluZyBncm91cHNcIiwgdGhlIHZhbHVlIG9mIHRoZSByZXN1bHQgb2YgY2FsbGluZyBgLmV4ZWMoKWBcclxuXHRcdFx0Ly8gaXMgbG9va2VkIGF0LCBhbmQgaWYgaXQgaGFzIG5vbi11bmRlZmluZWQgdmFsdWVzIHdoZXJlIHRoZXJlJ3JlXHJcblx0XHRcdC8vIFwiY2FwdHVyaW5nIGdyb3Vwc1wiIGluIHRoZSByZWd1bGFyIGV4cHJlc3Npb24sIHRoZW4gaXQgbWVhbnNcclxuXHRcdFx0Ly8gdGhhdCBcImNhcHR1cmluZyBncm91cHNcIiBoYXZlIGJlZW4gbWF0Y2hlZC5cclxuXHRcdFx0Ly8gSXQncyBub3QgcG9zc2libGUgdG8gdGVsbCB3aGV0aGVyIHRoZXJlJ2xsIGJlIGFueSBcImNhcHR1cmluZyBncm9wdXNcIlxyXG5cdFx0XHQvLyBiZWZvcmUgdGhlIG1hdGNoaW5nIHByb2Nlc3MsIGJlY2F1c2UgYSBgbmF0aW9uYWxfcHJlZml4X2Zvcl9wYXJzaW5nYFxyXG5cdFx0XHQvLyBjb3VsZCBleGhpYml0IGJvdGggYmVoYXZpb3JzLlxyXG5cdFx0XHRjb25zdCBjYXB0dXJlZEdyb3Vwc0NvdW50ID0gcHJlZml4TWF0Y2gubGVuZ3RoIC0gMVxyXG5cdFx0XHRjb25zdCBoYXNDYXB0dXJlZEdyb3VwcyA9IGNhcHR1cmVkR3JvdXBzQ291bnQgPiAwICYmIHByZWZpeE1hdGNoW2NhcHR1cmVkR3JvdXBzQ291bnRdXHJcblx0XHRcdGlmIChtZXRhZGF0YS5uYXRpb25hbFByZWZpeFRyYW5zZm9ybVJ1bGUoKSAmJiBoYXNDYXB0dXJlZEdyb3Vwcykge1xyXG5cdFx0XHRcdG5hdGlvbmFsTnVtYmVyID0gbnVtYmVyLnJlcGxhY2UoXHJcblx0XHRcdFx0XHRwcmVmaXhQYXR0ZXJuLFxyXG5cdFx0XHRcdFx0bWV0YWRhdGEubmF0aW9uYWxQcmVmaXhUcmFuc2Zvcm1SdWxlKClcclxuXHRcdFx0XHQpXHJcblx0XHRcdFx0Ly8gSWYgdGhlcmUncyBtb3JlIHRoYW4gb25lIGNhcHR1cmVkIGdyb3VwLFxyXG5cdFx0XHRcdC8vIHRoZW4gY2FycmllciBjb2RlIGlzIHRoZSBzZWNvbmQgb25lLlxyXG5cdFx0XHRcdGlmIChjYXB0dXJlZEdyb3Vwc0NvdW50ID4gMSkge1xyXG5cdFx0XHRcdFx0Y2FycmllckNvZGUgPSBwcmVmaXhNYXRjaFsxXVxyXG5cdFx0XHRcdH1cclxuXHRcdFx0fVxyXG5cdFx0XHQvLyBJZiB0aGVyZSdyZSBubyBcImNhcHR1cmluZyBncm91cHNcIixcclxuXHRcdFx0Ly8gb3IgaWYgdGhlcmUncmUgXCJjYXB0dXJpbmcgZ3JvdXBzXCIgYnV0IG5vXHJcblx0XHRcdC8vIGBuYXRpb25hbF9wcmVmaXhfdHJhbnNmb3JtX3J1bGVgLFxyXG5cdFx0XHQvLyB0aGVuIGp1c3Qgc3RyaXAgdGhlIG5hdGlvbmFsIHByZWZpeCBmcm9tIHRoZSBudW1iZXIsXHJcblx0XHRcdC8vIGFuZCBwb3NzaWJseSBhIGNhcnJpZXIgY29kZS5cclxuXHRcdFx0Ly8gU2VlbXMgbGlrZSB0aGVyZSBjb3VsZCBiZSBtb3JlLlxyXG5cdFx0XHRlbHNlIHtcclxuXHRcdFx0XHQvLyBgcHJlZml4QmVmb3JlTmF0aW9uYWxOdW1iZXJgIGlzIHRoZSB3aG9sZSBzdWJzdHJpbmcgbWF0Y2hlZCBieVxyXG5cdFx0XHRcdC8vIHRoZSBgbmF0aW9uYWxfcHJlZml4X2Zvcl9wYXJzaW5nYCByZWd1bGFyIGV4cHJlc3Npb24uXHJcblx0XHRcdFx0Ly8gVGhlcmUgc2VlbSB0byBiZSBubyBndWFyYW50ZWVzIHRoYXQgaXQncyBqdXN0IGEgbmF0aW9uYWwgcHJlZml4LlxyXG5cdFx0XHRcdC8vIEZvciBleGFtcGxlLCBpZiB0aGVyZSdzIGEgY2FycmllciBjb2RlLCBpdCdzIGdvbm5hIGJlIGFcclxuXHRcdFx0XHQvLyBwYXJ0IG9mIGBwcmVmaXhCZWZvcmVOYXRpb25hbE51bWJlcmAgdG9vLlxyXG5cdFx0XHRcdGNvbnN0IHByZWZpeEJlZm9yZU5hdGlvbmFsTnVtYmVyID0gcHJlZml4TWF0Y2hbMF1cclxuXHRcdFx0XHRuYXRpb25hbE51bWJlciA9IG51bWJlci5zbGljZShwcmVmaXhCZWZvcmVOYXRpb25hbE51bWJlci5sZW5ndGgpXHJcblx0XHRcdFx0Ly8gSWYgdGhlcmUncyBhdCBsZWFzdCBvbmUgY2FwdHVyZWQgZ3JvdXAsXHJcblx0XHRcdFx0Ly8gdGhlbiBjYXJyaWVyIGNvZGUgaXMgdGhlIGZpcnN0IG9uZS5cclxuXHRcdFx0XHRpZiAoaGFzQ2FwdHVyZWRHcm91cHMpIHtcclxuXHRcdFx0XHRcdGNhcnJpZXJDb2RlID0gcHJlZml4TWF0Y2hbMV1cclxuXHRcdFx0XHR9XHJcblx0XHRcdH1cclxuXHRcdFx0Ly8gVHJpZXMgdG8gZ3Vlc3Mgd2hldGhlciBhIG5hdGlvbmFsIHByZWZpeCB3YXMgcHJlc2VudCBpbiB0aGUgaW5wdXQuXHJcblx0XHRcdC8vIFRoaXMgaXMgbm90IHNvbWV0aGluZyBjb3B5LXBhc3RlZCBmcm9tIEdvb2dsZSdzIGxpYnJhcnk6XHJcblx0XHRcdC8vIHRoZXkgZG9uJ3Qgc2VlbSB0byBoYXZlIGFuIGVxdWl2YWxlbnQgZm9yIHRoYXQuXHJcblx0XHRcdC8vIFNvIHRoaXMgaXNuJ3QgYW4gXCJvZmZpY2lhbGx5IGFwcHJvdmVkXCIgd2F5IG9mIGRvaW5nIHNvbWV0aGluZyBsaWtlIHRoYXQuXHJcblx0XHRcdC8vIEJ1dCBzaW5jZSB0aGVyZSBzZWVtcyBubyBvdGhlciBleGlzdGluZyBtZXRob2QsIHRoaXMgbGlicmFyeSB1c2VzIGl0LlxyXG5cdFx0XHRsZXQgbmF0aW9uYWxQcmVmaXhcclxuXHRcdFx0aWYgKGhhc0NhcHR1cmVkR3JvdXBzKSB7XHJcblx0XHRcdFx0Y29uc3QgcG9zc2libGVQb3NpdGlvbk9mVGhlRmlyc3RDYXB0dXJlZEdyb3VwID0gbnVtYmVyLmluZGV4T2YocHJlZml4TWF0Y2hbMV0pXHJcblx0XHRcdFx0Y29uc3QgcG9zc2libGVOYXRpb25hbFByZWZpeCA9IG51bWJlci5zbGljZSgwLCBwb3NzaWJsZVBvc2l0aW9uT2ZUaGVGaXJzdENhcHR1cmVkR3JvdXApXHJcblx0XHRcdFx0Ly8gRXhhbXBsZTogYW4gQXJnZW50aW5pYW4gKEFSKSBwaG9uZSBudW1iZXIgYDAxMTE1MjM0NTY3ODlgLlxyXG5cdFx0XHRcdC8vIGBwcmVmaXhNYXRjaFswXWAgaXMgYDAxMTE1YCwgYW5kIGAkMWAgaXMgYDExYCxcclxuXHRcdFx0XHQvLyBhbmQgdGhlIHJlc3Qgb2YgdGhlIHBob25lIG51bWJlciBpcyBgMjM0NTY3ODlgLlxyXG5cdFx0XHRcdC8vIFRoZSBuYXRpb25hbCBudW1iZXIgaXMgdHJhbnNmb3JtZWQgdmlhIGA5JDFgIHRvIGA5MTEyMzQ1Njc4OWAuXHJcblx0XHRcdFx0Ly8gTmF0aW9uYWwgcHJlZml4IGAwYCBpcyBkZXRlY3RlZCBiZWluZyBwcmVzZW50IGF0IHRoZSBzdGFydC5cclxuXHRcdFx0XHQvLyBpZiAocG9zc2libGVOYXRpb25hbFByZWZpeC5pbmRleE9mKG1ldGFkYXRhLm51bWJlcmluZ1BsYW4ubmF0aW9uYWxQcmVmaXgoKSkgPT09IDApIHtcclxuXHRcdFx0XHRpZiAocG9zc2libGVOYXRpb25hbFByZWZpeCA9PT0gbWV0YWRhdGEubnVtYmVyaW5nUGxhbi5uYXRpb25hbFByZWZpeCgpKSB7XHJcblx0XHRcdFx0XHRuYXRpb25hbFByZWZpeCA9IG1ldGFkYXRhLm51bWJlcmluZ1BsYW4ubmF0aW9uYWxQcmVmaXgoKVxyXG5cdFx0XHRcdH1cclxuXHRcdFx0fSBlbHNlIHtcclxuXHRcdFx0XHRuYXRpb25hbFByZWZpeCA9IHByZWZpeE1hdGNoWzBdXHJcblx0XHRcdH1cclxuXHRcdFx0cmV0dXJuIHtcclxuXHRcdFx0XHRuYXRpb25hbE51bWJlcixcclxuXHRcdFx0XHRuYXRpb25hbFByZWZpeCxcclxuXHRcdFx0XHRjYXJyaWVyQ29kZVxyXG5cdFx0XHR9XHJcblx0XHR9XHJcblx0fVxyXG4gICByZXR1cm4ge1xyXG4gICBcdG5hdGlvbmFsTnVtYmVyOiBudW1iZXJcclxuICAgfVxyXG59Il0sIm1hcHBpbmdzIjoiQUFBQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBLGVBQWUsU0FBU0EsaURBQWlEQSxDQUFDQyxNQUFNLEVBQUVDLFFBQVEsRUFBRTtFQUMzRixJQUFJRCxNQUFNLElBQUlDLFFBQVEsQ0FBQ0MsYUFBYSxDQUFDQyx3QkFBd0IsQ0FBQyxDQUFDLEVBQUU7SUFDaEU7SUFDQTtJQUNBO0lBQ0EsSUFBTUMsYUFBYSxHQUFHLElBQUlDLE1BQU0sQ0FBQyxNQUFNLEdBQUdKLFFBQVEsQ0FBQ0MsYUFBYSxDQUFDQyx3QkFBd0IsQ0FBQyxDQUFDLEdBQUcsR0FBRyxDQUFDO0lBQ2xHLElBQU1HLFdBQVcsR0FBR0YsYUFBYSxDQUFDRyxJQUFJLENBQUNQLE1BQU0sQ0FBQztJQUM5QyxJQUFJTSxXQUFXLEVBQUU7TUFDaEIsSUFBSUUsY0FBYztNQUNsQixJQUFJQyxXQUFXO01BQ2Y7TUFDQTtNQUNBO01BQ0E7TUFDQTtNQUNBO01BQ0E7TUFDQTtNQUNBO01BQ0E7TUFDQTtNQUNBO01BQ0E7TUFDQTtNQUNBO01BQ0E7TUFDQSxJQUFNQyxtQkFBbUIsR0FBR0osV0FBVyxDQUFDSyxNQUFNLEdBQUcsQ0FBQztNQUNsRCxJQUFNQyxpQkFBaUIsR0FBR0YsbUJBQW1CLEdBQUcsQ0FBQyxJQUFJSixXQUFXLENBQUNJLG1CQUFtQixDQUFDO01BQ3JGLElBQUlULFFBQVEsQ0FBQ1ksMkJBQTJCLENBQUMsQ0FBQyxJQUFJRCxpQkFBaUIsRUFBRTtRQUNoRUosY0FBYyxHQUFHUixNQUFNLENBQUNjLE9BQU8sQ0FDOUJWLGFBQWEsRUFDYkgsUUFBUSxDQUFDWSwyQkFBMkIsQ0FBQyxDQUN0QyxDQUFDO1FBQ0Q7UUFDQTtRQUNBLElBQUlILG1CQUFtQixHQUFHLENBQUMsRUFBRTtVQUM1QkQsV0FBVyxHQUFHSCxXQUFXLENBQUMsQ0FBQyxDQUFDO1FBQzdCO01BQ0Q7TUFDQTtNQUNBO01BQ0E7TUFDQTtNQUNBO01BQ0E7TUFBQSxLQUNLO1FBQ0o7UUFDQTtRQUNBO1FBQ0E7UUFDQTtRQUNBLElBQU1TLDBCQUEwQixHQUFHVCxXQUFXLENBQUMsQ0FBQyxDQUFDO1FBQ2pERSxjQUFjLEdBQUdSLE1BQU0sQ0FBQ2dCLEtBQUssQ0FBQ0QsMEJBQTBCLENBQUNKLE1BQU0sQ0FBQztRQUNoRTtRQUNBO1FBQ0EsSUFBSUMsaUJBQWlCLEVBQUU7VUFDdEJILFdBQVcsR0FBR0gsV0FBVyxDQUFDLENBQUMsQ0FBQztRQUM3QjtNQUNEO01BQ0E7TUFDQTtNQUNBO01BQ0E7TUFDQTtNQUNBLElBQUlXLGNBQWM7TUFDbEIsSUFBSUwsaUJBQWlCLEVBQUU7UUFDdEIsSUFBTU0sdUNBQXVDLEdBQUdsQixNQUFNLENBQUNtQixPQUFPLENBQUNiLFdBQVcsQ0FBQyxDQUFDLENBQUMsQ0FBQztRQUM5RSxJQUFNYyxzQkFBc0IsR0FBR3BCLE1BQU0sQ0FBQ2dCLEtBQUssQ0FBQyxDQUFDLEVBQUVFLHVDQUF1QyxDQUFDO1FBQ3ZGO1FBQ0E7UUFDQTtRQUNBO1FBQ0E7UUFDQTtRQUNBLElBQUlFLHNCQUFzQixLQUFLbkIsUUFBUSxDQUFDQyxhQUFhLENBQUNlLGNBQWMsQ0FBQyxDQUFDLEVBQUU7VUFDdkVBLGNBQWMsR0FBR2hCLFFBQVEsQ0FBQ0MsYUFBYSxDQUFDZSxjQUFjLENBQUMsQ0FBQztRQUN6RDtNQUNELENBQUMsTUFBTTtRQUNOQSxjQUFjLEdBQUdYLFdBQVcsQ0FBQyxDQUFDLENBQUM7TUFDaEM7TUFDQSxPQUFPO1FBQ05FLGNBQWMsRUFBZEEsY0FBYztRQUNkUyxjQUFjLEVBQWRBLGNBQWM7UUFDZFIsV0FBVyxFQUFYQTtNQUNELENBQUM7SUFDRjtFQUNEO0VBQ0UsT0FBTztJQUNORCxjQUFjLEVBQUVSO0VBQ2pCLENBQUM7QUFDSiIsImlnbm9yZUxpc3QiOltdLCJ4X2dvb2dsZV9pZ25vcmVMaXN0IjpbMF19

@@ -53,8 +53,8 @@ export type TokenLiveIntelligencePayload = {
   updatedAt: string;
 };
 
-const TOKEN_LIVE_RESOLVED_CACHE_TTL_MS = import.meta.env.PROD ? 18_000 : 5_000;
-const TOKEN_LIVE_PENDING_CACHE_TTL_MS = import.meta.env.PROD ? 2_500 : 900;
+const TOKEN_LIVE_RESOLVED_CACHE_TTL_MS = import.meta.env.PROD ? 60_000 : 12_000;
+const TOKEN_LIVE_PENDING_CACHE_TTL_MS = import.meta.env.PROD ? 30_000 : 8_000;
 
 const tokenLiveCache = new Map<
   string,

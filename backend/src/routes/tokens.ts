@@ -88,8 +88,8 @@ type TokenLivePayload = {
 
 const TOKEN_ROUTE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2 * 60_000 : 30_000;
 const TOKEN_ROUTE_STALE_FALLBACK_MS = process.env.NODE_ENV === "production" ? 30 * 60_000 : 5 * 60_000;
-const TOKEN_LIVE_ROUTE_RESOLVED_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 5_000 : 1_500;
-const TOKEN_LIVE_ROUTE_PENDING_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 2_500 : 750;
+const TOKEN_LIVE_ROUTE_RESOLVED_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 60_000 : 12_000;
+const TOKEN_LIVE_ROUTE_PENDING_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 30_000 : 8_000;
 const TOKEN_ROUTE_CACHE_VERSION = 28;
 const TOKEN_CHART_ROUTE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 45_000 : 8_000;
 const TOKEN_CHART_ROUTE_STALE_FALLBACK_MS = process.env.NODE_ENV === "production" ? 15 * 60_000 : 3 * 60_000;
@@ -141,14 +141,17 @@ function readTokenRouteCache(key: string, opts?: { allowStale?: boolean }): Toke
   return null;
 }
 
-function readTokenLiveRouteCache(key: string): TokenLivePayload | null {
+function readTokenLiveRouteCache(key: string, opts?: { allowStale?: boolean }): TokenLivePayload | null {
   const cached = tokenLiveRouteCache.get(key);
   if (!cached) return null;
-  if (cached.expiresAtMs <= Date.now()) {
-    tokenLiveRouteCache.delete(key);
-    return null;
+  const now = Date.now();
+  if (cached.expiresAtMs > now || (opts?.allowStale && cached.staleUntilMs > now)) {
+    return cached.data;
   }
-  return cached.data;
+  if (cached.staleUntilMs <= now) {
+    tokenLiveRouteCache.delete(key);
+  }
+  return null;
 }
 
 function readTokenChartRouteCache(
@@ -1504,10 +1507,14 @@ tokensRouter.get(
         Date.now() +
         (hasResolvedLiveTokenPayload(payload)
           ? TOKEN_ROUTE_STALE_FALLBACK_MS
-          : TOKEN_LIVE_ROUTE_PENDING_CACHE_TTL_MS),
+          : Math.max(5 * 60_000, TOKEN_LIVE_ROUTE_PENDING_CACHE_TTL_MS)),
     });
     return c.json({ data: payload }, 200, buildLiveTokenRouteHeaders());
   } catch (error) {
+    const stalePayload = readTokenLiveRouteCache(cacheKey, { allowStale: true });
+    if (stalePayload) {
+      return c.json({ data: stalePayload }, 200, buildLiveTokenRouteHeaders());
+    }
     if (error instanceof Error && error.message === "NOT_FOUND") {
       return c.json({ error: { message: "Token not found", code: "NOT_FOUND" } }, 404);
     }

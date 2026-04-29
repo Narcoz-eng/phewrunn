@@ -1,0 +1,117 @@
+import extractNationalNumberFromPossiblyIncompleteNumber from "/node_modules/libphonenumber-js/es6/helpers/extractNationalNumberFromPossiblyIncompleteNumber.js?v=730f480c";
+import matchesEntirely from "/node_modules/libphonenumber-js/es6/helpers/matchesEntirely.js?v=730f480c";
+import checkNumberLength from "/node_modules/libphonenumber-js/es6/helpers/checkNumberLength.js?v=730f480c";
+import getCountryByCallingCode from "/node_modules/libphonenumber-js/es6/helpers/getCountryByCallingCode.js?v=730f480c";
+
+/**
+ * Strips national prefix and carrier code from a complete phone number.
+ * The difference from the non-"FromCompleteNumber" function is that
+ * it won't extract national prefix if the resultant number is too short
+ * to be a complete number for the selected phone numbering plan.
+ * @param  {string} number — Complete phone number digits.
+ * @param  {string?} country — Country, if known.
+ * @param  {Metadata} metadata — Metadata with a phone numbering plan selected.
+ * @return {object} `{ nationalNumber: string, carrierCode: string? }`.
+ */
+export default function extractNationalNumber(number, country, metadata) {
+  // Parsing national prefixes and carrier codes
+  // is only required for local phone numbers
+  // but some people don't understand that
+  // and sometimes write international phone numbers
+  // with national prefixes (or maybe even carrier codes).
+  // http://ucken.blogspot.ru/2016/03/trunk-prefixes-in-skype4b.html
+  // Google's original library forgives such mistakes
+  // and so does this library, because it has been requested:
+  // https://github.com/catamphetamine/libphonenumber-js/issues/127
+  var _extractNationalNumbe = extractNationalNumberFromPossiblyIncompleteNumber(number, metadata),
+    carrierCode = _extractNationalNumbe.carrierCode,
+    nationalNumber = _extractNationalNumbe.nationalNumber;
+  if (nationalNumber !== number) {
+    if (!shouldHaveExtractedNationalPrefix(number, nationalNumber, metadata)) {
+      // Don't strip the national prefix.
+      return {
+        nationalNumber: number
+      };
+    }
+    // Check the national (significant) number length after extracting national prefix and carrier code.
+    // Legacy generated metadata (before `1.0.18`) didn't support the "possible lengths" feature.
+    if (metadata.numberingPlan.possibleLengths()) {
+      // If an exact `country` is not specified, attempt to detect it from the assumed national number.
+      if (!country) {
+        country = getCountryByCallingCode(metadata.numberingPlan.callingCode(), {
+          nationalNumber: nationalNumber,
+          metadata: metadata
+        });
+      }
+
+      // The number remaining after stripping the national prefix and carrier code
+      // should be long enough to have a possible length for the country.
+      // Otherwise, don't strip the national prefix and carrier code,
+      // since the original number could be a valid number.
+      // This check has been copy-pasted "as is" from Google's original library:
+      // https://github.com/google/libphonenumber/blob/876268eb1ad6cdc1b7b5bef17fc5e43052702d57/java/libphonenumber/src/com/google/i18n/phonenumbers/PhoneNumberUtil.java#L3236-L3250
+      // It doesn't check for the "possibility" of the original `number`.
+      // I guess it's fine not checking that one. It works as is anyway.
+      if (!isPossibleIncompleteNationalNumber(nationalNumber, country, metadata)) {
+        // Don't strip the national prefix.
+        return {
+          nationalNumber: number
+        };
+      }
+    }
+  }
+  return {
+    nationalNumber: nationalNumber,
+    carrierCode: carrierCode
+  };
+}
+
+// In some countries, the same digit could be a national prefix
+// or a leading digit of a valid phone number.
+// For example, in Russia, national prefix is `8`,
+// and also `800 555 35 35` is a valid number
+// in which `8` is not a national prefix, but the first digit
+// of a national (significant) number.
+// Same's with Belarus:
+// `82004910060` is a valid national (significant) number,
+// but `2004910060` is not.
+// To support such cases (to prevent the code from always stripping
+// national prefix), a condition is imposed: a national prefix
+// is not extracted when the original number is "viable" and the
+// resultant number is not, a "viable" national number being the one
+// that matches `national_number_pattern`.
+function shouldHaveExtractedNationalPrefix(nationalNumberBefore, nationalNumberAfter, metadata) {
+  // The equivalent in Google's code is:
+  // https://github.com/google/libphonenumber/blob/e326fa1fc4283bb05eb35cb3c15c18f98a31af33/java/libphonenumber/src/com/google/i18n/phonenumbers/PhoneNumberUtil.java#L2969-L3004
+  if (matchesEntirely(nationalNumberBefore, metadata.nationalNumberPattern()) && !matchesEntirely(nationalNumberAfter, metadata.nationalNumberPattern())) {
+    return false;
+  }
+  // This "is possible" national number (length) check has been commented out
+  // because it's superceded by the (effectively) same check done in the
+  // `extractNationalNumber()` function after it calls `shouldHaveExtractedNationalPrefix()`.
+  // In other words, why run the same check twice if it could only be run once.
+  // // Check the national (significant) number length after extracting national prefix and carrier code.
+  // // Fixes a minor "weird behavior" bug: https://gitlab.com/catamphetamine/libphonenumber-js/-/issues/57
+  // // (Legacy generated metadata (before `1.0.18`) didn't support the "possible lengths" feature).
+  // if (metadata.possibleLengths()) {
+  // 	if (isPossibleIncompleteNationalNumber(nationalNumberBefore, metadata) &&
+  // 		!isPossibleIncompleteNationalNumber(nationalNumberAfter, metadata)) {
+  // 		return false
+  // 	}
+  // }
+  return true;
+}
+function isPossibleIncompleteNationalNumber(nationalNumber, country, metadata) {
+  switch (checkNumberLength(nationalNumber, country, metadata)) {
+    case 'TOO_SHORT':
+    case 'INVALID_LENGTH':
+      // This library ignores "local-only" phone numbers (for simplicity).
+      // See the readme for more info on what are "local-only" phone numbers.
+      // case 'IS_POSSIBLE_LOCAL_ONLY':
+      return false;
+    default:
+      return true;
+  }
+}
+                                                 
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiZXh0cmFjdE5hdGlvbmFsTnVtYmVyLmpzIiwibmFtZXMiOlsiZXh0cmFjdE5hdGlvbmFsTnVtYmVyRnJvbVBvc3NpYmx5SW5jb21wbGV0ZU51bWJlciIsIm1hdGNoZXNFbnRpcmVseSIsImNoZWNrTnVtYmVyTGVuZ3RoIiwiZ2V0Q291bnRyeUJ5Q2FsbGluZ0NvZGUiLCJleHRyYWN0TmF0aW9uYWxOdW1iZXIiLCJudW1iZXIiLCJjb3VudHJ5IiwibWV0YWRhdGEiLCJfZXh0cmFjdE5hdGlvbmFsTnVtYmUiLCJjYXJyaWVyQ29kZSIsIm5hdGlvbmFsTnVtYmVyIiwic2hvdWxkSGF2ZUV4dHJhY3RlZE5hdGlvbmFsUHJlZml4IiwibnVtYmVyaW5nUGxhbiIsInBvc3NpYmxlTGVuZ3RocyIsImNhbGxpbmdDb2RlIiwiaXNQb3NzaWJsZUluY29tcGxldGVOYXRpb25hbE51bWJlciIsIm5hdGlvbmFsTnVtYmVyQmVmb3JlIiwibmF0aW9uYWxOdW1iZXJBZnRlciIsIm5hdGlvbmFsTnVtYmVyUGF0dGVybiJdLCJzb3VyY2VzIjpbIi4uLy4uL3NvdXJjZS9oZWxwZXJzL2V4dHJhY3ROYXRpb25hbE51bWJlci5qcyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgZXh0cmFjdE5hdGlvbmFsTnVtYmVyRnJvbVBvc3NpYmx5SW5jb21wbGV0ZU51bWJlciBmcm9tICcuL2V4dHJhY3ROYXRpb25hbE51bWJlckZyb21Qb3NzaWJseUluY29tcGxldGVOdW1iZXIuanMnXHJcbmltcG9ydCBtYXRjaGVzRW50aXJlbHkgZnJvbSAnLi9tYXRjaGVzRW50aXJlbHkuanMnXHJcbmltcG9ydCBjaGVja051bWJlckxlbmd0aCBmcm9tICcuL2NoZWNrTnVtYmVyTGVuZ3RoLmpzJ1xyXG5pbXBvcnQgZ2V0Q291bnRyeUJ5Q2FsbGluZ0NvZGUgZnJvbSAnLi9nZXRDb3VudHJ5QnlDYWxsaW5nQ29kZS5qcydcclxuXHJcbi8qKlxyXG4gKiBTdHJpcHMgbmF0aW9uYWwgcHJlZml4IGFuZCBjYXJyaWVyIGNvZGUgZnJvbSBhIGNvbXBsZXRlIHBob25lIG51bWJlci5cclxuICogVGhlIGRpZmZlcmVuY2UgZnJvbSB0aGUgbm9uLVwiRnJvbUNvbXBsZXRlTnVtYmVyXCIgZnVuY3Rpb24gaXMgdGhhdFxyXG4gKiBpdCB3b24ndCBleHRyYWN0IG5hdGlvbmFsIHByZWZpeCBpZiB0aGUgcmVzdWx0YW50IG51bWJlciBpcyB0b28gc2hvcnRcclxuICogdG8gYmUgYSBjb21wbGV0ZSBudW1iZXIgZm9yIHRoZSBzZWxlY3RlZCBwaG9uZSBudW1iZXJpbmcgcGxhbi5cclxuICogQHBhcmFtICB7c3RyaW5nfSBudW1iZXIg4oCUIENvbXBsZXRlIHBob25lIG51bWJlciBkaWdpdHMuXHJcbiAqIEBwYXJhbSAge3N0cmluZz99IGNvdW50cnkg4oCUIENvdW50cnksIGlmIGtub3duLlxyXG4gKiBAcGFyYW0gIHtNZXRhZGF0YX0gbWV0YWRhdGEg4oCUIE1ldGFkYXRhIHdpdGggYSBwaG9uZSBudW1iZXJpbmcgcGxhbiBzZWxlY3RlZC5cclxuICogQHJldHVybiB7b2JqZWN0fSBgeyBuYXRpb25hbE51bWJlcjogc3RyaW5nLCBjYXJyaWVyQ29kZTogc3RyaW5nPyB9YC5cclxuICovXHJcbmV4cG9ydCBkZWZhdWx0IGZ1bmN0aW9uIGV4dHJhY3ROYXRpb25hbE51bWJlcihudW1iZXIsIGNvdW50cnksIG1ldGFkYXRhKSB7XHJcblx0Ly8gUGFyc2luZyBuYXRpb25hbCBwcmVmaXhlcyBhbmQgY2FycmllciBjb2Rlc1xyXG5cdC8vIGlzIG9ubHkgcmVxdWlyZWQgZm9yIGxvY2FsIHBob25lIG51bWJlcnNcclxuXHQvLyBidXQgc29tZSBwZW9wbGUgZG9uJ3QgdW5kZXJzdGFuZCB0aGF0XHJcblx0Ly8gYW5kIHNvbWV0aW1lcyB3cml0ZSBpbnRlcm5hdGlvbmFsIHBob25lIG51bWJlcnNcclxuXHQvLyB3aXRoIG5hdGlvbmFsIHByZWZpeGVzIChvciBtYXliZSBldmVuIGNhcnJpZXIgY29kZXMpLlxyXG5cdC8vIGh0dHA6Ly91Y2tlbi5ibG9nc3BvdC5ydS8yMDE2LzAzL3RydW5rLXByZWZpeGVzLWluLXNreXBlNGIuaHRtbFxyXG5cdC8vIEdvb2dsZSdzIG9yaWdpbmFsIGxpYnJhcnkgZm9yZ2l2ZXMgc3VjaCBtaXN0YWtlc1xyXG5cdC8vIGFuZCBzbyBkb2VzIHRoaXMgbGlicmFyeSwgYmVjYXVzZSBpdCBoYXMgYmVlbiByZXF1ZXN0ZWQ6XHJcblx0Ly8gaHR0cHM6Ly9naXRodWIuY29tL2NhdGFtcGhldGFtaW5lL2xpYnBob25lbnVtYmVyLWpzL2lzc3Vlcy8xMjdcclxuXHRjb25zdCB7XHJcblx0XHRjYXJyaWVyQ29kZSxcclxuXHRcdG5hdGlvbmFsTnVtYmVyXHJcblx0fSA9IGV4dHJhY3ROYXRpb25hbE51bWJlckZyb21Qb3NzaWJseUluY29tcGxldGVOdW1iZXIoXHJcblx0XHRudW1iZXIsXHJcblx0XHRtZXRhZGF0YVxyXG5cdClcclxuXHJcblx0aWYgKG5hdGlvbmFsTnVtYmVyICE9PSBudW1iZXIpIHtcclxuXHRcdGlmICghc2hvdWxkSGF2ZUV4dHJhY3RlZE5hdGlvbmFsUHJlZml4KG51bWJlciwgbmF0aW9uYWxOdW1iZXIsIG1ldGFkYXRhKSkge1xyXG5cdFx0XHQvLyBEb24ndCBzdHJpcCB0aGUgbmF0aW9uYWwgcHJlZml4LlxyXG5cdFx0XHRyZXR1cm4geyBuYXRpb25hbE51bWJlcjogbnVtYmVyIH1cclxuXHRcdH1cclxuXHRcdC8vIENoZWNrIHRoZSBuYXRpb25hbCAoc2lnbmlmaWNhbnQpIG51bWJlciBsZW5ndGggYWZ0ZXIgZXh0cmFjdGluZyBuYXRpb25hbCBwcmVmaXggYW5kIGNhcnJpZXIgY29kZS5cclxuXHRcdC8vIExlZ2FjeSBnZW5lcmF0ZWQgbWV0YWRhdGEgKGJlZm9yZSBgMS4wLjE4YCkgZGlkbid0IHN1cHBvcnQgdGhlIFwicG9zc2libGUgbGVuZ3Roc1wiIGZlYXR1cmUuXHJcblx0XHRpZiAobWV0YWRhdGEubnVtYmVyaW5nUGxhbi5wb3NzaWJsZUxlbmd0aHMoKSkge1xyXG5cdFx0XHQvLyBJZiBhbiBleGFjdCBgY291bnRyeWAgaXMgbm90IHNwZWNpZmllZCwgYXR0ZW1wdCB0byBkZXRlY3QgaXQgZnJvbSB0aGUgYXNzdW1lZCBuYXRpb25hbCBudW1iZXIuXHJcblx0XHRcdGlmICghY291bnRyeSkge1xyXG5cdFx0XHRcdGNvdW50cnkgPSBnZXRDb3VudHJ5QnlDYWxsaW5nQ29kZShtZXRhZGF0YS5udW1iZXJpbmdQbGFuLmNhbGxpbmdDb2RlKCksIHtcclxuXHRcdFx0XHRcdG5hdGlvbmFsTnVtYmVyLFxyXG5cdFx0XHRcdFx0bWV0YWRhdGFcclxuXHRcdFx0XHR9KVxyXG5cdFx0XHR9XHJcblxyXG5cdFx0XHQvLyBUaGUgbnVtYmVyIHJlbWFpbmluZyBhZnRlciBzdHJpcHBpbmcgdGhlIG5hdGlvbmFsIHByZWZpeCBhbmQgY2FycmllciBjb2RlXHJcblx0XHRcdC8vIHNob3VsZCBiZSBsb25nIGVub3VnaCB0byBoYXZlIGEgcG9zc2libGUgbGVuZ3RoIGZvciB0aGUgY291bnRyeS5cclxuXHRcdFx0Ly8gT3RoZXJ3aXNlLCBkb24ndCBzdHJpcCB0aGUgbmF0aW9uYWwgcHJlZml4IGFuZCBjYXJyaWVyIGNvZGUsXHJcblx0XHRcdC8vIHNpbmNlIHRoZSBvcmlnaW5hbCBudW1iZXIgY291bGQgYmUgYSB2YWxpZCBudW1iZXIuXHJcblx0XHRcdC8vIFRoaXMgY2hlY2sgaGFzIGJlZW4gY29weS1wYXN0ZWQgXCJhcyBpc1wiIGZyb20gR29vZ2xlJ3Mgb3JpZ2luYWwgbGlicmFyeTpcclxuXHRcdFx0Ly8gaHR0cHM6Ly9naXRodWIuY29tL2dvb2dsZS9saWJwaG9uZW51bWJlci9ibG9iLzg3NjI2OGViMWFkNmNkYzFiN2I1YmVmMTdmYzVlNDMwNTI3MDJkNTcvamF2YS9saWJwaG9uZW51bWJlci9zcmMvY29tL2dvb2dsZS9pMThuL3Bob25lbnVtYmVycy9QaG9uZU51bWJlclV0aWwuamF2YSNMMzIzNi1MMzI1MFxyXG5cdFx0XHQvLyBJdCBkb2Vzbid0IGNoZWNrIGZvciB0aGUgXCJwb3NzaWJpbGl0eVwiIG9mIHRoZSBvcmlnaW5hbCBgbnVtYmVyYC5cclxuXHRcdFx0Ly8gSSBndWVzcyBpdCdzIGZpbmUgbm90IGNoZWNraW5nIHRoYXQgb25lLiBJdCB3b3JrcyBhcyBpcyBhbnl3YXkuXHJcblx0XHRcdGlmICghaXNQb3NzaWJsZUluY29tcGxldGVOYXRpb25hbE51bWJlcihuYXRpb25hbE51bWJlciwgY291bnRyeSwgbWV0YWRhdGEpKSB7XHJcblx0XHRcdFx0Ly8gRG9uJ3Qgc3RyaXAgdGhlIG5hdGlvbmFsIHByZWZpeC5cclxuXHRcdFx0XHRyZXR1cm4geyBuYXRpb25hbE51bWJlcjogbnVtYmVyIH1cclxuXHRcdFx0fVxyXG5cdFx0fVxyXG5cdH1cclxuXHJcblx0cmV0dXJuIHsgbmF0aW9uYWxOdW1iZXIsIGNhcnJpZXJDb2RlIH1cclxufVxyXG5cclxuLy8gSW4gc29tZSBjb3VudHJpZXMsIHRoZSBzYW1lIGRpZ2l0IGNvdWxkIGJlIGEgbmF0aW9uYWwgcHJlZml4XHJcbi8vIG9yIGEgbGVhZGluZyBkaWdpdCBvZiBhIHZhbGlkIHBob25lIG51bWJlci5cclxuLy8gRm9yIGV4YW1wbGUsIGluIFJ1c3NpYSwgbmF0aW9uYWwgcHJlZml4IGlzIGA4YCxcclxuLy8gYW5kIGFsc28gYDgwMCA1NTUgMzUgMzVgIGlzIGEgdmFsaWQgbnVtYmVyXHJcbi8vIGluIHdoaWNoIGA4YCBpcyBub3QgYSBuYXRpb25hbCBwcmVmaXgsIGJ1dCB0aGUgZmlyc3QgZGlnaXRcclxuLy8gb2YgYSBuYXRpb25hbCAoc2lnbmlmaWNhbnQpIG51bWJlci5cclxuLy8gU2FtZSdzIHdpdGggQmVsYXJ1czpcclxuLy8gYDgyMDA0OTEwMDYwYCBpcyBhIHZhbGlkIG5hdGlvbmFsIChzaWduaWZpY2FudCkgbnVtYmVyLFxyXG4vLyBidXQgYDIwMDQ5MTAwNjBgIGlzIG5vdC5cclxuLy8gVG8gc3VwcG9ydCBzdWNoIGNhc2VzICh0byBwcmV2ZW50IHRoZSBjb2RlIGZyb20gYWx3YXlzIHN0cmlwcGluZ1xyXG4vLyBuYXRpb25hbCBwcmVmaXgpLCBhIGNvbmRpdGlvbiBpcyBpbXBvc2VkOiBhIG5hdGlvbmFsIHByZWZpeFxyXG4vLyBpcyBub3QgZXh0cmFjdGVkIHdoZW4gdGhlIG9yaWdpbmFsIG51bWJlciBpcyBcInZpYWJsZVwiIGFuZCB0aGVcclxuLy8gcmVzdWx0YW50IG51bWJlciBpcyBub3QsIGEgXCJ2aWFibGVcIiBuYXRpb25hbCBudW1iZXIgYmVpbmcgdGhlIG9uZVxyXG4vLyB0aGF0IG1hdGNoZXMgYG5hdGlvbmFsX251bWJlcl9wYXR0ZXJuYC5cclxuZnVuY3Rpb24gc2hvdWxkSGF2ZUV4dHJhY3RlZE5hdGlvbmFsUHJlZml4KG5hdGlvbmFsTnVtYmVyQmVmb3JlLCBuYXRpb25hbE51bWJlckFmdGVyLCBtZXRhZGF0YSkge1xyXG5cdC8vIFRoZSBlcXVpdmFsZW50IGluIEdvb2dsZSdzIGNvZGUgaXM6XHJcblx0Ly8gaHR0cHM6Ly9naXRodWIuY29tL2dvb2dsZS9saWJwaG9uZW51bWJlci9ibG9iL2UzMjZmYTFmYzQyODNiYjA1ZWIzNWNiM2MxNWMxOGY5OGEzMWFmMzMvamF2YS9saWJwaG9uZW51bWJlci9zcmMvY29tL2dvb2dsZS9pMThuL3Bob25lbnVtYmVycy9QaG9uZU51bWJlclV0aWwuamF2YSNMMjk2OS1MMzAwNFxyXG5cdGlmIChtYXRjaGVzRW50aXJlbHkobmF0aW9uYWxOdW1iZXJCZWZvcmUsIG1ldGFkYXRhLm5hdGlvbmFsTnVtYmVyUGF0dGVybigpKSAmJlxyXG5cdFx0IW1hdGNoZXNFbnRpcmVseShuYXRpb25hbE51bWJlckFmdGVyLCBtZXRhZGF0YS5uYXRpb25hbE51bWJlclBhdHRlcm4oKSkpIHtcclxuXHRcdHJldHVybiBmYWxzZVxyXG5cdH1cclxuXHQvLyBUaGlzIFwiaXMgcG9zc2libGVcIiBuYXRpb25hbCBudW1iZXIgKGxlbmd0aCkgY2hlY2sgaGFzIGJlZW4gY29tbWVudGVkIG91dFxyXG5cdC8vIGJlY2F1c2UgaXQncyBzdXBlcmNlZGVkIGJ5IHRoZSAoZWZmZWN0aXZlbHkpIHNhbWUgY2hlY2sgZG9uZSBpbiB0aGVcclxuXHQvLyBgZXh0cmFjdE5hdGlvbmFsTnVtYmVyKClgIGZ1bmN0aW9uIGFmdGVyIGl0IGNhbGxzIGBzaG91bGRIYXZlRXh0cmFjdGVkTmF0aW9uYWxQcmVmaXgoKWAuXHJcblx0Ly8gSW4gb3RoZXIgd29yZHMsIHdoeSBydW4gdGhlIHNhbWUgY2hlY2sgdHdpY2UgaWYgaXQgY291bGQgb25seSBiZSBydW4gb25jZS5cclxuXHQvLyAvLyBDaGVjayB0aGUgbmF0aW9uYWwgKHNpZ25pZmljYW50KSBudW1iZXIgbGVuZ3RoIGFmdGVyIGV4dHJhY3RpbmcgbmF0aW9uYWwgcHJlZml4IGFuZCBjYXJyaWVyIGNvZGUuXHJcblx0Ly8gLy8gRml4ZXMgYSBtaW5vciBcIndlaXJkIGJlaGF2aW9yXCIgYnVnOiBodHRwczovL2dpdGxhYi5jb20vY2F0YW1waGV0YW1pbmUvbGlicGhvbmVudW1iZXItanMvLS9pc3N1ZXMvNTdcclxuXHQvLyAvLyAoTGVnYWN5IGdlbmVyYXRlZCBtZXRhZGF0YSAoYmVmb3JlIGAxLjAuMThgKSBkaWRuJ3Qgc3VwcG9ydCB0aGUgXCJwb3NzaWJsZSBsZW5ndGhzXCIgZmVhdHVyZSkuXHJcblx0Ly8gaWYgKG1ldGFkYXRhLnBvc3NpYmxlTGVuZ3RocygpKSB7XHJcblx0Ly8gXHRpZiAoaXNQb3NzaWJsZUluY29tcGxldGVOYXRpb25hbE51bWJlcihuYXRpb25hbE51bWJlckJlZm9yZSwgbWV0YWRhdGEpICYmXHJcblx0Ly8gXHRcdCFpc1Bvc3NpYmxlSW5jb21wbGV0ZU5hdGlvbmFsTnVtYmVyKG5hdGlvbmFsTnVtYmVyQWZ0ZXIsIG1ldGFkYXRhKSkge1xyXG5cdC8vIFx0XHRyZXR1cm4gZmFsc2VcclxuXHQvLyBcdH1cclxuXHQvLyB9XHJcblx0cmV0dXJuIHRydWVcclxufVxyXG5cclxuZnVuY3Rpb24gaXNQb3NzaWJsZUluY29tcGxldGVOYXRpb25hbE51bWJlcihuYXRpb25hbE51bWJlciwgY291bnRyeSwgbWV0YWRhdGEpIHtcclxuXHRzd2l0Y2ggKGNoZWNrTnVtYmVyTGVuZ3RoKG5hdGlvbmFsTnVtYmVyLCBjb3VudHJ5LCBtZXRhZGF0YSkpIHtcclxuXHRcdGNhc2UgJ1RPT19TSE9SVCc6XHJcblx0XHRjYXNlICdJTlZBTElEX0xFTkdUSCc6XHJcblx0XHQvLyBUaGlzIGxpYnJhcnkgaWdub3JlcyBcImxvY2FsLW9ubHlcIiBwaG9uZSBudW1iZXJzIChmb3Igc2ltcGxpY2l0eSkuXHJcblx0XHQvLyBTZWUgdGhlIHJlYWRtZSBmb3IgbW9yZSBpbmZvIG9uIHdoYXQgYXJlIFwibG9jYWwtb25seVwiIHBob25lIG51bWJlcnMuXHJcblx0XHQvLyBjYXNlICdJU19QT1NTSUJMRV9MT0NBTF9PTkxZJzpcclxuXHRcdFx0cmV0dXJuIGZhbHNlXHJcblx0XHRkZWZhdWx0OlxyXG5cdFx0XHRyZXR1cm4gdHJ1ZVxyXG5cdH1cclxufSJdLCJtYXBwaW5ncyI6IkFBQUEsT0FBT0EsaURBQWlELE1BQU0sd0RBQXdEO0FBQ3RILE9BQU9DLGVBQWUsTUFBTSxzQkFBc0I7QUFDbEQsT0FBT0MsaUJBQWlCLE1BQU0sd0JBQXdCO0FBQ3RELE9BQU9DLHVCQUF1QixNQUFNLDhCQUE4Qjs7QUFFbEU7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQSxlQUFlLFNBQVNDLHFCQUFxQkEsQ0FBQ0MsTUFBTSxFQUFFQyxPQUFPLEVBQUVDLFFBQVEsRUFBRTtFQUN4RTtFQUNBO0VBQ0E7RUFDQTtFQUNBO0VBQ0E7RUFDQTtFQUNBO0VBQ0E7RUFDQSxJQUFBQyxxQkFBQSxHQUdJUixpREFBaUQsQ0FDcERLLE1BQU0sRUFDTkUsUUFDRCxDQUFDO0lBTEFFLFdBQVcsR0FBQUQscUJBQUEsQ0FBWEMsV0FBVztJQUNYQyxjQUFjLEdBQUFGLHFCQUFBLENBQWRFLGNBQWM7RUFNZixJQUFJQSxjQUFjLEtBQUtMLE1BQU0sRUFBRTtJQUM5QixJQUFJLENBQUNNLGlDQUFpQyxDQUFDTixNQUFNLEVBQUVLLGNBQWMsRUFBRUgsUUFBUSxDQUFDLEVBQUU7TUFDekU7TUFDQSxPQUFPO1FBQUVHLGNBQWMsRUFBRUw7TUFBTyxDQUFDO0lBQ2xDO0lBQ0E7SUFDQTtJQUNBLElBQUlFLFFBQVEsQ0FBQ0ssYUFBYSxDQUFDQyxlQUFlLENBQUMsQ0FBQyxFQUFFO01BQzdDO01BQ0EsSUFBSSxDQUFDUCxPQUFPLEVBQUU7UUFDYkEsT0FBTyxHQUFHSCx1QkFBdUIsQ0FBQ0ksUUFBUSxDQUFDSyxhQUFhLENBQUNFLFdBQVcsQ0FBQyxDQUFDLEVBQUU7VUFDdkVKLGNBQWMsRUFBZEEsY0FBYztVQUNkSCxRQUFRLEVBQVJBO1FBQ0QsQ0FBQyxDQUFDO01BQ0g7O01BRUE7TUFDQTtNQUNBO01BQ0E7TUFDQTtNQUNBO01BQ0E7TUFDQTtNQUNBLElBQUksQ0FBQ1Esa0NBQWtDLENBQUNMLGNBQWMsRUFBRUosT0FBTyxFQUFFQyxRQUFRLENBQUMsRUFBRTtRQUMzRTtRQUNBLE9BQU87VUFBRUcsY0FBYyxFQUFFTDtRQUFPLENBQUM7TUFDbEM7SUFDRDtFQUNEO0VBRUEsT0FBTztJQUFFSyxjQUFjLEVBQWRBLGNBQWM7SUFBRUQsV0FBVyxFQUFYQTtFQUFZLENBQUM7QUFDdkM7O0FBRUE7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBLFNBQVNFLGlDQUFpQ0EsQ0FBQ0ssb0JBQW9CLEVBQUVDLG1CQUFtQixFQUFFVixRQUFRLEVBQUU7RUFDL0Y7RUFDQTtFQUNBLElBQUlOLGVBQWUsQ0FBQ2Usb0JBQW9CLEVBQUVULFFBQVEsQ0FBQ1cscUJBQXFCLENBQUMsQ0FBQyxDQUFDLElBQzFFLENBQUNqQixlQUFlLENBQUNnQixtQkFBbUIsRUFBRVYsUUFBUSxDQUFDVyxxQkFBcUIsQ0FBQyxDQUFDLENBQUMsRUFBRTtJQUN6RSxPQUFPLEtBQUs7RUFDYjtFQUNBO0VBQ0E7RUFDQTtFQUNBO0VBQ0E7RUFDQTtFQUNBO0VBQ0E7RUFDQTtFQUNBO0VBQ0E7RUFDQTtFQUNBO0VBQ0EsT0FBTyxJQUFJO0FBQ1o7QUFFQSxTQUFTSCxrQ0FBa0NBLENBQUNMLGNBQWMsRUFBRUosT0FBTyxFQUFFQyxRQUFRLEVBQUU7RUFDOUUsUUFBUUwsaUJBQWlCLENBQUNRLGNBQWMsRUFBRUosT0FBTyxFQUFFQyxRQUFRLENBQUM7SUFDM0QsS0FBSyxXQUFXO0lBQ2hCLEtBQUssZ0JBQWdCO01BQ3JCO01BQ0E7TUFDQTtNQUNDLE9BQU8sS0FBSztJQUNiO01BQ0MsT0FBTyxJQUFJO0VBQ2I7QUFDRCIsImlnbm9yZUxpc3QiOltdLCJ4X2dvb2dsZV9pZ25vcmVMaXN0IjpbMF19

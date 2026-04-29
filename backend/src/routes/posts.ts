@@ -464,9 +464,9 @@ const TRENDING_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 30_000 : 1
 const TRENDING_LIVE_GAIN_PRIORITY_PCT = process.env.NODE_ENV === "production" ? 25 : 15;
 let trendingCache: { data: unknown; expiresAtMs: number } | null = null;
 let trendingInFlight: Promise<unknown> | null = null;
-const FEED_RESPONSE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 9_000 : 3_000;
+const FEED_RESPONSE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 30_000 : 8_000;
 const FEED_RESPONSE_STALE_FALLBACK_MS =
-  process.env.NODE_ENV === "production" ? 2 * 60_000 : 30_000;
+  process.env.NODE_ENV === "production" ? 10 * 60_000 : 90_000;
 const FEED_DB_QUERY_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 4_000 : 4_800;
 const FEED_SOCIAL_QUERY_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 2_600 : 3_500;
 const FEED_ENRICH_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 2_800 : 3_800;
@@ -665,6 +665,7 @@ function triggerMaintenanceForStaleCandidates(
   reason: string,
   posts: MaintenanceCandidatePost[]
 ): void {
+  if (reason.startsWith("feed:") || reason.startsWith("feed-router:")) return;
   if (!shouldRunOrganicSettlementWakeups()) return;
   if (!posts.some(shouldTriggerMaintenanceForPost)) return;
 
@@ -876,6 +877,28 @@ function readFeedResponseFromCache(
     return hydrateFeedResponsePayload(cached.payload);
   }
   cacheMap.delete(key);
+  return null;
+}
+
+function findLastGoodFeedResponseFallback(opts: {
+  sort: "latest" | "trending";
+  following: boolean;
+  limit: number;
+  postType?: PostType;
+}): FeedResponsePayload | null {
+  const suffix = `:${opts.postType ?? "all-types"}`;
+  const sharedPrefix = `${opts.sort}:${opts.following ? "following" : "all"}:${opts.limit}::`;
+  const personalFragment = `:${opts.sort}:${opts.following ? "following" : "all"}:${opts.limit}::`;
+  const candidates = [
+    ...Array.from(feedSharedResponseCache.entries()).reverse().filter(([key]) => key.startsWith(sharedPrefix) && key.endsWith(suffix)),
+    ...Array.from(feedResponseCache.entries()).reverse().filter(([key]) => key.includes(personalFragment) && key.endsWith(suffix)),
+  ];
+
+  for (const [, entry] of candidates) {
+    if (entry.payload.data.length === 0) continue;
+    return hydrateFeedResponsePayload(entry.payload);
+  }
+
   return null;
 }
 
@@ -2521,6 +2544,7 @@ const chartCandlesCache = new Map<
   }
 >();
 const chartCandlesInFlight = new Map<string, Promise<ChartCandlesFetchResult>>();
+const chartCandlesBackoffUntil = new Map<string, number>();
 const chartTradesCache = new Map<string, { trades: Awaited<ReturnType<typeof fetchBirdeyeRecentTrades>>; expiresAtMs: number; staleUntilMs: number }>();
 const chartTradesInFlight = new Map<string, Promise<Awaited<ReturnType<typeof fetchBirdeyeRecentTrades>>>>();
 const chartTradesBackoffUntil = new Map<string, number>();
@@ -5125,6 +5149,9 @@ function triggerSettlementCycleNonBlocking(reason: string): void {
 }
 
 export function triggerOrganicSettlementWakeup(reason: string): void {
+  if (reason.startsWith("feed:") || reason.startsWith("feed-router:")) {
+    return;
+  }
   if (!shouldRunOrganicSettlementWakeups()) {
     return;
   }
@@ -5203,7 +5230,8 @@ postsRouter.get("/", async (c) => {
             allowStale: true,
           }) ??
           redisSharedFallback
-        : null)
+        : null) ??
+      findLastGoodFeedResponseFallback({ sort, following, limit, postType })
     );
   };
   const respondWithFeedCacheFallback = async (error: unknown) => {
@@ -5221,7 +5249,7 @@ postsRouter.get("/", async (c) => {
       return c.json(stalePayload);
     }
     if (isPrismaClientError(error) || isFeedTimeoutError(error)) {
-      console.warn("[posts/feed] no cached payload available; serving empty degraded feed", {
+      console.warn("[posts/feed] no cached payload available; serving compact degraded feed fallback", {
         sort,
         following,
         cursor: cursor ?? null,
@@ -5265,6 +5293,13 @@ postsRouter.get("/", async (c) => {
     if (stalePayload) {
       return c.json(stalePayload);
     }
+    console.warn("[posts/feed] pool pressure active without last-good payload; serving compact degraded feed fallback", {
+      sort,
+      following,
+      cursor: cursor ?? null,
+      search: search ?? null,
+      userId: user?.id ?? null,
+    });
     return c.json({
       data: [],
       hasMore: false,
@@ -5293,6 +5328,13 @@ postsRouter.get("/", async (c) => {
     if (stalePayload) {
       return c.json(stalePayload);
     }
+    console.warn("[posts/feed] concurrency cap reached without last-good payload; serving compact degraded feed fallback", {
+      sort,
+      following,
+      cursor: cursor ?? null,
+      search: search ?? null,
+      userId: user?.id ?? null,
+    });
     return c.json({
       data: [],
       hasMore: false,
@@ -5301,17 +5343,6 @@ postsRouter.get("/", async (c) => {
   }
 
   try {
-
-  // Keep settlement/snapshot state progressing from organic traffic without running the full
-  // market-refresh job on the feed path. Cron/manual maintenance handles the heavier updates.
-  if (!feedDegradedMode && !cursor && shouldRunOrganicSettlementWakeups()) {
-    const reason = search
-      ? `feed:${sort}:search`
-      : following
-        ? `feed:${sort}:following`
-        : `feed:${sort}`;
-    triggerSettlementCycleNonBlocking(reason);
-  }
 
   // Build the where clause - use Prisma's AND/OR operators
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -5506,13 +5537,6 @@ postsRouter.get("/", async (c) => {
     nextCursor = hasMore ? pagePosts[pagePosts.length - 1]?.id ?? null : null;
     return pagePosts;
   })();
-
-  if (!feedDegradedMode) {
-    triggerMaintenanceForStaleCandidates(
-      `feed:${sort}:${following ? "following" : "all"}`,
-      posts
-    );
-  }
 
   // Get user's likes and reposts for these posts
   let userLikes: Set<string> = new Set();
@@ -8956,7 +8980,7 @@ function recordChartCandlesProviderSuccess(
   }
 }
 
-function recordChartCandlesProviderFailure(source: ChartCandlesSource, latencyMs: number): void {
+function recordChartCandlesProviderFailure(source: ChartCandlesSource, latencyMs: number, error?: unknown): void {
   const state = getChartCandlesSourceHealth(source);
   const normalizedLatency = Number.isFinite(latencyMs)
     ? Math.max(10, Math.min(20_000, Math.round(latencyMs)))
@@ -8966,10 +8990,12 @@ function recordChartCandlesProviderFailure(source: ChartCandlesSource, latencyMs
   state.failureCount += 1;
   state.consecutiveFailures = Math.min(8, state.consecutiveFailures + 1);
 
-  const cooldownMs = Math.min(
-    CHART_PROVIDER_FAILURE_COOLDOWN_MAX_MS,
-    CHART_PROVIDER_FAILURE_COOLDOWN_BASE_MS * Math.pow(2, state.consecutiveFailures - 1)
-  );
+  const cooldownMs = isProviderRateLimitError(error)
+    ? 2 * 60_000
+    : Math.min(
+        CHART_PROVIDER_FAILURE_COOLDOWN_MAX_MS,
+        CHART_PROVIDER_FAILURE_COOLDOWN_BASE_MS * Math.pow(2, state.consecutiveFailures - 1)
+      );
   state.cooldownUntilMs = Date.now() + cooldownMs;
 }
 
@@ -9443,10 +9469,10 @@ export async function fetchBestChartCandles(payload: ChartCandlesPayload): Promi
     })
     .sort((a, b) => b.score - a.score);
 
-  const preferred =
-    scored.length > 1 && scored.some((candidate) => !candidate.inCooldown)
-      ? scored.filter((candidate) => !candidate.inCooldown)
-      : scored;
+  const preferred = scored.filter((candidate) => !candidate.inCooldown);
+  if (preferred.length === 0) {
+    throw new Error("Chart providers are cooling down");
+  }
 
   const failures: string[] = [];
 
@@ -9459,7 +9485,7 @@ export async function fetchBestChartCandles(payload: ChartCandlesPayload): Promi
       return result;
     } catch (error) {
       const latencyMs = Date.now() - startedAtMs;
-      recordChartCandlesProviderFailure(candidate.source, latencyMs);
+      recordChartCandlesProviderFailure(candidate.source, latencyMs, error);
       const message = error instanceof Error ? error.message : String(error);
       failures.push(`${candidate.source}: ${message}`);
       console.warn("[posts/chart/candles] provider failed", {
@@ -9731,6 +9757,24 @@ postsRouter.post("/chart/candles", zValidator("json", ChartCandlesProxySchema), 
     chartCandlesCache.delete(cacheKey);
   }
 
+  const backoffUntil = chartCandlesBackoffUntil.get(cacheKey) ?? 0;
+  if (backoffUntil > now) {
+    return c.json({
+      data: {
+        source: staleCachedResult?.source ?? "unknown",
+        network: staleCachedResult?.network ?? null,
+        poolAddress: payload.poolAddress ?? null,
+        tokenAddress: payload.tokenAddress ?? null,
+        timeframe: payload.timeframe ?? "minute",
+        aggregate: payload.aggregate ?? 5,
+        candles: staleCachedResult?.candles ?? [],
+      },
+    });
+  }
+  if (backoffUntil > 0) {
+    chartCandlesBackoffUntil.delete(cacheKey);
+  }
+
   let request = chartCandlesInFlight.get(cacheKey);
   if (!request) {
     request = Promise.race<ChartCandlesFetchResult>([
@@ -9749,6 +9793,7 @@ postsRouter.post("/chart/candles", zValidator("json", ChartCandlesProxySchema), 
       expiresAtMs: Date.now() + CHART_CANDLES_CACHE_TTL_MS,
       staleUntilMs: Date.now() + CHART_CANDLES_STALE_FALLBACK_MS,
     });
+    chartCandlesBackoffUntil.delete(cacheKey);
 
     return c.json({
       data: {
@@ -9762,6 +9807,7 @@ postsRouter.post("/chart/candles", zValidator("json", ChartCandlesProxySchema), 
       },
     });
   } catch (error) {
+    chartCandlesBackoffUntil.set(cacheKey, Date.now() + (isProviderRateLimitError(error) ? 2 * 60_000 : 30_000));
     if (staleCachedResult) {
       return c.json({
         data: {
@@ -9777,15 +9823,21 @@ postsRouter.post("/chart/candles", zValidator("json", ChartCandlesProxySchema), 
     }
     const message =
       error instanceof Error ? error.message : "Failed to load chart candles";
-    return c.json(
-      {
-        error: {
-          message,
-          code: "CHART_CANDLES_FAILED",
-        },
+    console.warn("[posts/chart/candles] serving empty candle fallback after provider failure", {
+      cacheKey,
+      message,
+    });
+    return c.json({
+      data: {
+        source: "unknown",
+        network: null,
+        poolAddress: payload.poolAddress ?? null,
+        tokenAddress: payload.tokenAddress ?? null,
+        timeframe: payload.timeframe ?? "minute",
+        aggregate: payload.aggregate ?? 5,
+        candles: [],
       },
-      502
-    );
+    });
   } finally {
     const current = chartCandlesInFlight.get(cacheKey);
     if (current === request) {
@@ -9806,15 +9858,16 @@ postsRouter.get("/chart/trades", zValidator("query", ChartTradesQuerySchema), as
       },
     });
   } catch (error) {
-    return c.json(
-      {
-        error: {
-          message: getErrorMessage(error),
-          code: "CHART_TRADES_FAILED",
-        },
+    console.warn("[posts/chart/trades] serving empty trade fallback after provider failure", {
+      message: getErrorMessage(error),
+    });
+    return c.json({
+      data: {
+        trades: [],
+        source: hasBirdeyeTradeFeedConfig() ? "birdeye" : "unavailable",
+        liveSupported: hasBirdeyeTradeFeedConfig(),
       },
-      502
-    );
+    });
   }
 });
 

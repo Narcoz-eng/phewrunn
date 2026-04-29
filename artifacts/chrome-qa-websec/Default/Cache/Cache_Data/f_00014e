@@ -1,0 +1,99 @@
+import {getScrollParents as $a40c673dc9f6d9c7$export$94ed1c92c7beeb22} from "/node_modules/@react-aria/utils/dist/getScrollParents.mjs?v=730f480c";
+
+/*
+ * Copyright 2020 Adobe. All rights reserved.
+ * This file is licensed to you under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License. You may obtain a copy
+ * of the License at http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software distributed under
+ * the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR REPRESENTATIONS
+ * OF ANY KIND, either express or implied. See the License for the specific language
+ * governing permissions and limitations under the License.
+ */ 
+function $2f04cbc44ee30ce0$export$53a0910f038337bd(scrollView, element) {
+    let offsetX = $2f04cbc44ee30ce0$var$relativeOffset(scrollView, element, 'left');
+    let offsetY = $2f04cbc44ee30ce0$var$relativeOffset(scrollView, element, 'top');
+    let width = element.offsetWidth;
+    let height = element.offsetHeight;
+    let x = scrollView.scrollLeft;
+    let y = scrollView.scrollTop;
+    // Account for top/left border offsetting the scroll top/Left + scroll padding
+    let { borderTopWidth: borderTopWidth, borderLeftWidth: borderLeftWidth, scrollPaddingTop: scrollPaddingTop, scrollPaddingRight: scrollPaddingRight, scrollPaddingBottom: scrollPaddingBottom, scrollPaddingLeft: scrollPaddingLeft } = getComputedStyle(scrollView);
+    let borderAdjustedX = x + parseInt(borderLeftWidth, 10);
+    let borderAdjustedY = y + parseInt(borderTopWidth, 10);
+    // Ignore end/bottom border via clientHeight/Width instead of offsetHeight/Width
+    let maxX = borderAdjustedX + scrollView.clientWidth;
+    let maxY = borderAdjustedY + scrollView.clientHeight;
+    // Get scroll padding values as pixels - defaults to 0 if no scroll padding
+    // is used.
+    let scrollPaddingTopNumber = parseInt(scrollPaddingTop, 10) || 0;
+    let scrollPaddingBottomNumber = parseInt(scrollPaddingBottom, 10) || 0;
+    let scrollPaddingRightNumber = parseInt(scrollPaddingRight, 10) || 0;
+    let scrollPaddingLeftNumber = parseInt(scrollPaddingLeft, 10) || 0;
+    if (offsetX <= x + scrollPaddingLeftNumber) x = offsetX - parseInt(borderLeftWidth, 10) - scrollPaddingLeftNumber;
+    else if (offsetX + width > maxX - scrollPaddingRightNumber) x += offsetX + width - maxX + scrollPaddingRightNumber;
+    if (offsetY <= borderAdjustedY + scrollPaddingTopNumber) y = offsetY - parseInt(borderTopWidth, 10) - scrollPaddingTopNumber;
+    else if (offsetY + height > maxY - scrollPaddingBottomNumber) y += offsetY + height - maxY + scrollPaddingBottomNumber;
+    scrollView.scrollLeft = x;
+    scrollView.scrollTop = y;
+}
+/**
+ * Computes the offset left or top from child to ancestor by accumulating
+ * offsetLeft or offsetTop through intervening offsetParents.
+ */ function $2f04cbc44ee30ce0$var$relativeOffset(ancestor, child, axis) {
+    const prop = axis === 'left' ? 'offsetLeft' : 'offsetTop';
+    let sum = 0;
+    while(child.offsetParent){
+        sum += child[prop];
+        if (child.offsetParent === ancestor) break;
+        else if (child.offsetParent.contains(ancestor)) {
+            // If the ancestor is not `position:relative`, then we stop at
+            // _its_ offset parent, and we subtract off _its_ offset, so that
+            // we end up with the proper offset from child to ancestor.
+            sum -= ancestor[prop];
+            break;
+        }
+        child = child.offsetParent;
+    }
+    return sum;
+}
+function $2f04cbc44ee30ce0$export$c826860796309d1b(targetElement, opts) {
+    if (targetElement && document.contains(targetElement)) {
+        let root = document.scrollingElement || document.documentElement;
+        let isScrollPrevented = window.getComputedStyle(root).overflow === 'hidden';
+        // If scrolling is not currently prevented then we aren’t in a overlay nor is a overlay open, just use element.scrollIntoView to bring the element into view
+        if (!isScrollPrevented) {
+            var // use scrollIntoView({block: 'nearest'}) instead of .focus to check if the element is fully in view or not since .focus()
+            // won't cause a scroll if the element is already focused and doesn't behave consistently when an element is partially out of view horizontally vs vertically
+            _targetElement_scrollIntoView;
+            let { left: originalLeft, top: originalTop } = targetElement.getBoundingClientRect();
+            targetElement === null || targetElement === void 0 ? void 0 : (_targetElement_scrollIntoView = targetElement.scrollIntoView) === null || _targetElement_scrollIntoView === void 0 ? void 0 : _targetElement_scrollIntoView.call(targetElement, {
+                block: 'nearest'
+            });
+            let { left: newLeft, top: newTop } = targetElement.getBoundingClientRect();
+            // Account for sub pixel differences from rounding
+            if (Math.abs(originalLeft - newLeft) > 1 || Math.abs(originalTop - newTop) > 1) {
+                var _opts_containingElement_scrollIntoView, _opts_containingElement, _targetElement_scrollIntoView1;
+                opts === null || opts === void 0 ? void 0 : (_opts_containingElement = opts.containingElement) === null || _opts_containingElement === void 0 ? void 0 : (_opts_containingElement_scrollIntoView = _opts_containingElement.scrollIntoView) === null || _opts_containingElement_scrollIntoView === void 0 ? void 0 : _opts_containingElement_scrollIntoView.call(_opts_containingElement, {
+                    block: 'center',
+                    inline: 'center'
+                });
+                (_targetElement_scrollIntoView1 = targetElement.scrollIntoView) === null || _targetElement_scrollIntoView1 === void 0 ? void 0 : _targetElement_scrollIntoView1.call(targetElement, {
+                    block: 'nearest'
+                });
+            }
+        } else {
+            let scrollParents = (0, $a40c673dc9f6d9c7$export$94ed1c92c7beeb22)(targetElement);
+            // If scrolling is prevented, we don't want to scroll the body since it might move the overlay partially offscreen and the user can't scroll it back into view.
+            if (!isScrollPrevented) scrollParents.push(root);
+            for (let scrollParent of scrollParents)$2f04cbc44ee30ce0$export$53a0910f038337bd(scrollParent, targetElement);
+        }
+    }
+}
+
+
+export {$2f04cbc44ee30ce0$export$53a0910f038337bd as scrollIntoView, $2f04cbc44ee30ce0$export$c826860796309d1b as scrollIntoViewport};
+                                                 
+
+//# sourceMappingURL=data:application/json;base64,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QkFDbEYsd0NBQUEseUJBQ0E7Z0JBREEsaUJBQUEsNEJBQUEsMEJBQUEsS0FBTSxpQkFBaUIsY0FBdkIsK0NBQUEseUNBQUEsd0JBQXlCLGNBQWMsY0FBdkMsNkRBQUEsNENBQUEseUJBQTBDO29CQUFDLE9BQU87b0JBQVUsUUFBUTtnQkFBUTtpQkFDNUUsaUNBQUEsY0FBYyxjQUFjLGNBQTVCLHFEQUFBLG9DQUFBLGVBQStCO29CQUFDLE9BQU87Z0JBQVM7WUFDbEQ7UUFDRixPQUFPO1lBQ0wsSUFBSSxnQkFBZ0IsQ0FBQSxHQUFBLHlDQUFlLEVBQUU7WUFDckMsK0pBQStKO1lBQy9KLElBQUksQ0FBQyxtQkFDSCxjQUFjLElBQUksQ0FBQztZQUVyQixLQUFLLElBQUksZ0JBQWdCLGNBQ3ZCLDBDQUFlLGNBQTZCO1FBRWhEO0lBQ0Y7QUFDRiIsInNvdXJjZXMiOlsicGFja2FnZXMvQHJlYWN0LWFyaWEvdXRpbHMvc3JjL3Njcm9sbEludG9WaWV3LnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qXG4gKiBDb3B5cmlnaHQgMjAyMCBBZG9iZS4gQWxsIHJpZ2h0cyByZXNlcnZlZC5cbiAqIFRoaXMgZmlsZSBpcyBsaWNlbnNlZCB0byB5b3UgdW5kZXIgdGhlIEFwYWNoZSBMaWNlbnNlLCBWZXJzaW9uIDIuMCAodGhlIFwiTGljZW5zZVwiKTtcbiAqIHlvdSBtYXkgbm90IHVzZSB0aGlzIGZpbGUgZXhjZXB0IGluIGNvbXBsaWFuY2Ugd2l0aCB0aGUgTGljZW5zZS4gWW91IG1heSBvYnRhaW4gYSBjb3B5XG4gKiBvZiB0aGUgTGljZW5zZSBhdCBodHRwOi8vd3d3LmFwYWNoZS5vcmcvbGljZW5zZXMvTElDRU5TRS0yLjBcbiAqXG4gKiBVbmxlc3MgcmVxdWlyZWQgYnkgYXBwbGljYWJsZSBsYXcgb3IgYWdyZWVkIHRvIGluIHdyaXRpbmcsIHNvZnR3YXJlIGRpc3RyaWJ1dGVkIHVuZGVyXG4gKiB0aGUgTGljZW5zZSBpcyBkaXN0cmlidXRlZCBvbiBhbiBcIkFTIElTXCIgQkFTSVMsIFdJVEhPVVQgV0FSUkFOVElFUyBPUiBSRVBSRVNFTlRBVElPTlNcbiAqIE9GIEFOWSBLSU5ELCBlaXRoZXIgZXhwcmVzcyBvciBpbXBsaWVkLiBTZWUgdGhlIExpY2Vuc2UgZm9yIHRoZSBzcGVjaWZpYyBsYW5ndWFnZVxuICogZ292ZXJuaW5nIHBlcm1pc3Npb25zIGFuZCBsaW1pdGF0aW9ucyB1bmRlciB0aGUgTGljZW5zZS5cbiAqL1xuXG5pbXBvcnQge2dldFNjcm9sbFBhcmVudHN9IGZyb20gJy4vZ2V0U2Nyb2xsUGFyZW50cyc7XG5cbmludGVyZmFjZSBTY3JvbGxJbnRvVmlld3BvcnRPcHRzIHtcbiAgLyoqIFRoZSBvcHRpb25hbCBjb250YWluaW5nIGVsZW1lbnQgb2YgdGhlIHRhcmdldCB0byBiZSBjZW50ZXJlZCBpbiB0aGUgdmlld3BvcnQuICovXG4gIGNvbnRhaW5pbmdFbGVtZW50PzogRWxlbWVudCB8IG51bGxcbn1cblxuLyoqXG4gKiBTY3JvbGxzIGBzY3JvbGxWaWV3YCBzbyB0aGF0IGBlbGVtZW50YCBpcyB2aXNpYmxlLlxuICogU2ltaWxhciB0byBgZWxlbWVudC5zY3JvbGxJbnRvVmlldyh7YmxvY2s6ICduZWFyZXN0J30pYCAobm90IHN1cHBvcnRlZCBpbiBFZGdlKSxcbiAqIGJ1dCBkb2Vzbid0IGFmZmVjdCBwYXJlbnRzIGFib3ZlIGBzY3JvbGxWaWV3YC5cbiAqL1xuZXhwb3J0IGZ1bmN0aW9uIHNjcm9sbEludG9WaWV3KHNjcm9sbFZpZXc6IEhUTUxFbGVtZW50LCBlbGVtZW50OiBIVE1MRWxlbWVudCk6IHZvaWQge1xuICBsZXQgb2Zmc2V0WCA9IHJlbGF0aXZlT2Zmc2V0KHNjcm9sbFZpZXcsIGVsZW1lbnQsICdsZWZ0Jyk7XG4gIGxldCBvZmZzZXRZID0gcmVsYXRpdmVPZmZzZXQoc2Nyb2xsVmlldywgZWxlbWVudCwgJ3RvcCcpO1xuICBsZXQgd2lkdGggPSBlbGVtZW50Lm9mZnNldFdpZHRoO1xuICBsZXQgaGVpZ2h0ID0gZWxlbWVudC5vZmZzZXRIZWlnaHQ7XG4gIGxldCB4ID0gc2Nyb2xsVmlldy5zY3JvbGxMZWZ0O1xuICBsZXQgeSA9IHNjcm9sbFZpZXcuc2Nyb2xsVG9wO1xuXG4gIC8vIEFjY291bnQgZm9yIHRvcC9sZWZ0IGJvcmRlciBvZmZzZXR0aW5nIHRoZSBzY3JvbGwgdG9wL0xlZnQgKyBzY3JvbGwgcGFkZGluZ1xuICBsZXQge1xuICAgIGJvcmRlclRvcFdpZHRoLFxuICAgIGJvcmRlckxlZnRXaWR0aCxcbiAgICBzY3JvbGxQYWRkaW5nVG9wLFxuICAgIHNjcm9sbFBhZGRpbmdSaWdodCxcbiAgICBzY3JvbGxQYWRkaW5nQm90dG9tLFxuICAgIHNjcm9sbFBhZGRpbmdMZWZ0XG4gIH0gPSBnZXRDb21wdXRlZFN0eWxlKHNjcm9sbFZpZXcpO1xuXG4gIGxldCBib3JkZXJBZGp1c3RlZFggPSB4ICsgcGFyc2VJbnQoYm9yZGVyTGVmdFdpZHRoLCAxMCk7XG4gIGxldCBib3JkZXJBZGp1c3RlZFkgPSB5ICsgcGFyc2VJbnQoYm9yZGVyVG9wV2lkdGgsIDEwKTtcbiAgLy8gSWdub3JlIGVuZC9ib3R0b20gYm9yZGVyIHZpYSBjbGllbnRIZWlnaHQvV2lkdGggaW5zdGVhZCBvZiBvZmZzZXRIZWlnaHQvV2lkdGhcbiAgbGV0IG1heFggPSBib3JkZXJBZGp1c3RlZFggKyBzY3JvbGxWaWV3LmNsaWVudFdpZHRoO1xuICBsZXQgbWF4WSA9IGJvcmRlckFkanVzdGVkWSArIHNjcm9sbFZpZXcuY2xpZW50SGVpZ2h0O1xuXG4gIC8vIEdldCBzY3JvbGwgcGFkZGluZyB2YWx1ZXMgYXMgcGl4ZWxzIC0gZGVmYXVsdHMgdG8gMCBpZiBubyBzY3JvbGwgcGFkZGluZ1xuICAvLyBpcyB1c2VkLlxuICBsZXQgc2Nyb2xsUGFkZGluZ1RvcE51bWJlciA9IHBhcnNlSW50KHNjcm9sbFBhZGRpbmdUb3AsIDEwKSB8fCAwO1xuICBsZXQgc2Nyb2xsUGFkZGluZ0JvdHRvbU51bWJlciA9IHBhcnNlSW50KHNjcm9sbFBhZGRpbmdCb3R0b20sIDEwKSB8fCAwO1xuICBsZXQgc2Nyb2xsUGFkZGluZ1JpZ2h0TnVtYmVyID0gcGFyc2VJbnQoc2Nyb2xsUGFkZGluZ1JpZ2h0LCAxMCkgfHwgMDtcbiAgbGV0IHNjcm9sbFBhZGRpbmdMZWZ0TnVtYmVyID0gcGFyc2VJbnQoc2Nyb2xsUGFkZGluZ0xlZnQsIDEwKSB8fCAwO1xuXG4gIGlmIChvZmZzZXRYIDw9IHggKyBzY3JvbGxQYWRkaW5nTGVmdE51bWJlcikge1xuICAgIHggPSBvZmZzZXRYIC0gcGFyc2VJbnQoYm9yZGVyTGVmdFdpZHRoLCAxMCkgLSBzY3JvbGxQYWRkaW5nTGVmdE51bWJlcjtcbiAgfSBlbHNlIGlmIChvZmZzZXRYICsgd2lkdGggPiBtYXhYIC0gc2Nyb2xsUGFkZGluZ1JpZ2h0TnVtYmVyKSB7XG4gICAgeCArPSBvZmZzZXRYICsgd2lkdGggLSBtYXhYICsgc2Nyb2xsUGFkZGluZ1JpZ2h0TnVtYmVyO1xuICB9XG4gIGlmIChvZmZzZXRZIDw9IGJvcmRlckFkanVzdGVkWSArIHNjcm9sbFBhZGRpbmdUb3BOdW1iZXIpIHtcbiAgICB5ID0gb2Zmc2V0WSAtIHBhcnNlSW50KGJvcmRlclRvcFdpZHRoLCAxMCkgLSBzY3JvbGxQYWRkaW5nVG9wTnVtYmVyO1xuICB9IGVsc2UgaWYgKG9mZnNldFkgKyBoZWlnaHQgPiBtYXhZIC0gc2Nyb2xsUGFkZGluZ0JvdHRvbU51bWJlcikge1xuICAgIHkgKz0gb2Zmc2V0WSArIGhlaWdodCAtIG1heFkgKyBzY3JvbGxQYWRkaW5nQm90dG9tTnVtYmVyO1xuICB9XG5cbiAgc2Nyb2xsVmlldy5zY3JvbGxMZWZ0ID0geDtcbiAgc2Nyb2xsVmlldy5zY3JvbGxUb3AgPSB5O1xufVxuXG4vKipcbiAqIENvbXB1dGVzIHRoZSBvZmZzZXQgbGVmdCBvciB0b3AgZnJvbSBjaGlsZCB0byBhbmNlc3RvciBieSBhY2N1bXVsYXRpbmdcbiAqIG9mZnNldExlZnQgb3Igb2Zmc2V0VG9wIHRocm91Z2ggaW50ZXJ2ZW5pbmcgb2Zmc2V0UGFyZW50cy5cbiAqL1xuZnVuY3Rpb24gcmVsYXRpdmVPZmZzZXQoYW5jZXN0b3I6IEhUTUxFbGVtZW50LCBjaGlsZDogSFRNTEVsZW1lbnQsIGF4aXM6ICdsZWZ0J3wndG9wJykge1xuICBjb25zdCBwcm9wID0gYXhpcyA9PT0gJ2xlZnQnID8gJ29mZnNldExlZnQnIDogJ29mZnNldFRvcCc7XG4gIGxldCBzdW0gPSAwO1xuICB3aGlsZSAoY2hpbGQub2Zmc2V0UGFyZW50KSB7XG4gICAgc3VtICs9IGNoaWxkW3Byb3BdO1xuICAgIGlmIChjaGlsZC5vZmZzZXRQYXJlbnQgPT09IGFuY2VzdG9yKSB7XG4gICAgICAvLyBTdG9wIG9uY2Ugd2UgaGF2ZSBmb3VuZCB0aGUgYW5jZXN0b3Igd2UgYXJlIGludGVyZXN0ZWQgaW4uXG4gICAgICBicmVhaztcbiAgICB9IGVsc2UgaWYgKGNoaWxkLm9mZnNldFBhcmVudC5jb250YWlucyhhbmNlc3RvcikpIHtcbiAgICAgIC8vIElmIHRoZSBhbmNlc3RvciBpcyBub3QgYHBvc2l0aW9uOnJlbGF0aXZlYCwgdGhlbiB3ZSBzdG9wIGF0XG4gICAgICAvLyBfaXRzXyBvZmZzZXQgcGFyZW50LCBhbmQgd2Ugc3VidHJhY3Qgb2ZmIF9pdHNfIG9mZnNldCwgc28gdGhhdFxuICAgICAgLy8gd2UgZW5kIHVwIHdpdGggdGhlIHByb3BlciBvZmZzZXQgZnJvbSBjaGlsZCB0byBhbmNlc3Rvci5cbiAgICAgIHN1bSAtPSBhbmNlc3Rvcltwcm9wXTtcbiAgICAgIGJyZWFrO1xuICAgIH1cbiAgICBjaGlsZCA9IGNoaWxkLm9mZnNldFBhcmVudCBhcyBIVE1MRWxlbWVudDtcbiAgfVxuICByZXR1cm4gc3VtO1xufVxuXG4vKipcbiAqIFNjcm9sbHMgdGhlIGB0YXJnZXRFbGVtZW50YCBzbyBpdCBpcyB2aXNpYmxlIGluIHRoZSB2aWV3cG9ydC4gQWNjZXB0cyBhbiBvcHRpb25hbCBgb3B0cy5jb250YWluaW5nRWxlbWVudGBcbiAqIHRoYXQgd2lsbCBiZSBjZW50ZXJlZCBpbiB0aGUgdmlld3BvcnQgcHJpb3IgdG8gc2Nyb2xsaW5nIHRoZSB0YXJnZXRFbGVtZW50IGludG8gdmlldy4gSWYgc2Nyb2xsaW5nIGlzIHByZXZlbnRlZCBvblxuICogdGhlIGJvZHkgKGUuZy4gdGFyZ2V0RWxlbWVudCBpcyBpbiBhIHBvcG92ZXIpLCB0aGlzIHdpbGwgb25seSBzY3JvbGwgdGhlIHNjcm9sbCBwYXJlbnRzIG9mIHRoZSB0YXJnZXRFbGVtZW50IHVwIHRvIGJ1dCBub3QgaW5jbHVkaW5nIHRoZSBib2R5IGl0c2VsZi5cbiAqL1xuZXhwb3J0IGZ1bmN0aW9uIHNjcm9sbEludG9WaWV3cG9ydCh0YXJnZXRFbGVtZW50OiBFbGVtZW50IHwgbnVsbCwgb3B0cz86IFNjcm9sbEludG9WaWV3cG9ydE9wdHMpOiB2b2lkIHtcbiAgaWYgKHRhcmdldEVsZW1lbnQgJiYgZG9jdW1lbnQuY29udGFpbnModGFyZ2V0RWxlbWVudCkpIHtcbiAgICBsZXQgcm9vdCA9IGRvY3VtZW50LnNjcm9sbGluZ0VsZW1lbnQgfHwgZG9jdW1lbnQuZG9jdW1lbnRFbGVtZW50O1xuICAgIGxldCBpc1Njcm9sbFByZXZlbnRlZCA9IHdpbmRvdy5nZXRDb21wdXRlZFN0eWxlKHJvb3QpLm92ZXJmbG93ID09PSAnaGlkZGVuJztcbiAgICAvLyBJZiBzY3JvbGxpbmcgaXMgbm90IGN1cnJlbnRseSBwcmV2ZW50ZWQgdGhlbiB3ZSBhcmVu4oCZdCBpbiBhIG92ZXJsYXkgbm9yIGlzIGEgb3ZlcmxheSBvcGVuLCBqdXN0IHVzZSBlbGVtZW50LnNjcm9sbEludG9WaWV3IHRvIGJyaW5nIHRoZSBlbGVtZW50IGludG8gdmlld1xuICAgIGlmICghaXNTY3JvbGxQcmV2ZW50ZWQpIHtcbiAgICAgIGxldCB7bGVmdDogb3JpZ2luYWxMZWZ0LCB0b3A6IG9yaWdpbmFsVG9wfSA9IHRhcmdldEVsZW1lbnQuZ2V0Qm91bmRpbmdDbGllbnRSZWN0KCk7XG5cbiAgICAgIC8vIHVzZSBzY3JvbGxJbnRvVmlldyh7YmxvY2s6ICduZWFyZXN0J30pIGluc3RlYWQgb2YgLmZvY3VzIHRvIGNoZWNrIGlmIHRoZSBlbGVtZW50IGlzIGZ1bGx5IGluIHZpZXcgb3Igbm90IHNpbmNlIC5mb2N1cygpXG4gICAgICAvLyB3b24ndCBjYXVzZSBhIHNjcm9sbCBpZiB0aGUgZWxlbWVudCBpcyBhbHJlYWR5IGZvY3VzZWQgYW5kIGRvZXNuJ3QgYmVoYXZlIGNvbnNpc3RlbnRseSB3aGVuIGFuIGVsZW1lbnQgaXMgcGFydGlhbGx5IG91dCBvZiB2aWV3IGhvcml6b250YWxseSB2cyB2ZXJ0aWNhbGx5XG4gICAgICB0YXJnZXRFbGVtZW50Py5zY3JvbGxJbnRvVmlldz8uKHtibG9jazogJ25lYXJlc3QnfSk7XG4gICAgICBsZXQge2xlZnQ6IG5ld0xlZnQsIHRvcDogbmV3VG9wfSA9IHRhcmdldEVsZW1lbnQuZ2V0Qm91bmRpbmdDbGllbnRSZWN0KCk7XG4gICAgICAvLyBBY2NvdW50IGZvciBzdWIgcGl4ZWwgZGlmZmVyZW5jZXMgZnJvbSByb3VuZGluZ1xuICAgICAgaWYgKChNYXRoLmFicyhvcmlnaW5hbExlZnQgLSBuZXdMZWZ0KSA+IDEpIHx8IChNYXRoLmFicyhvcmlnaW5hbFRvcCAtIG5ld1RvcCkgPiAxKSkge1xuICAgICAgICBvcHRzPy5jb250YWluaW5nRWxlbWVudD8uc2Nyb2xsSW50b1ZpZXc/Lih7YmxvY2s6ICdjZW50ZXInLCBpbmxpbmU6ICdjZW50ZXInfSk7XG4gICAgICAgIHRhcmdldEVsZW1lbnQuc2Nyb2xsSW50b1ZpZXc/Lih7YmxvY2s6ICduZWFyZXN0J30pO1xuICAgICAgfVxuICAgIH0gZWxzZSB7XG4gICAgICBsZXQgc2Nyb2xsUGFyZW50cyA9IGdldFNjcm9sbFBhcmVudHModGFyZ2V0RWxlbWVudCk7XG4gICAgICAvLyBJZiBzY3JvbGxpbmcgaXMgcHJldmVudGVkLCB3ZSBkb24ndCB3YW50IHRvIHNjcm9sbCB0aGUgYm9keSBzaW5jZSBpdCBtaWdodCBtb3ZlIHRoZSBvdmVybGF5IHBhcnRpYWxseSBvZmZzY3JlZW4gYW5kIHRoZSB1c2VyIGNhbid0IHNjcm9sbCBpdCBiYWNrIGludG8gdmlldy5cbiAgICAgIGlmICghaXNTY3JvbGxQcmV2ZW50ZWQpIHtcbiAgICAgICAgc2Nyb2xsUGFyZW50cy5wdXNoKHJvb3QpO1xuICAgICAgfVxuICAgICAgZm9yIChsZXQgc2Nyb2xsUGFyZW50IG9mIHNjcm9sbFBhcmVudHMpIHtcbiAgICAgICAgc2Nyb2xsSW50b1ZpZXcoc2Nyb2xsUGFyZW50IGFzIEhUTUxFbGVtZW50LCB0YXJnZXRFbGVtZW50IGFzIEhUTUxFbGVtZW50KTtcbiAgICAgIH1cbiAgICB9XG4gIH1cbn1cbiJdLCJuYW1lcyI6W10sInZlcnNpb24iOjMsImZpbGUiOiJzY3JvbGxJbnRvVmlldy5tb2R1bGUuanMubWFwIiwieF9nb29nbGVfaWdub3JlTGlzdCI6WzBdfQ==

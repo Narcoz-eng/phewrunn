@@ -1,0 +1,616 @@
+import { createHotContext as __vite__createHotContext } from "/@vite/client";import.meta.hot = __vite__createHotContext("/src/components/layout/V2Sidebar.tsx");import * as RefreshRuntime from "/@react-refresh";
+const inWebWorker = typeof WorkerGlobalScope !== 'undefined' && self instanceof WorkerGlobalScope;
+
+let prevRefreshReg;
+let prevRefreshSig;
+
+if (import.meta.hot && !inWebWorker) {
+  if (!window.$RefreshReg$) {
+    throw new Error(
+      "@vitejs/plugin-react-swc can't detect preamble. Something is wrong."
+    );
+  }
+
+  prevRefreshReg = window.$RefreshReg$;
+  prevRefreshSig = window.$RefreshSig$;
+  window.$RefreshReg$ = RefreshRuntime.getRefreshReg("C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx");
+  window.$RefreshSig$ = RefreshRuntime.createSignatureFunctionForTransform;
+}
+
+import { jsxDEV as _jsxDEV, Fragment as _Fragment } from "/@id/__x00__vibecode-jsx-source/jsx-dev-runtime";
+var _s = $RefreshSig$(), _s1 = $RefreshSig$();
+import { Activity, Bell, Boxes, CandlestickChart, Crosshair, Flame, Globe2, LogOut, Settings, ShieldCheck, Trophy, UserRound, Users, Zap } from "/node_modules/.vite/deps/lucide-react.js?v=730f480c";
+import { NavLink, useLocation, useNavigate } from "/node_modules/.vite/deps/react-router-dom.js?v=730f480c";
+import { BrandLogo } from "/src/components/BrandLogo.tsx";
+import { Avatar, AvatarFallback, AvatarImage } from "/src/components/ui/avatar.tsx";
+import { useAuth } from "/src/lib/auth-client.ts";
+import { cn } from "/src/lib/utils.ts";
+import { getAvatarUrl } from "/src/types/index.ts?t=1777459806272";
+const navItems = [
+    {
+        to: "/",
+        label: "Feed",
+        icon: Activity,
+        match: (pathname)=>pathname === "/"
+    },
+    {
+        to: "/raids",
+        label: "X Raids",
+        icon: Crosshair,
+        match: (pathname)=>pathname.startsWith("/raids")
+    },
+    {
+        to: "/terminal",
+        label: "Terminal",
+        icon: CandlestickChart,
+        match: (pathname, search)=>pathname.startsWith("/terminal") && !search.includes("mode=raids") || pathname.startsWith("/token/")
+    },
+    {
+        to: "/bundle-checker",
+        label: "Bundle Checker",
+        icon: Boxes,
+        match: (pathname)=>pathname.startsWith("/bundle-checker")
+    },
+    {
+        to: "/leaderboard",
+        label: "Leaderboard",
+        icon: Trophy,
+        match: (pathname)=>pathname.startsWith("/leaderboard")
+    },
+    {
+        to: "/communities",
+        label: "Communities",
+        icon: Users,
+        match: (pathname)=>pathname.startsWith("/communities")
+    },
+    {
+        to: "/notifications",
+        label: "Notifications",
+        icon: Bell,
+        match: (pathname)=>pathname.startsWith("/notifications")
+    },
+    {
+        to: "/profile",
+        label: "Profile",
+        icon: UserRound,
+        match: (pathname)=>pathname.startsWith("/profile")
+    }
+];
+const mobileNavItems = [
+    navItems[0],
+    navItems[1],
+    navItems[2],
+    navItems[4],
+    navItems[7]
+].filter(Boolean);
+function SidebarNavItems({ mobile = false }) {
+    _s();
+    const location = useLocation();
+    const items = mobile ? mobileNavItems : navItems;
+    return /*#__PURE__*/ _jsxDEV(_Fragment, {
+        children: items.map((item)=>{
+            const Icon = item.icon;
+            const active = Boolean(item.to && item.match?.(location.pathname, location.search));
+            const className = cn(mobile ? "v2-mobile-nav-item" : "v2-sidebar-link", active && (mobile ? "v2-mobile-nav-item-active" : "v2-sidebar-link-active"), item.disabled && "cursor-not-allowed opacity-45");
+            const body = /*#__PURE__*/ _jsxDEV(_Fragment, {
+                children: [
+                    /*#__PURE__*/ _jsxDEV(Icon, {
+                        className: "h-[18px] w-[18px] shrink-0"
+                    }, void 0, false, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                        lineNumber: 75,
+                        columnNumber: 13
+                    }, this),
+                    /*#__PURE__*/ _jsxDEV("span", {
+                        className: cn("min-w-0 flex-1 truncate", mobile && "sr-only"),
+                        children: item.label
+                    }, void 0, false, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                        lineNumber: 76,
+                        columnNumber: 13
+                    }, this),
+                    item.badge && !mobile ? /*#__PURE__*/ _jsxDEV("span", {
+                        className: "rounded-full bg-[#a9ff34] px-1.5 py-0.5 text-[10px] font-extrabold leading-none text-[#081108]",
+                        children: item.badge
+                    }, void 0, false, {
+                        fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                        lineNumber: 78,
+                        columnNumber: 15
+                    }, this) : null
+                ]
+            }, void 0, true);
+            if (!item.to || item.disabled) {
+                return /*#__PURE__*/ _jsxDEV("div", {
+                    className: className,
+                    "aria-disabled": "true",
+                    title: "Unavailable",
+                    children: body
+                }, item.label, false, {
+                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                    lineNumber: 87,
+                    columnNumber: 13
+                }, this);
+            }
+            return /*#__PURE__*/ _jsxDEV(NavLink, {
+                to: item.to,
+                className: className,
+                children: body
+            }, item.to, false, {
+                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                lineNumber: 94,
+                columnNumber: 11
+            }, this);
+        })
+    }, void 0, false);
+}
+_s(SidebarNavItems, "pkHmaVRPskBaU4tMJuJJpV42k1I=", false, function() {
+    return [
+        useLocation
+    ];
+});
+_c = SidebarNavItems;
+export function V2Sidebar() {
+    _s1();
+    const navigate = useNavigate();
+    const { user, signOut } = useAuth();
+    const xp = user?.xp ?? 0;
+    const level = user?.level ?? 0;
+    const nextLevelXp = Math.max(25000, Math.ceil((xp + 1) / 25000) * 25000);
+    const xpProgress = Math.max(4, Math.min(100, xp / nextLevelXp * 100));
+    const aiScore = null;
+    return /*#__PURE__*/ _jsxDEV(_Fragment, {
+        children: [
+            /*#__PURE__*/ _jsxDEV("aside", {
+                className: "v2-sidebar hidden lg:flex",
+                children: /*#__PURE__*/ _jsxDEV("div", {
+                    className: "v2-sidebar-scroll",
+                    children: [
+                        /*#__PURE__*/ _jsxDEV("div", {
+                            className: "shrink-0 px-1",
+                            children: /*#__PURE__*/ _jsxDEV(BrandLogo, {
+                                size: "md",
+                                className: "gap-3"
+                            }, void 0, false, {
+                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                lineNumber: 117,
+                                columnNumber: 11
+                            }, this)
+                        }, void 0, false, {
+                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                            lineNumber: 116,
+                            columnNumber: 9
+                        }, this),
+                        /*#__PURE__*/ _jsxDEV("nav", {
+                            className: "mt-8 flex shrink-0 flex-col gap-2",
+                            children: /*#__PURE__*/ _jsxDEV(SidebarNavItems, {}, void 0, false, {
+                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                lineNumber: 121,
+                                columnNumber: 11
+                            }, this)
+                        }, void 0, false, {
+                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                            lineNumber: 120,
+                            columnNumber: 9
+                        }, this),
+                        /*#__PURE__*/ _jsxDEV("div", {
+                            className: "mt-8 shrink-0 space-y-5 border-t border-white/[0.07] pt-5",
+                            children: [
+                                /*#__PURE__*/ _jsxDEV("div", {
+                                    className: "flex items-center gap-3",
+                                    children: [
+                                        /*#__PURE__*/ _jsxDEV(Avatar, {
+                                            className: "h-12 w-12 border border-lime-300/20",
+                                            children: [
+                                                /*#__PURE__*/ _jsxDEV(AvatarImage, {
+                                                    src: user ? getAvatarUrl(user.id, user.image) : undefined
+                                                }, void 0, false, {
+                                                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                                    lineNumber: 127,
+                                                    columnNumber: 15
+                                                }, this),
+                                                /*#__PURE__*/ _jsxDEV(AvatarFallback, {
+                                                    className: "bg-white/[0.06] text-white/70",
+                                                    children: (user?.name ?? user?.username ?? "P").charAt(0)
+                                                }, void 0, false, {
+                                                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                                    lineNumber: 128,
+                                                    columnNumber: 15
+                                                }, this)
+                                            ]
+                                        }, void 0, true, {
+                                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                            lineNumber: 126,
+                                            columnNumber: 13
+                                        }, this),
+                                        /*#__PURE__*/ _jsxDEV("div", {
+                                            className: "min-w-0",
+                                            children: [
+                                                /*#__PURE__*/ _jsxDEV("div", {
+                                                    className: "truncate text-sm font-semibold text-white",
+                                                    children: user?.username || user?.name || "PhewRunner"
+                                                }, void 0, false, {
+                                                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                                    lineNumber: 133,
+                                                    columnNumber: 15
+                                                }, this),
+                                                /*#__PURE__*/ _jsxDEV("div", {
+                                                    className: "text-xs text-white/48",
+                                                    children: [
+                                                        "Level ",
+                                                        level
+                                                    ]
+                                                }, void 0, true, {
+                                                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                                    lineNumber: 136,
+                                                    columnNumber: 15
+                                                }, this)
+                                            ]
+                                        }, void 0, true, {
+                                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                            lineNumber: 132,
+                                            columnNumber: 13
+                                        }, this)
+                                    ]
+                                }, void 0, true, {
+                                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                    lineNumber: 125,
+                                    columnNumber: 11
+                                }, this),
+                                /*#__PURE__*/ _jsxDEV("div", {
+                                    children: [
+                                        /*#__PURE__*/ _jsxDEV("div", {
+                                            className: "flex items-center justify-between text-xs",
+                                            children: [
+                                                /*#__PURE__*/ _jsxDEV("span", {
+                                                    className: "font-semibold text-lime-300",
+                                                    children: xp.toLocaleString()
+                                                }, void 0, false, {
+                                                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                                    lineNumber: 142,
+                                                    columnNumber: 15
+                                                }, this),
+                                                /*#__PURE__*/ _jsxDEV("span", {
+                                                    className: "text-white/46",
+                                                    children: [
+                                                        "/ ",
+                                                        nextLevelXp.toLocaleString(),
+                                                        " XP"
+                                                    ]
+                                                }, void 0, true, {
+                                                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                                    lineNumber: 143,
+                                                    columnNumber: 15
+                                                }, this)
+                                            ]
+                                        }, void 0, true, {
+                                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                            lineNumber: 141,
+                                            columnNumber: 13
+                                        }, this),
+                                        /*#__PURE__*/ _jsxDEV("div", {
+                                            className: "mt-2 h-2 overflow-hidden rounded-full bg-white/[0.08]",
+                                            children: /*#__PURE__*/ _jsxDEV("div", {
+                                                className: "h-full rounded-full bg-[linear-gradient(90deg,#a9ff34,#18d6a3)]",
+                                                style: {
+                                                    width: `${xpProgress}%`
+                                                }
+                                            }, void 0, false, {
+                                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                                lineNumber: 146,
+                                                columnNumber: 15
+                                            }, this)
+                                        }, void 0, false, {
+                                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                            lineNumber: 145,
+                                            columnNumber: 13
+                                        }, this)
+                                    ]
+                                }, void 0, true, {
+                                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                    lineNumber: 140,
+                                    columnNumber: 11
+                                }, this),
+                                /*#__PURE__*/ _jsxDEV("div", {
+                                    className: "rounded-[18px] border border-white/[0.08] bg-[radial-gradient(circle_at_right,rgba(45,212,191,0.18),transparent_34%),linear-gradient(180deg,rgba(255,255,255,0.035),rgba(255,255,255,0.015))] p-3",
+                                    children: [
+                                        /*#__PURE__*/ _jsxDEV("div", {
+                                            className: "text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-200/78",
+                                            children: "AI Trader Score"
+                                        }, void 0, false, {
+                                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                            lineNumber: 154,
+                                            columnNumber: 13
+                                        }, this),
+                                        /*#__PURE__*/ _jsxDEV("div", {
+                                            className: "mt-2 flex items-end gap-1",
+                                            children: [
+                                                /*#__PURE__*/ _jsxDEV("span", {
+                                                    className: "text-3xl font-semibold text-[#19e6a7]",
+                                                    children: typeof aiScore === "number" ? aiScore.toFixed(1) : "Early"
+                                                }, void 0, false, {
+                                                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                                    lineNumber: 156,
+                                                    columnNumber: 15
+                                                }, this),
+                                                /*#__PURE__*/ _jsxDEV("span", {
+                                                    className: "pb-1 text-xs text-white/44",
+                                                    children: "/100"
+                                                }, void 0, false, {
+                                                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                                    lineNumber: 159,
+                                                    columnNumber: 15
+                                                }, this)
+                                            ]
+                                        }, void 0, true, {
+                                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                            lineNumber: 155,
+                                            columnNumber: 13
+                                        }, this),
+                                        /*#__PURE__*/ _jsxDEV("div", {
+                                            className: "mt-1 text-sm font-semibold text-[#a9ff34]",
+                                            children: typeof aiScore === "number" && aiScore >= 90 ? "Top 1%" : "Live ranking"
+                                        }, void 0, false, {
+                                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                            lineNumber: 161,
+                                            columnNumber: 13
+                                        }, this)
+                                    ]
+                                }, void 0, true, {
+                                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                    lineNumber: 153,
+                                    columnNumber: 11
+                                }, this),
+                                /*#__PURE__*/ _jsxDEV("div", {
+                                    className: "rounded-[18px] border border-white/[0.08] bg-white/[0.025] p-2.5",
+                                    children: [
+                                        /*#__PURE__*/ _jsxDEV("div", {
+                                            className: "px-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/36",
+                                            children: "Quick Actions"
+                                        }, void 0, false, {
+                                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                            lineNumber: 167,
+                                            columnNumber: 13
+                                        }, this),
+                                        /*#__PURE__*/ _jsxDEV("div", {
+                                            className: "mt-2 grid gap-2",
+                                            children: [
+                                                {
+                                                    label: "New Call",
+                                                    hint: "Share alpha",
+                                                    icon: Activity,
+                                                    onClick: ()=>navigate("/?compose=alpha")
+                                                },
+                                                {
+                                                    label: "Create Raid",
+                                                    hint: "Open raid room",
+                                                    icon: Flame,
+                                                    onClick: ()=>navigate("/raids")
+                                                },
+                                                {
+                                                    label: "AI Scan",
+                                                    hint: "Analyze token",
+                                                    icon: Zap,
+                                                    onClick: ()=>navigate("/bundle-checker")
+                                                },
+                                                {
+                                                    label: "Wallet Tracker",
+                                                    hint: "Smart money flow",
+                                                    icon: ShieldCheck,
+                                                    disabled: true
+                                                }
+                                            ].map((item)=>{
+                                                const Icon = item.icon;
+                                                return /*#__PURE__*/ _jsxDEV("button", {
+                                                    type: "button",
+                                                    onClick: item.disabled ? undefined : item.onClick,
+                                                    disabled: item.disabled,
+                                                    title: item.disabled ? "Wallet tracker activates with verified smart-money flow." : undefined,
+                                                    className: "flex items-center gap-2.5 rounded-[12px] border border-white/[0.07] bg-white/[0.03] px-2.5 py-2 text-left transition hover:border-lime-300/20 hover:bg-white/[0.055] disabled:cursor-not-allowed disabled:opacity-45",
+                                                    children: [
+                                                        /*#__PURE__*/ _jsxDEV("span", {
+                                                            className: "flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] border border-white/[0.07] bg-black/20",
+                                                            children: /*#__PURE__*/ _jsxDEV(Icon, {
+                                                                className: "h-4 w-4 text-lime-300"
+                                                            }, void 0, false, {
+                                                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                                                lineNumber: 186,
+                                                                columnNumber: 23
+                                                            }, this)
+                                                        }, void 0, false, {
+                                                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                                            lineNumber: 185,
+                                                            columnNumber: 21
+                                                        }, this),
+                                                        /*#__PURE__*/ _jsxDEV("span", {
+                                                            className: "min-w-0",
+                                                            children: [
+                                                                /*#__PURE__*/ _jsxDEV("span", {
+                                                                    className: "block truncate text-xs font-semibold text-white/82",
+                                                                    children: item.label
+                                                                }, void 0, false, {
+                                                                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                                                    lineNumber: 189,
+                                                                    columnNumber: 23
+                                                                }, this),
+                                                                /*#__PURE__*/ _jsxDEV("span", {
+                                                                    className: "block truncate text-[10px] text-white/38",
+                                                                    children: item.hint
+                                                                }, void 0, false, {
+                                                                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                                                    lineNumber: 190,
+                                                                    columnNumber: 23
+                                                                }, this)
+                                                            ]
+                                                        }, void 0, true, {
+                                                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                                            lineNumber: 188,
+                                                            columnNumber: 21
+                                                        }, this)
+                                                    ]
+                                                }, item.label, true, {
+                                                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                                    lineNumber: 177,
+                                                    columnNumber: 19
+                                                }, this);
+                                            })
+                                        }, void 0, false, {
+                                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                            lineNumber: 168,
+                                            columnNumber: 13
+                                        }, this)
+                                    ]
+                                }, void 0, true, {
+                                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                    lineNumber: 166,
+                                    columnNumber: 11
+                                }, this),
+                                /*#__PURE__*/ _jsxDEV("div", {
+                                    className: "flex items-center justify-between px-1 pb-1 text-white/48",
+                                    children: [
+                                        /*#__PURE__*/ _jsxDEV("button", {
+                                            type: "button",
+                                            onClick: ()=>navigate("/profile"),
+                                            className: "rounded-xl p-2 hover:bg-white/[0.05] hover:text-white",
+                                            "aria-label": "Profile settings",
+                                            children: /*#__PURE__*/ _jsxDEV(Settings, {
+                                                className: "h-4 w-4"
+                                            }, void 0, false, {
+                                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                                lineNumber: 200,
+                                                columnNumber: 15
+                                            }, this)
+                                        }, void 0, false, {
+                                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                            lineNumber: 199,
+                                            columnNumber: 13
+                                        }, this),
+                                        /*#__PURE__*/ _jsxDEV("button", {
+                                            type: "button",
+                                            onClick: ()=>navigate("/profile"),
+                                            className: "rounded-xl p-2 hover:bg-white/[0.05] hover:text-white",
+                                            "aria-label": "Wallet security",
+                                            children: /*#__PURE__*/ _jsxDEV(ShieldCheck, {
+                                                className: "h-4 w-4"
+                                            }, void 0, false, {
+                                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                                lineNumber: 203,
+                                                columnNumber: 15
+                                            }, this)
+                                        }, void 0, false, {
+                                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                            lineNumber: 202,
+                                            columnNumber: 13
+                                        }, this),
+                                        /*#__PURE__*/ _jsxDEV("button", {
+                                            type: "button",
+                                            disabled: true,
+                                            title: "Language preferences are not configured yet.",
+                                            className: "cursor-not-allowed rounded-xl p-2 opacity-45",
+                                            "aria-label": "Language preferences",
+                                            children: /*#__PURE__*/ _jsxDEV(Globe2, {
+                                                className: "h-4 w-4"
+                                            }, void 0, false, {
+                                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                                lineNumber: 206,
+                                                columnNumber: 15
+                                            }, this)
+                                        }, void 0, false, {
+                                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                            lineNumber: 205,
+                                            columnNumber: 13
+                                        }, this),
+                                        /*#__PURE__*/ _jsxDEV("button", {
+                                            type: "button",
+                                            onClick: signOut,
+                                            className: "rounded-xl p-2 hover:bg-white/[0.05] hover:text-white",
+                                            "aria-label": "Sign out",
+                                            children: /*#__PURE__*/ _jsxDEV(LogOut, {
+                                                className: "h-4 w-4"
+                                            }, void 0, false, {
+                                                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                                lineNumber: 209,
+                                                columnNumber: 15
+                                            }, this)
+                                        }, void 0, false, {
+                                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                            lineNumber: 208,
+                                            columnNumber: 13
+                                        }, this)
+                                    ]
+                                }, void 0, true, {
+                                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                    lineNumber: 198,
+                                    columnNumber: 11
+                                }, this),
+                                /*#__PURE__*/ _jsxDEV("div", {
+                                    className: "h-3 shrink-0",
+                                    "aria-hidden": "true"
+                                }, void 0, false, {
+                                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                                    lineNumber: 212,
+                                    columnNumber: 11
+                                }, this)
+                            ]
+                        }, void 0, true, {
+                            fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                            lineNumber: 124,
+                            columnNumber: 9
+                        }, this)
+                    ]
+                }, void 0, true, {
+                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                    lineNumber: 115,
+                    columnNumber: 9
+                }, this)
+            }, void 0, false, {
+                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                lineNumber: 114,
+                columnNumber: 7
+            }, this),
+            /*#__PURE__*/ _jsxDEV("div", {
+                className: "v2-mobile-nav lg:hidden",
+                children: /*#__PURE__*/ _jsxDEV(SidebarNavItems, {
+                    mobile: true
+                }, void 0, false, {
+                    fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                    lineNumber: 218,
+                    columnNumber: 9
+                }, this)
+            }, void 0, false, {
+                fileName: "C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx",
+                lineNumber: 217,
+                columnNumber: 7
+            }, this)
+        ]
+    }, void 0, true);
+}
+_s1(V2Sidebar, "WppJslgF8n+hWRq/fC1OrYCWiFg=", false, function() {
+    return [
+        useNavigate,
+        useAuth
+    ];
+});
+_c1 = V2Sidebar;
+var _c, _c1;
+$RefreshReg$(_c, "SidebarNavItems");
+$RefreshReg$(_c1, "V2Sidebar");
+
+
+if (import.meta.hot && !inWebWorker) {
+  window.$RefreshReg$ = prevRefreshReg;
+  window.$RefreshSig$ = prevRefreshSig;
+}
+
+
+if (import.meta.hot && !inWebWorker) {
+  RefreshRuntime.__hmr_import(import.meta.url).then((currentExports) => {
+    RefreshRuntime.registerExportsForReactRefresh("C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx", currentExports);
+    import.meta.hot.accept((nextExports) => {
+      if (!nextExports) return;
+      const invalidateMessage = RefreshRuntime.validateRefreshBoundaryAndEnqueueUpdate("C:/Users/renga/Documents/phewrunn/webapp/src/components/layout/V2Sidebar.tsx", currentExports, nextExports);
+      if (invalidateMessage) import.meta.hot.invalidate(invalidateMessage);
+    });
+  });
+}
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIlYyU2lkZWJhci50c3giXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IHtcbiAgQWN0aXZpdHksXG4gIEJlbGwsXG4gIEJveGVzLFxuICBDYW5kbGVzdGlja0NoYXJ0LFxuICBDcm9zc2hhaXIsXG4gIEZsYW1lLFxuICBHbG9iZTIsXG4gIExvZ091dCxcbiAgU2V0dGluZ3MsXG4gIFNoaWVsZENoZWNrLFxuICBUcm9waHksXG4gIFVzZXJSb3VuZCxcbiAgVXNlcnMsXG4gIFphcCxcbiAgdHlwZSBMdWNpZGVJY29uLFxufSBmcm9tIFwibHVjaWRlLXJlYWN0XCI7XG5pbXBvcnQgeyBOYXZMaW5rLCB1c2VMb2NhdGlvbiwgdXNlTmF2aWdhdGUgfSBmcm9tIFwicmVhY3Qtcm91dGVyLWRvbVwiO1xuaW1wb3J0IHsgQnJhbmRMb2dvIH0gZnJvbSBcIkAvY29tcG9uZW50cy9CcmFuZExvZ29cIjtcbmltcG9ydCB7IEF2YXRhciwgQXZhdGFyRmFsbGJhY2ssIEF2YXRhckltYWdlIH0gZnJvbSBcIkAvY29tcG9uZW50cy91aS9hdmF0YXJcIjtcbmltcG9ydCB7IHVzZUF1dGggfSBmcm9tIFwiQC9saWIvYXV0aC1jbGllbnRcIjtcbmltcG9ydCB7IGNuIH0gZnJvbSBcIkAvbGliL3V0aWxzXCI7XG5pbXBvcnQgeyBnZXRBdmF0YXJVcmwgfSBmcm9tIFwiQC90eXBlc1wiO1xuXG50eXBlIE5hdkl0ZW0gPSB7XG4gIHRvPzogc3RyaW5nO1xuICBsYWJlbDogc3RyaW5nO1xuICBpY29uOiBMdWNpZGVJY29uO1xuICBkaXNhYmxlZD86IGJvb2xlYW47XG4gIGJhZGdlPzogc3RyaW5nO1xuICBtYXRjaD86IChwYXRobmFtZTogc3RyaW5nLCBzZWFyY2g6IHN0cmluZykgPT4gYm9vbGVhbjtcbn07XG5cbmNvbnN0IG5hdkl0ZW1zOiBOYXZJdGVtW10gPSBbXG4gIHsgdG86IFwiL1wiLCBsYWJlbDogXCJGZWVkXCIsIGljb246IEFjdGl2aXR5LCBtYXRjaDogKHBhdGhuYW1lKSA9PiBwYXRobmFtZSA9PT0gXCIvXCIgfSxcbiAge1xuICAgIHRvOiBcIi9yYWlkc1wiLFxuICAgIGxhYmVsOiBcIlggUmFpZHNcIixcbiAgICBpY29uOiBDcm9zc2hhaXIsXG4gICAgbWF0Y2g6IChwYXRobmFtZSkgPT4gcGF0aG5hbWUuc3RhcnRzV2l0aChcIi9yYWlkc1wiKSxcbiAgfSxcbiAge1xuICAgIHRvOiBcIi90ZXJtaW5hbFwiLFxuICAgIGxhYmVsOiBcIlRlcm1pbmFsXCIsXG4gICAgaWNvbjogQ2FuZGxlc3RpY2tDaGFydCxcbiAgICBtYXRjaDogKHBhdGhuYW1lLCBzZWFyY2gpID0+XG4gICAgICAocGF0aG5hbWUuc3RhcnRzV2l0aChcIi90ZXJtaW5hbFwiKSAmJiAhc2VhcmNoLmluY2x1ZGVzKFwibW9kZT1yYWlkc1wiKSkgfHwgcGF0aG5hbWUuc3RhcnRzV2l0aChcIi90b2tlbi9cIiksXG4gIH0sXG4gIHsgdG86IFwiL2J1bmRsZS1jaGVja2VyXCIsIGxhYmVsOiBcIkJ1bmRsZSBDaGVja2VyXCIsIGljb246IEJveGVzLCBtYXRjaDogKHBhdGhuYW1lKSA9PiBwYXRobmFtZS5zdGFydHNXaXRoKFwiL2J1bmRsZS1jaGVja2VyXCIpIH0sXG4gIHsgdG86IFwiL2xlYWRlcmJvYXJkXCIsIGxhYmVsOiBcIkxlYWRlcmJvYXJkXCIsIGljb246IFRyb3BoeSwgbWF0Y2g6IChwYXRobmFtZSkgPT4gcGF0aG5hbWUuc3RhcnRzV2l0aChcIi9sZWFkZXJib2FyZFwiKSB9LFxuICB7IHRvOiBcIi9jb21tdW5pdGllc1wiLCBsYWJlbDogXCJDb21tdW5pdGllc1wiLCBpY29uOiBVc2VycywgbWF0Y2g6IChwYXRobmFtZSkgPT4gcGF0aG5hbWUuc3RhcnRzV2l0aChcIi9jb21tdW5pdGllc1wiKSB9LFxuICB7IHRvOiBcIi9ub3RpZmljYXRpb25zXCIsIGxhYmVsOiBcIk5vdGlmaWNhdGlvbnNcIiwgaWNvbjogQmVsbCwgbWF0Y2g6IChwYXRobmFtZSkgPT4gcGF0aG5hbWUuc3RhcnRzV2l0aChcIi9ub3RpZmljYXRpb25zXCIpIH0sXG4gIHsgdG86IFwiL3Byb2ZpbGVcIiwgbGFiZWw6IFwiUHJvZmlsZVwiLCBpY29uOiBVc2VyUm91bmQsIG1hdGNoOiAocGF0aG5hbWUpID0+IHBhdGhuYW1lLnN0YXJ0c1dpdGgoXCIvcHJvZmlsZVwiKSB9LFxuXTtcblxuY29uc3QgbW9iaWxlTmF2SXRlbXMgPSBbbmF2SXRlbXNbMF0sIG5hdkl0ZW1zWzFdLCBuYXZJdGVtc1syXSwgbmF2SXRlbXNbNF0sIG5hdkl0ZW1zWzddXS5maWx0ZXIoQm9vbGVhbik7XG5cbmZ1bmN0aW9uIFNpZGViYXJOYXZJdGVtcyh7IG1vYmlsZSA9IGZhbHNlIH06IHsgbW9iaWxlPzogYm9vbGVhbiB9KSB7XG4gIGNvbnN0IGxvY2F0aW9uID0gdXNlTG9jYXRpb24oKTtcbiAgY29uc3QgaXRlbXMgPSBtb2JpbGUgPyBtb2JpbGVOYXZJdGVtcyA6IG5hdkl0ZW1zO1xuXG4gIHJldHVybiAoXG4gICAgPD5cbiAgICAgIHtpdGVtcy5tYXAoKGl0ZW0pID0+IHtcbiAgICAgICAgY29uc3QgSWNvbiA9IGl0ZW0uaWNvbjtcbiAgICAgICAgY29uc3QgYWN0aXZlID0gQm9vbGVhbihpdGVtLnRvICYmIGl0ZW0ubWF0Y2g/Lihsb2NhdGlvbi5wYXRobmFtZSwgbG9jYXRpb24uc2VhcmNoKSk7XG4gICAgICAgIGNvbnN0IGNsYXNzTmFtZSA9IGNuKFxuICAgICAgICAgIG1vYmlsZSA/IFwidjItbW9iaWxlLW5hdi1pdGVtXCIgOiBcInYyLXNpZGViYXItbGlua1wiLFxuICAgICAgICAgIGFjdGl2ZSAmJiAobW9iaWxlID8gXCJ2Mi1tb2JpbGUtbmF2LWl0ZW0tYWN0aXZlXCIgOiBcInYyLXNpZGViYXItbGluay1hY3RpdmVcIiksXG4gICAgICAgICAgaXRlbS5kaXNhYmxlZCAmJiBcImN1cnNvci1ub3QtYWxsb3dlZCBvcGFjaXR5LTQ1XCJcbiAgICAgICAgKTtcblxuICAgICAgICBjb25zdCBib2R5ID0gKFxuICAgICAgICAgIDw+XG4gICAgICAgICAgICA8SWNvbiBjbGFzc05hbWU9XCJoLVsxOHB4XSB3LVsxOHB4XSBzaHJpbmstMFwiIC8+XG4gICAgICAgICAgICA8c3BhbiBjbGFzc05hbWU9e2NuKFwibWluLXctMCBmbGV4LTEgdHJ1bmNhdGVcIiwgbW9iaWxlICYmIFwic3Itb25seVwiKX0+e2l0ZW0ubGFiZWx9PC9zcGFuPlxuICAgICAgICAgICAge2l0ZW0uYmFkZ2UgJiYgIW1vYmlsZSA/IChcbiAgICAgICAgICAgICAgPHNwYW4gY2xhc3NOYW1lPVwicm91bmRlZC1mdWxsIGJnLVsjYTlmZjM0XSBweC0xLjUgcHktMC41IHRleHQtWzEwcHhdIGZvbnQtZXh0cmFib2xkIGxlYWRpbmctbm9uZSB0ZXh0LVsjMDgxMTA4XVwiPlxuICAgICAgICAgICAgICAgIHtpdGVtLmJhZGdlfVxuICAgICAgICAgICAgICA8L3NwYW4+XG4gICAgICAgICAgICApIDogbnVsbH1cbiAgICAgICAgICA8Lz5cbiAgICAgICAgKTtcblxuICAgICAgICBpZiAoIWl0ZW0udG8gfHwgaXRlbS5kaXNhYmxlZCkge1xuICAgICAgICAgIHJldHVybiAoXG4gICAgICAgICAgICA8ZGl2IGtleT17aXRlbS5sYWJlbH0gY2xhc3NOYW1lPXtjbGFzc05hbWV9IGFyaWEtZGlzYWJsZWQ9XCJ0cnVlXCIgdGl0bGU9XCJVbmF2YWlsYWJsZVwiPlxuICAgICAgICAgICAgICB7Ym9keX1cbiAgICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgICk7XG4gICAgICAgIH1cblxuICAgICAgICByZXR1cm4gKFxuICAgICAgICAgIDxOYXZMaW5rIGtleT17aXRlbS50b30gdG89e2l0ZW0udG99IGNsYXNzTmFtZT17Y2xhc3NOYW1lfT5cbiAgICAgICAgICAgIHtib2R5fVxuICAgICAgICAgIDwvTmF2TGluaz5cbiAgICAgICAgKTtcbiAgICAgIH0pfVxuICAgIDwvPlxuICApO1xufVxuXG5leHBvcnQgZnVuY3Rpb24gVjJTaWRlYmFyKCkge1xuICBjb25zdCBuYXZpZ2F0ZSA9IHVzZU5hdmlnYXRlKCk7XG4gIGNvbnN0IHsgdXNlciwgc2lnbk91dCB9ID0gdXNlQXV0aCgpO1xuICBjb25zdCB4cCA9IHVzZXI/LnhwID8/IDA7XG4gIGNvbnN0IGxldmVsID0gdXNlcj8ubGV2ZWwgPz8gMDtcbiAgY29uc3QgbmV4dExldmVsWHAgPSBNYXRoLm1heCgyNV8wMDAsIE1hdGguY2VpbCgoeHAgKyAxKSAvIDI1XzAwMCkgKiAyNV8wMDApO1xuICBjb25zdCB4cFByb2dyZXNzID0gTWF0aC5tYXgoNCwgTWF0aC5taW4oMTAwLCAoeHAgLyBuZXh0TGV2ZWxYcCkgKiAxMDApKTtcbiAgY29uc3QgYWlTY29yZSA9IG51bGw7XG5cbiAgcmV0dXJuIChcbiAgICA8PlxuICAgICAgPGFzaWRlIGNsYXNzTmFtZT1cInYyLXNpZGViYXIgaGlkZGVuIGxnOmZsZXhcIj5cbiAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJ2Mi1zaWRlYmFyLXNjcm9sbFwiPlxuICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cInNocmluay0wIHB4LTFcIj5cbiAgICAgICAgICA8QnJhbmRMb2dvIHNpemU9XCJtZFwiIGNsYXNzTmFtZT1cImdhcC0zXCIgLz5cbiAgICAgICAgPC9kaXY+XG5cbiAgICAgICAgPG5hdiBjbGFzc05hbWU9XCJtdC04IGZsZXggc2hyaW5rLTAgZmxleC1jb2wgZ2FwLTJcIj5cbiAgICAgICAgICA8U2lkZWJhck5hdkl0ZW1zIC8+XG4gICAgICAgIDwvbmF2PlxuXG4gICAgICAgIDxkaXYgY2xhc3NOYW1lPVwibXQtOCBzaHJpbmstMCBzcGFjZS15LTUgYm9yZGVyLXQgYm9yZGVyLXdoaXRlL1swLjA3XSBwdC01XCI+XG4gICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJmbGV4IGl0ZW1zLWNlbnRlciBnYXAtM1wiPlxuICAgICAgICAgICAgPEF2YXRhciBjbGFzc05hbWU9XCJoLTEyIHctMTIgYm9yZGVyIGJvcmRlci1saW1lLTMwMC8yMFwiPlxuICAgICAgICAgICAgICA8QXZhdGFySW1hZ2Ugc3JjPXt1c2VyID8gZ2V0QXZhdGFyVXJsKHVzZXIuaWQsIHVzZXIuaW1hZ2UpIDogdW5kZWZpbmVkfSAvPlxuICAgICAgICAgICAgICA8QXZhdGFyRmFsbGJhY2sgY2xhc3NOYW1lPVwiYmctd2hpdGUvWzAuMDZdIHRleHQtd2hpdGUvNzBcIj5cbiAgICAgICAgICAgICAgICB7KHVzZXI/Lm5hbWUgPz8gdXNlcj8udXNlcm5hbWUgPz8gXCJQXCIpLmNoYXJBdCgwKX1cbiAgICAgICAgICAgICAgPC9BdmF0YXJGYWxsYmFjaz5cbiAgICAgICAgICAgIDwvQXZhdGFyPlxuICAgICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJtaW4tdy0wXCI+XG4gICAgICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwidHJ1bmNhdGUgdGV4dC1zbSBmb250LXNlbWlib2xkIHRleHQtd2hpdGVcIj5cbiAgICAgICAgICAgICAgICB7dXNlcj8udXNlcm5hbWUgfHwgdXNlcj8ubmFtZSB8fCBcIlBoZXdSdW5uZXJcIn1cbiAgICAgICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwidGV4dC14cyB0ZXh0LXdoaXRlLzQ4XCI+TGV2ZWwge2xldmVsfTwvZGl2PlxuICAgICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgPC9kaXY+XG5cbiAgICAgICAgICA8ZGl2PlxuICAgICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJmbGV4IGl0ZW1zLWNlbnRlciBqdXN0aWZ5LWJldHdlZW4gdGV4dC14c1wiPlxuICAgICAgICAgICAgICA8c3BhbiBjbGFzc05hbWU9XCJmb250LXNlbWlib2xkIHRleHQtbGltZS0zMDBcIj57eHAudG9Mb2NhbGVTdHJpbmcoKX08L3NwYW4+XG4gICAgICAgICAgICAgIDxzcGFuIGNsYXNzTmFtZT1cInRleHQtd2hpdGUvNDZcIj4vIHtuZXh0TGV2ZWxYcC50b0xvY2FsZVN0cmluZygpfSBYUDwvc3Bhbj5cbiAgICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJtdC0yIGgtMiBvdmVyZmxvdy1oaWRkZW4gcm91bmRlZC1mdWxsIGJnLXdoaXRlL1swLjA4XVwiPlxuICAgICAgICAgICAgICA8ZGl2XG4gICAgICAgICAgICAgICAgY2xhc3NOYW1lPVwiaC1mdWxsIHJvdW5kZWQtZnVsbCBiZy1bbGluZWFyLWdyYWRpZW50KDkwZGVnLCNhOWZmMzQsIzE4ZDZhMyldXCJcbiAgICAgICAgICAgICAgICBzdHlsZT17eyB3aWR0aDogYCR7eHBQcm9ncmVzc30lYCB9fVxuICAgICAgICAgICAgICAvPlxuICAgICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgPC9kaXY+XG5cbiAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cInJvdW5kZWQtWzE4cHhdIGJvcmRlciBib3JkZXItd2hpdGUvWzAuMDhdIGJnLVtyYWRpYWwtZ3JhZGllbnQoY2lyY2xlX2F0X3JpZ2h0LHJnYmEoNDUsMjEyLDE5MSwwLjE4KSx0cmFuc3BhcmVudF8zNCUpLGxpbmVhci1ncmFkaWVudCgxODBkZWcscmdiYSgyNTUsMjU1LDI1NSwwLjAzNSkscmdiYSgyNTUsMjU1LDI1NSwwLjAxNSkpXSBwLTNcIj5cbiAgICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwidGV4dC1bMTBweF0gZm9udC1zZW1pYm9sZCB1cHBlcmNhc2UgdHJhY2tpbmctWzAuMThlbV0gdGV4dC1jeWFuLTIwMC83OFwiPkFJIFRyYWRlciBTY29yZTwvZGl2PlxuICAgICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJtdC0yIGZsZXggaXRlbXMtZW5kIGdhcC0xXCI+XG4gICAgICAgICAgICAgIDxzcGFuIGNsYXNzTmFtZT1cInRleHQtM3hsIGZvbnQtc2VtaWJvbGQgdGV4dC1bIzE5ZTZhN11cIj5cbiAgICAgICAgICAgICAgICB7dHlwZW9mIGFpU2NvcmUgPT09IFwibnVtYmVyXCIgPyBhaVNjb3JlLnRvRml4ZWQoMSkgOiBcIkVhcmx5XCJ9XG4gICAgICAgICAgICAgIDwvc3Bhbj5cbiAgICAgICAgICAgICAgPHNwYW4gY2xhc3NOYW1lPVwicGItMSB0ZXh0LXhzIHRleHQtd2hpdGUvNDRcIj4vMTAwPC9zcGFuPlxuICAgICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cIm10LTEgdGV4dC1zbSBmb250LXNlbWlib2xkIHRleHQtWyNhOWZmMzRdXCI+XG4gICAgICAgICAgICAgIHt0eXBlb2YgYWlTY29yZSA9PT0gXCJudW1iZXJcIiAmJiBhaVNjb3JlID49IDkwID8gXCJUb3AgMSVcIiA6IFwiTGl2ZSByYW5raW5nXCJ9XG4gICAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgICA8L2Rpdj5cblxuICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwicm91bmRlZC1bMThweF0gYm9yZGVyIGJvcmRlci13aGl0ZS9bMC4wOF0gYmctd2hpdGUvWzAuMDI1XSBwLTIuNVwiPlxuICAgICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJweC0xIHRleHQtWzEwcHhdIGZvbnQtc2VtaWJvbGQgdXBwZXJjYXNlIHRyYWNraW5nLVswLjE4ZW1dIHRleHQtd2hpdGUvMzZcIj5RdWljayBBY3Rpb25zPC9kaXY+XG4gICAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cIm10LTIgZ3JpZCBnYXAtMlwiPlxuICAgICAgICAgICAgICB7W1xuICAgICAgICAgICAgICAgIHsgbGFiZWw6IFwiTmV3IENhbGxcIiwgaGludDogXCJTaGFyZSBhbHBoYVwiLCBpY29uOiBBY3Rpdml0eSwgb25DbGljazogKCkgPT4gbmF2aWdhdGUoXCIvP2NvbXBvc2U9YWxwaGFcIikgfSxcbiAgICAgICAgICAgICAgICB7IGxhYmVsOiBcIkNyZWF0ZSBSYWlkXCIsIGhpbnQ6IFwiT3BlbiByYWlkIHJvb21cIiwgaWNvbjogRmxhbWUsIG9uQ2xpY2s6ICgpID0+IG5hdmlnYXRlKFwiL3JhaWRzXCIpIH0sXG4gICAgICAgICAgICAgICAgeyBsYWJlbDogXCJBSSBTY2FuXCIsIGhpbnQ6IFwiQW5hbHl6ZSB0b2tlblwiLCBpY29uOiBaYXAsIG9uQ2xpY2s6ICgpID0+IG5hdmlnYXRlKFwiL2J1bmRsZS1jaGVja2VyXCIpIH0sXG4gICAgICAgICAgICAgICAgeyBsYWJlbDogXCJXYWxsZXQgVHJhY2tlclwiLCBoaW50OiBcIlNtYXJ0IG1vbmV5IGZsb3dcIiwgaWNvbjogU2hpZWxkQ2hlY2ssIGRpc2FibGVkOiB0cnVlIH0sXG4gICAgICAgICAgICAgIF0ubWFwKChpdGVtKSA9PiB7XG4gICAgICAgICAgICAgICAgY29uc3QgSWNvbiA9IGl0ZW0uaWNvbjtcbiAgICAgICAgICAgICAgICByZXR1cm4gKFxuICAgICAgICAgICAgICAgICAgPGJ1dHRvblxuICAgICAgICAgICAgICAgICAgICBrZXk9e2l0ZW0ubGFiZWx9XG4gICAgICAgICAgICAgICAgICAgIHR5cGU9XCJidXR0b25cIlxuICAgICAgICAgICAgICAgICAgICBvbkNsaWNrPXtpdGVtLmRpc2FibGVkID8gdW5kZWZpbmVkIDogaXRlbS5vbkNsaWNrfVxuICAgICAgICAgICAgICAgICAgICBkaXNhYmxlZD17aXRlbS5kaXNhYmxlZH1cbiAgICAgICAgICAgICAgICAgICAgdGl0bGU9e2l0ZW0uZGlzYWJsZWQgPyBcIldhbGxldCB0cmFja2VyIGFjdGl2YXRlcyB3aXRoIHZlcmlmaWVkIHNtYXJ0LW1vbmV5IGZsb3cuXCIgOiB1bmRlZmluZWR9XG4gICAgICAgICAgICAgICAgICAgIGNsYXNzTmFtZT1cImZsZXggaXRlbXMtY2VudGVyIGdhcC0yLjUgcm91bmRlZC1bMTJweF0gYm9yZGVyIGJvcmRlci13aGl0ZS9bMC4wN10gYmctd2hpdGUvWzAuMDNdIHB4LTIuNSBweS0yIHRleHQtbGVmdCB0cmFuc2l0aW9uIGhvdmVyOmJvcmRlci1saW1lLTMwMC8yMCBob3ZlcjpiZy13aGl0ZS9bMC4wNTVdIGRpc2FibGVkOmN1cnNvci1ub3QtYWxsb3dlZCBkaXNhYmxlZDpvcGFjaXR5LTQ1XCJcbiAgICAgICAgICAgICAgICAgID5cbiAgICAgICAgICAgICAgICAgICAgPHNwYW4gY2xhc3NOYW1lPVwiZmxleCBoLTggdy04IHNocmluay0wIGl0ZW1zLWNlbnRlciBqdXN0aWZ5LWNlbnRlciByb3VuZGVkLVsxMHB4XSBib3JkZXIgYm9yZGVyLXdoaXRlL1swLjA3XSBiZy1ibGFjay8yMFwiPlxuICAgICAgICAgICAgICAgICAgICAgIDxJY29uIGNsYXNzTmFtZT1cImgtNCB3LTQgdGV4dC1saW1lLTMwMFwiIC8+XG4gICAgICAgICAgICAgICAgICAgIDwvc3Bhbj5cbiAgICAgICAgICAgICAgICAgICAgPHNwYW4gY2xhc3NOYW1lPVwibWluLXctMFwiPlxuICAgICAgICAgICAgICAgICAgICAgIDxzcGFuIGNsYXNzTmFtZT1cImJsb2NrIHRydW5jYXRlIHRleHQteHMgZm9udC1zZW1pYm9sZCB0ZXh0LXdoaXRlLzgyXCI+e2l0ZW0ubGFiZWx9PC9zcGFuPlxuICAgICAgICAgICAgICAgICAgICAgIDxzcGFuIGNsYXNzTmFtZT1cImJsb2NrIHRydW5jYXRlIHRleHQtWzEwcHhdIHRleHQtd2hpdGUvMzhcIj57aXRlbS5oaW50fTwvc3Bhbj5cbiAgICAgICAgICAgICAgICAgICAgPC9zcGFuPlxuICAgICAgICAgICAgICAgICAgPC9idXR0b24+XG4gICAgICAgICAgICAgICAgKTtcbiAgICAgICAgICAgICAgfSl9XG4gICAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgICA8L2Rpdj5cblxuICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwiZmxleCBpdGVtcy1jZW50ZXIganVzdGlmeS1iZXR3ZWVuIHB4LTEgcGItMSB0ZXh0LXdoaXRlLzQ4XCI+XG4gICAgICAgICAgICA8YnV0dG9uIHR5cGU9XCJidXR0b25cIiBvbkNsaWNrPXsoKSA9PiBuYXZpZ2F0ZShcIi9wcm9maWxlXCIpfSBjbGFzc05hbWU9XCJyb3VuZGVkLXhsIHAtMiBob3ZlcjpiZy13aGl0ZS9bMC4wNV0gaG92ZXI6dGV4dC13aGl0ZVwiIGFyaWEtbGFiZWw9XCJQcm9maWxlIHNldHRpbmdzXCI+XG4gICAgICAgICAgICAgIDxTZXR0aW5ncyBjbGFzc05hbWU9XCJoLTQgdy00XCIgLz5cbiAgICAgICAgICAgIDwvYnV0dG9uPlxuICAgICAgICAgICAgPGJ1dHRvbiB0eXBlPVwiYnV0dG9uXCIgb25DbGljaz17KCkgPT4gbmF2aWdhdGUoXCIvcHJvZmlsZVwiKX0gY2xhc3NOYW1lPVwicm91bmRlZC14bCBwLTIgaG92ZXI6Ymctd2hpdGUvWzAuMDVdIGhvdmVyOnRleHQtd2hpdGVcIiBhcmlhLWxhYmVsPVwiV2FsbGV0IHNlY3VyaXR5XCI+XG4gICAgICAgICAgICAgIDxTaGllbGRDaGVjayBjbGFzc05hbWU9XCJoLTQgdy00XCIgLz5cbiAgICAgICAgICAgIDwvYnV0dG9uPlxuICAgICAgICAgICAgPGJ1dHRvbiB0eXBlPVwiYnV0dG9uXCIgZGlzYWJsZWQgdGl0bGU9XCJMYW5ndWFnZSBwcmVmZXJlbmNlcyBhcmUgbm90IGNvbmZpZ3VyZWQgeWV0LlwiIGNsYXNzTmFtZT1cImN1cnNvci1ub3QtYWxsb3dlZCByb3VuZGVkLXhsIHAtMiBvcGFjaXR5LTQ1XCIgYXJpYS1sYWJlbD1cIkxhbmd1YWdlIHByZWZlcmVuY2VzXCI+XG4gICAgICAgICAgICAgIDxHbG9iZTIgY2xhc3NOYW1lPVwiaC00IHctNFwiIC8+XG4gICAgICAgICAgICA8L2J1dHRvbj5cbiAgICAgICAgICAgIDxidXR0b24gdHlwZT1cImJ1dHRvblwiIG9uQ2xpY2s9e3NpZ25PdXR9IGNsYXNzTmFtZT1cInJvdW5kZWQteGwgcC0yIGhvdmVyOmJnLXdoaXRlL1swLjA1XSBob3Zlcjp0ZXh0LXdoaXRlXCIgYXJpYS1sYWJlbD1cIlNpZ24gb3V0XCI+XG4gICAgICAgICAgICAgIDxMb2dPdXQgY2xhc3NOYW1lPVwiaC00IHctNFwiIC8+XG4gICAgICAgICAgICA8L2J1dHRvbj5cbiAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cImgtMyBzaHJpbmstMFwiIGFyaWEtaGlkZGVuPVwidHJ1ZVwiIC8+XG4gICAgICAgIDwvZGl2PlxuICAgICAgICA8L2Rpdj5cbiAgICAgIDwvYXNpZGU+XG5cbiAgICAgIDxkaXYgY2xhc3NOYW1lPVwidjItbW9iaWxlLW5hdiBsZzpoaWRkZW5cIj5cbiAgICAgICAgPFNpZGViYXJOYXZJdGVtcyBtb2JpbGUgLz5cbiAgICAgIDwvZGl2PlxuICAgIDwvPlxuICApO1xufVxuIl0sIm5hbWVzIjpbIkFjdGl2aXR5IiwiQmVsbCIsIkJveGVzIiwiQ2FuZGxlc3RpY2tDaGFydCIsIkNyb3NzaGFpciIsIkZsYW1lIiwiR2xvYmUyIiwiTG9nT3V0IiwiU2V0dGluZ3MiLCJTaGllbGRDaGVjayIsIlRyb3BoeSIsIlVzZXJSb3VuZCIsIlVzZXJzIiwiWmFwIiwiTmF2TGluayIsInVzZUxvY2F0aW9uIiwidXNlTmF2aWdhdGUiLCJCcmFuZExvZ28iLCJBdmF0YXIiLCJBdmF0YXJGYWxsYmFjayIsIkF2YXRhckltYWdlIiwidXNlQXV0aCIsImNuIiwiZ2V0QXZhdGFyVXJsIiwibmF2SXRlbXMiLCJ0byIsImxhYmVsIiwiaWNvbiIsIm1hdGNoIiwicGF0aG5hbWUiLCJzdGFydHNXaXRoIiwic2VhcmNoIiwiaW5jbHVkZXMiLCJtb2JpbGVOYXZJdGVtcyIsImZpbHRlciIsIkJvb2xlYW4iLCJTaWRlYmFyTmF2SXRlbXMiLCJtb2JpbGUiLCJsb2NhdGlvbiIsIml0ZW1zIiwibWFwIiwiaXRlbSIsIkljb24iLCJhY3RpdmUiLCJjbGFzc05hbWUiLCJkaXNhYmxlZCIsImJvZHkiLCJzcGFuIiwiYmFkZ2UiLCJkaXYiLCJhcmlhLWRpc2FibGVkIiwidGl0bGUiLCJWMlNpZGViYXIiLCJuYXZpZ2F0ZSIsInVzZXIiLCJzaWduT3V0IiwieHAiLCJsZXZlbCIsIm5leHRMZXZlbFhwIiwiTWF0aCIsIm1heCIsImNlaWwiLCJ4cFByb2dyZXNzIiwibWluIiwiYWlTY29yZSIsImFzaWRlIiwic2l6ZSIsIm5hdiIsInNyYyIsImlkIiwiaW1hZ2UiLCJ1bmRlZmluZWQiLCJuYW1lIiwidXNlcm5hbWUiLCJjaGFyQXQiLCJ0b0xvY2FsZVN0cmluZyIsInN0eWxlIiwid2lkdGgiLCJ0b0ZpeGVkIiwiaGludCIsIm9uQ2xpY2siLCJidXR0b24iLCJ0eXBlIiwiYXJpYS1sYWJlbCIsImFyaWEtaGlkZGVuIl0sIm1hcHBpbmdzIjoiOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7QUFBQSxTQUNFQSxRQUFRLEVBQ1JDLElBQUksRUFDSkMsS0FBSyxFQUNMQyxnQkFBZ0IsRUFDaEJDLFNBQVMsRUFDVEMsS0FBSyxFQUNMQyxNQUFNLEVBQ05DLE1BQU0sRUFDTkMsUUFBUSxFQUNSQyxXQUFXLEVBQ1hDLE1BQU0sRUFDTkMsU0FBUyxFQUNUQyxLQUFLLEVBQ0xDLEdBQUcsUUFFRSxlQUFlO0FBQ3RCLFNBQVNDLE9BQU8sRUFBRUMsV0FBVyxFQUFFQyxXQUFXLFFBQVEsbUJBQW1CO0FBQ3JFLFNBQVNDLFNBQVMsUUFBUSx5QkFBeUI7QUFDbkQsU0FBU0MsTUFBTSxFQUFFQyxjQUFjLEVBQUVDLFdBQVcsUUFBUSx5QkFBeUI7QUFDN0UsU0FBU0MsT0FBTyxRQUFRLG9CQUFvQjtBQUM1QyxTQUFTQyxFQUFFLFFBQVEsY0FBYztBQUNqQyxTQUFTQyxZQUFZLFFBQVEsVUFBVTtBQVd2QyxNQUFNQyxXQUFzQjtJQUMxQjtRQUFFQyxJQUFJO1FBQUtDLE9BQU87UUFBUUMsTUFBTTNCO1FBQVU0QixPQUFPLENBQUNDLFdBQWFBLGFBQWE7SUFBSTtJQUNoRjtRQUNFSixJQUFJO1FBQ0pDLE9BQU87UUFDUEMsTUFBTXZCO1FBQ053QixPQUFPLENBQUNDLFdBQWFBLFNBQVNDLFVBQVUsQ0FBQztJQUMzQztJQUNBO1FBQ0VMLElBQUk7UUFDSkMsT0FBTztRQUNQQyxNQUFNeEI7UUFDTnlCLE9BQU8sQ0FBQ0MsVUFBVUUsU0FDaEIsQUFBQ0YsU0FBU0MsVUFBVSxDQUFDLGdCQUFnQixDQUFDQyxPQUFPQyxRQUFRLENBQUMsaUJBQWtCSCxTQUFTQyxVQUFVLENBQUM7SUFDaEc7SUFDQTtRQUFFTCxJQUFJO1FBQW1CQyxPQUFPO1FBQWtCQyxNQUFNekI7UUFBTzBCLE9BQU8sQ0FBQ0MsV0FBYUEsU0FBU0MsVUFBVSxDQUFDO0lBQW1CO0lBQzNIO1FBQUVMLElBQUk7UUFBZ0JDLE9BQU87UUFBZUMsTUFBTWpCO1FBQVFrQixPQUFPLENBQUNDLFdBQWFBLFNBQVNDLFVBQVUsQ0FBQztJQUFnQjtJQUNuSDtRQUFFTCxJQUFJO1FBQWdCQyxPQUFPO1FBQWVDLE1BQU1mO1FBQU9nQixPQUFPLENBQUNDLFdBQWFBLFNBQVNDLFVBQVUsQ0FBQztJQUFnQjtJQUNsSDtRQUFFTCxJQUFJO1FBQWtCQyxPQUFPO1FBQWlCQyxNQUFNMUI7UUFBTTJCLE9BQU8sQ0FBQ0MsV0FBYUEsU0FBU0MsVUFBVSxDQUFDO0lBQWtCO0lBQ3ZIO1FBQUVMLElBQUk7UUFBWUMsT0FBTztRQUFXQyxNQUFNaEI7UUFBV2lCLE9BQU8sQ0FBQ0MsV0FBYUEsU0FBU0MsVUFBVSxDQUFDO0lBQVk7Q0FDM0c7QUFFRCxNQUFNRyxpQkFBaUI7SUFBQ1QsUUFBUSxDQUFDLEVBQUU7SUFBRUEsUUFBUSxDQUFDLEVBQUU7SUFBRUEsUUFBUSxDQUFDLEVBQUU7SUFBRUEsUUFBUSxDQUFDLEVBQUU7SUFBRUEsUUFBUSxDQUFDLEVBQUU7Q0FBQyxDQUFDVSxNQUFNLENBQUNDO0FBRWhHLFNBQVNDLGdCQUFnQixFQUFFQyxTQUFTLEtBQUssRUFBd0I7O0lBQy9ELE1BQU1DLFdBQVd2QjtJQUNqQixNQUFNd0IsUUFBUUYsU0FBU0osaUJBQWlCVDtJQUV4QyxxQkFDRTtrQkFDR2UsTUFBTUMsR0FBRyxDQUFDLENBQUNDO1lBQ1YsTUFBTUMsT0FBT0QsS0FBS2QsSUFBSTtZQUN0QixNQUFNZ0IsU0FBU1IsUUFBUU0sS0FBS2hCLEVBQUUsSUFBSWdCLEtBQUtiLEtBQUssR0FBR1UsU0FBU1QsUUFBUSxFQUFFUyxTQUFTUCxNQUFNO1lBQ2pGLE1BQU1hLFlBQVl0QixHQUNoQmUsU0FBUyx1QkFBdUIsbUJBQ2hDTSxVQUFXTixDQUFBQSxTQUFTLDhCQUE4Qix3QkFBdUIsR0FDekVJLEtBQUtJLFFBQVEsSUFBSTtZQUduQixNQUFNQyxxQkFDSjs7a0NBQ0UsUUFBQ0o7d0JBQUtFLFdBQVU7Ozs7OztrQ0FDaEIsUUFBQ0c7d0JBQUtILFdBQVd0QixHQUFHLDJCQUEyQmUsVUFBVTtrQ0FBYUksS0FBS2YsS0FBSzs7Ozs7O29CQUMvRWUsS0FBS08sS0FBSyxJQUFJLENBQUNYLHVCQUNkLFFBQUNVO3dCQUFLSCxXQUFVO2tDQUNiSCxLQUFLTyxLQUFLOzs7OzsrQkFFWDs7O1lBSVIsSUFBSSxDQUFDUCxLQUFLaEIsRUFBRSxJQUFJZ0IsS0FBS0ksUUFBUSxFQUFFO2dCQUM3QixxQkFDRSxRQUFDSTtvQkFBcUJMLFdBQVdBO29CQUFXTSxpQkFBYztvQkFBT0MsT0FBTTs4QkFDcEVMO21CQURPTCxLQUFLZixLQUFLOzs7OztZQUl4QjtZQUVBLHFCQUNFLFFBQUNaO2dCQUFzQlcsSUFBSWdCLEtBQUtoQixFQUFFO2dCQUFFbUIsV0FBV0E7MEJBQzVDRTtlQURXTCxLQUFLaEIsRUFBRTs7Ozs7UUFJekI7O0FBR047R0EzQ1NXOztRQUNVckI7OztLQURWcUI7QUE2Q1QsT0FBTyxTQUFTZ0I7O0lBQ2QsTUFBTUMsV0FBV3JDO0lBQ2pCLE1BQU0sRUFBRXNDLElBQUksRUFBRUMsT0FBTyxFQUFFLEdBQUdsQztJQUMxQixNQUFNbUMsS0FBS0YsTUFBTUUsTUFBTTtJQUN2QixNQUFNQyxRQUFRSCxNQUFNRyxTQUFTO0lBQzdCLE1BQU1DLGNBQWNDLEtBQUtDLEdBQUcsQ0FBQyxPQUFRRCxLQUFLRSxJQUFJLENBQUMsQUFBQ0wsQ0FBQUEsS0FBSyxDQUFBLElBQUssU0FBVTtJQUNwRSxNQUFNTSxhQUFhSCxLQUFLQyxHQUFHLENBQUMsR0FBR0QsS0FBS0ksR0FBRyxDQUFDLEtBQUssQUFBQ1AsS0FBS0UsY0FBZTtJQUNsRSxNQUFNTSxVQUFVO0lBRWhCLHFCQUNFOzswQkFDRSxRQUFDQztnQkFBTXJCLFdBQVU7MEJBQ2YsY0FBQSxRQUFDSztvQkFBSUwsV0FBVTs7c0NBQ2YsUUFBQ0s7NEJBQUlMLFdBQVU7c0NBQ2IsY0FBQSxRQUFDM0I7Z0NBQVVpRCxNQUFLO2dDQUFLdEIsV0FBVTs7Ozs7Ozs7Ozs7c0NBR2pDLFFBQUN1Qjs0QkFBSXZCLFdBQVU7c0NBQ2IsY0FBQSxRQUFDUjs7Ozs7Ozs7OztzQ0FHSCxRQUFDYTs0QkFBSUwsV0FBVTs7OENBQ2IsUUFBQ0s7b0NBQUlMLFdBQVU7O3NEQUNiLFFBQUMxQjs0Q0FBTzBCLFdBQVU7OzhEQUNoQixRQUFDeEI7b0RBQVlnRCxLQUFLZCxPQUFPL0IsYUFBYStCLEtBQUtlLEVBQUUsRUFBRWYsS0FBS2dCLEtBQUssSUFBSUM7Ozs7Ozs4REFDN0QsUUFBQ3BEO29EQUFleUIsV0FBVTs4REFDdkIsQUFBQ1UsQ0FBQUEsTUFBTWtCLFFBQVFsQixNQUFNbUIsWUFBWSxHQUFFLEVBQUdDLE1BQU0sQ0FBQzs7Ozs7Ozs7Ozs7O3NEQUdsRCxRQUFDekI7NENBQUlMLFdBQVU7OzhEQUNiLFFBQUNLO29EQUFJTCxXQUFVOzhEQUNaVSxNQUFNbUIsWUFBWW5CLE1BQU1rQixRQUFROzs7Ozs7OERBRW5DLFFBQUN2QjtvREFBSUwsV0FBVTs7d0RBQXdCO3dEQUFPYTs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs4Q0FJbEQsUUFBQ1I7O3NEQUNDLFFBQUNBOzRDQUFJTCxXQUFVOzs4REFDYixRQUFDRztvREFBS0gsV0FBVTs4REFBK0JZLEdBQUdtQixjQUFjOzs7Ozs7OERBQ2hFLFFBQUM1QjtvREFBS0gsV0FBVTs7d0RBQWdCO3dEQUFHYyxZQUFZaUIsY0FBYzt3REFBRzs7Ozs7Ozs7Ozs7OztzREFFbEUsUUFBQzFCOzRDQUFJTCxXQUFVO3NEQUNiLGNBQUEsUUFBQ0s7Z0RBQ0NMLFdBQVU7Z0RBQ1ZnQyxPQUFPO29EQUFFQyxPQUFPLEdBQUdmLFdBQVcsQ0FBQyxDQUFDO2dEQUFDOzs7Ozs7Ozs7Ozs7Ozs7Ozs4Q0FLdkMsUUFBQ2I7b0NBQUlMLFdBQVU7O3NEQUNiLFFBQUNLOzRDQUFJTCxXQUFVO3NEQUF5RTs7Ozs7O3NEQUN4RixRQUFDSzs0Q0FBSUwsV0FBVTs7OERBQ2IsUUFBQ0c7b0RBQUtILFdBQVU7OERBQ2IsT0FBT29CLFlBQVksV0FBV0EsUUFBUWMsT0FBTyxDQUFDLEtBQUs7Ozs7Ozs4REFFdEQsUUFBQy9CO29EQUFLSCxXQUFVOzhEQUE2Qjs7Ozs7Ozs7Ozs7O3NEQUUvQyxRQUFDSzs0Q0FBSUwsV0FBVTtzREFDWixPQUFPb0IsWUFBWSxZQUFZQSxXQUFXLEtBQUssV0FBVzs7Ozs7Ozs7Ozs7OzhDQUkvRCxRQUFDZjtvQ0FBSUwsV0FBVTs7c0RBQ2IsUUFBQ0s7NENBQUlMLFdBQVU7c0RBQTJFOzs7Ozs7c0RBQzFGLFFBQUNLOzRDQUFJTCxXQUFVO3NEQUNaO2dEQUNDO29EQUFFbEIsT0FBTztvREFBWXFELE1BQU07b0RBQWVwRCxNQUFNM0I7b0RBQVVnRixTQUFTLElBQU0zQixTQUFTO2dEQUFtQjtnREFDckc7b0RBQUUzQixPQUFPO29EQUFlcUQsTUFBTTtvREFBa0JwRCxNQUFNdEI7b0RBQU8yRSxTQUFTLElBQU0zQixTQUFTO2dEQUFVO2dEQUMvRjtvREFBRTNCLE9BQU87b0RBQVdxRCxNQUFNO29EQUFpQnBELE1BQU1kO29EQUFLbUUsU0FBUyxJQUFNM0IsU0FBUztnREFBbUI7Z0RBQ2pHO29EQUFFM0IsT0FBTztvREFBa0JxRCxNQUFNO29EQUFvQnBELE1BQU1sQjtvREFBYW9DLFVBQVU7Z0RBQUs7NkNBQ3hGLENBQUNMLEdBQUcsQ0FBQyxDQUFDQztnREFDTCxNQUFNQyxPQUFPRCxLQUFLZCxJQUFJO2dEQUN0QixxQkFDRSxRQUFDc0Q7b0RBRUNDLE1BQUs7b0RBQ0xGLFNBQVN2QyxLQUFLSSxRQUFRLEdBQUcwQixZQUFZOUIsS0FBS3VDLE9BQU87b0RBQ2pEbkMsVUFBVUosS0FBS0ksUUFBUTtvREFDdkJNLE9BQU9WLEtBQUtJLFFBQVEsR0FBRyw2REFBNkQwQjtvREFDcEYzQixXQUFVOztzRUFFVixRQUFDRzs0REFBS0gsV0FBVTtzRUFDZCxjQUFBLFFBQUNGO2dFQUFLRSxXQUFVOzs7Ozs7Ozs7OztzRUFFbEIsUUFBQ0c7NERBQUtILFdBQVU7OzhFQUNkLFFBQUNHO29FQUFLSCxXQUFVOzhFQUFzREgsS0FBS2YsS0FBSzs7Ozs7OzhFQUNoRixRQUFDcUI7b0VBQUtILFdBQVU7OEVBQTRDSCxLQUFLc0MsSUFBSTs7Ozs7Ozs7Ozs7OzttREFabEV0QyxLQUFLZixLQUFLOzs7Ozs0Q0FnQnJCOzs7Ozs7Ozs7Ozs7OENBSUosUUFBQ3VCO29DQUFJTCxXQUFVOztzREFDYixRQUFDcUM7NENBQU9DLE1BQUs7NENBQVNGLFNBQVMsSUFBTTNCLFNBQVM7NENBQWFULFdBQVU7NENBQXdEdUMsY0FBVztzREFDdEksY0FBQSxRQUFDM0U7Z0RBQVNvQyxXQUFVOzs7Ozs7Ozs7OztzREFFdEIsUUFBQ3FDOzRDQUFPQyxNQUFLOzRDQUFTRixTQUFTLElBQU0zQixTQUFTOzRDQUFhVCxXQUFVOzRDQUF3RHVDLGNBQVc7c0RBQ3RJLGNBQUEsUUFBQzFFO2dEQUFZbUMsV0FBVTs7Ozs7Ozs7Ozs7c0RBRXpCLFFBQUNxQzs0Q0FBT0MsTUFBSzs0Q0FBU3JDLFFBQVE7NENBQUNNLE9BQU07NENBQStDUCxXQUFVOzRDQUErQ3VDLGNBQVc7c0RBQ3RKLGNBQUEsUUFBQzdFO2dEQUFPc0MsV0FBVTs7Ozs7Ozs7Ozs7c0RBRXBCLFFBQUNxQzs0Q0FBT0MsTUFBSzs0Q0FBU0YsU0FBU3pCOzRDQUFTWCxXQUFVOzRDQUF3RHVDLGNBQVc7c0RBQ25ILGNBQUEsUUFBQzVFO2dEQUFPcUMsV0FBVTs7Ozs7Ozs7Ozs7Ozs7Ozs7OENBR3RCLFFBQUNLO29DQUFJTCxXQUFVO29DQUFld0MsZUFBWTs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7MEJBSzlDLFFBQUNuQztnQkFBSUwsV0FBVTswQkFDYixjQUFBLFFBQUNSO29CQUFnQkMsTUFBTTs7Ozs7Ozs7Ozs7OztBQUkvQjtJQXZIZ0JlOztRQUNHcEM7UUFDU0s7OztNQUZaK0IifQ==

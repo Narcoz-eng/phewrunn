@@ -4,13 +4,11 @@ import { Link, useNavigate } from "react-router-dom";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { isValidCandleSeries } from "@/lib/data-validators";
 import { cn } from "@/lib/utils";
-import { api } from "@/lib/api";
 import {
   feedChartCacheKeys,
   getCachedFeedChart,
   isLiveFeedChartPreview,
   loadBatchedFeedChartPreview,
-  loadFeedChartOnce,
   setCachedFeedChart,
 } from "@/lib/feed-chart-cache";
 import { getAvatarUrl, type FeedCoverage, type Post } from "@/types";
@@ -563,11 +561,6 @@ function ChartPreviewState({ post, reason, dominant = false }: { post: Post; rea
         tokenAddress: token.address!,
         pairAddress: token.pairAddress ?? null,
         chainType: token.chain ?? null,
-      }).catch(() => {
-        const params = new URLSearchParams({ tokenAddress: token.address! });
-        if (token.pairAddress) params.set("pairAddress", token.pairAddress);
-        if (token.chain) params.set("chainType", token.chain);
-        return loadFeedChartOnce(primaryCacheKey, () => api.get<FeedChartPreview>(`/api/feed/chart-preview?${params.toString()}`));
       });
       setCachedFeedChart(cacheKeys, result);
       if (!cancelled) setPreview(getCachedFeedChart(cacheKeys) ?? result);
