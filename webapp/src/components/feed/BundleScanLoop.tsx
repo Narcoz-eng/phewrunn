@@ -27,7 +27,7 @@ export function isBundleScanPending(input: BundleScanInput): boolean {
 
 export function BundleScanLoop({
   title = "Bundle scan live",
-  hint = "Loading bundled supply and linked clusters.",
+  hint = "Mapping bundled supply and linked clusters.",
   className,
 }: BundleScanLoopProps) {
   return (

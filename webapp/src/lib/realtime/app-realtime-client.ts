@@ -64,6 +64,8 @@ const realtimeSocketState: RealtimeSocketState = {
   appHandlers: new Map(),
 };
 
+const REALTIME_SOCKET_ENABLED = import.meta.env.VITE_ENABLE_REALTIME === "true";
+
 function buildTokenChannelKey(params: TokenRealtimeParams): string {
   return [params.chainType, params.tokenAddress, params.pairAddress ?? ""].join(":").toLowerCase();
 }
@@ -194,6 +196,9 @@ function handleRealtimeMessage(rawMessage: MessageEvent<string>): void {
 }
 
 function ensureRealtimeSocket(): void {
+  if (!REALTIME_SOCKET_ENABLED) {
+    return;
+  }
   if (typeof window === "undefined" || (realtimeSocketState.tokens.size === 0 && realtimeSocketState.appHandlers.size === 0)) {
     return;
   }
@@ -266,7 +271,9 @@ export function subscribeToAppRealtime(handlers: AppRealtimeHandlers): () => voi
       : `${Date.now()}:${Math.random().toString(36).slice(2)}`;
 
   realtimeSocketState.appHandlers.set(handlerId, handlers);
-  ensureRealtimeSocket();
+  if (REALTIME_SOCKET_ENABLED) {
+    ensureRealtimeSocket();
+  }
 
   return () => {
     realtimeSocketState.appHandlers.delete(handlerId);
@@ -296,6 +303,21 @@ export function subscribeToTokenRealtime(
 
   tokenState.handlers.set(handlerId, handlers);
   realtimeSocketState.tokens.set(channel, tokenState);
+  if (!REALTIME_SOCKET_ENABLED) {
+    window.setTimeout(() => {
+      if (tokenState.handlers.has(handlerId)) {
+        handlers.onError?.(new Error("Realtime socket disabled"));
+      }
+    }, 0);
+    return () => {
+      const activeTokenState = realtimeSocketState.tokens.get(channel);
+      if (!activeTokenState) return;
+      activeTokenState.handlers.delete(handlerId);
+      if (activeTokenState.handlers.size === 0) {
+        realtimeSocketState.tokens.delete(channel);
+      }
+    };
+  }
   ensureRealtimeSocket();
 
   if (realtimeSocketState.socket?.readyState === WebSocket.OPEN) {

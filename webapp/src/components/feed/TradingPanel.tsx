@@ -225,12 +225,12 @@ export function TradingPanel({
     ? walletBalance !== null
       ? `${walletBalance.toFixed(4)} ${chainCurrencySymbol}`
       : walletBalanceLoading
-        ? "Loading..."
+        ? "Balance syncing"
       : "--"
     : walletTokenBalance !== null
       ? `${walletTokenBalanceFormatted} ${tokenSymbol}`
       : walletTokenBalanceLoading
-        ? "Loading..."
+        ? "Balance syncing"
       : "--";
   const availableBalanceUsdLabel =
     isBuy && walletBalanceUsd !== null ? formatUsdEstimate(walletBalanceUsd) : null;

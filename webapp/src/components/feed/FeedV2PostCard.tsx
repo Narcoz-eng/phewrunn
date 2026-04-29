@@ -9,6 +9,7 @@ import {
   feedChartCacheKeys,
   getCachedFeedChart,
   isLiveFeedChartPreview,
+  loadBatchedFeedChartPreview,
   loadFeedChartOnce,
   setCachedFeedChart,
 } from "@/lib/feed-chart-cache";
@@ -556,10 +557,18 @@ function ChartPreviewState({ post, reason, dominant = false }: { post: Post; rea
         if (!cancelled) setPreview(cached);
         return;
       }
-      const params = new URLSearchParams({ tokenAddress: token.address! });
-      if (token.pairAddress) params.set("pairAddress", token.pairAddress);
-      if (token.chain) params.set("chainType", token.chain);
-      const result = await loadFeedChartOnce(primaryCacheKey, () => api.get<FeedChartPreview>(`/api/feed/chart-preview?${params.toString()}`));
+      const result = await loadBatchedFeedChartPreview({
+        key: primaryCacheKey,
+        cacheKeys,
+        tokenAddress: token.address!,
+        pairAddress: token.pairAddress ?? null,
+        chainType: token.chain ?? null,
+      }).catch(() => {
+        const params = new URLSearchParams({ tokenAddress: token.address! });
+        if (token.pairAddress) params.set("pairAddress", token.pairAddress);
+        if (token.chain) params.set("chainType", token.chain);
+        return loadFeedChartOnce(primaryCacheKey, () => api.get<FeedChartPreview>(`/api/feed/chart-preview?${params.toString()}`));
+      });
       setCachedFeedChart(cacheKeys, result);
       if (!cancelled) setPreview(getCachedFeedChart(cacheKeys) ?? result);
     };

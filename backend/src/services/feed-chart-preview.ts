@@ -22,11 +22,14 @@ type CacheEntry = {
 };
 
 const FEED_CHART_PREVIEW_CACHE_TTL_MS = 45_000;
+const FEED_CHART_PREVIEW_STALE_FALLBACK_MS = 5 * 60_000;
 const FEED_CHART_PREVIEW_TIMEOUT_MS = 2_200;
 const FEED_CHART_PREVIEW_FRESH_MAX_AGE_MS = 10 * 60_000;
 const BIRDEYE_API_KEY = process.env.BIRDEYE_API_KEY?.trim() || "";
 const feedChartPreviewCache = new Map<string, CacheEntry>();
+const feedChartPreviewLastGoodCache = new Map<string, CacheEntry>();
 const feedChartPreviewInFlight = new Map<string, Promise<FeedChartPreviewResult>>();
+let birdeyeChartPreviewCircuitOpenUntilMs = 0;
 
 function finite(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -160,6 +163,16 @@ function unavailablePreview(source: string, unavailableReason: string): FeedChar
   };
 }
 
+function isRateLimitResponse(status: number, bodyText = ""): boolean {
+  return status === 429 || /too many requests|rate.?limit/i.test(bodyText);
+}
+
+function getLastGoodPreview(cacheKey: string): FeedChartPreviewResult | null {
+  const cached = feedChartPreviewLastGoodCache.get(cacheKey);
+  if (!cached || cached.expiresAtMs <= Date.now()) return null;
+  return cached.value;
+}
+
 export async function getFeedChartPreview(params: {
   tokenAddress: string | null | undefined;
   pairAddress: string | null | undefined;
@@ -189,7 +202,7 @@ export async function getFeedChartPreview(params: {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), FEED_CHART_PREVIEW_TIMEOUT_MS);
       try {
-        if (network === "solana" && tokenAddress && BIRDEYE_API_KEY) {
+        if (network === "solana" && tokenAddress && BIRDEYE_API_KEY && birdeyeChartPreviewCircuitOpenUntilMs <= Date.now()) {
           const timeTo = Math.floor(Date.now() / 1000);
           const timeFrom = timeTo - 5 * 60 * 54;
           const birdeyeParams = new URLSearchParams({
@@ -211,8 +224,14 @@ export async function getFeedChartPreview(params: {
               signal: controller.signal,
             }
           );
+          const birdeyeBodyText = await birdeyeResponse.text();
+          if (isRateLimitResponse(birdeyeResponse.status, birdeyeBodyText)) {
+            birdeyeChartPreviewCircuitOpenUntilMs = Date.now() + 60_000;
+            const lastGood = getLastGoodPreview(cacheKey);
+            if (lastGood) return lastGood;
+          }
           if (birdeyeResponse.ok) {
-            const candles = parseBirdeyeCandles(await birdeyeResponse.json());
+            const candles = parseBirdeyeCandles(JSON.parse(birdeyeBodyText));
             if (isValidPreviewSeries(candles) && newestCandleFresh(candles)) {
               return {
                 state: "live",
@@ -264,6 +283,8 @@ export async function getFeedChartPreview(params: {
           candles,
         } satisfies FeedChartPreviewResult;
       } catch (error) {
+        const lastGood = getLastGoodPreview(cacheKey);
+        if (lastGood) return lastGood;
         return unavailablePreview(
           "geckoterminal",
           error instanceof Error ? error.message : "Chart preview provider failed."
@@ -280,7 +301,10 @@ export async function getFeedChartPreview(params: {
   const value = await request;
   if (value.state === "live") {
     feedChartPreviewCache.set(cacheKey, { value, expiresAtMs: Date.now() + FEED_CHART_PREVIEW_CACHE_TTL_MS });
+    feedChartPreviewLastGoodCache.set(cacheKey, { value, expiresAtMs: Date.now() + FEED_CHART_PREVIEW_STALE_FALLBACK_MS });
   } else {
+    const lastGood = getLastGoodPreview(cacheKey);
+    if (lastGood) return lastGood;
     feedChartPreviewCache.set(cacheKey, { value, expiresAtMs: Date.now() + 5_000 });
   }
   return value;

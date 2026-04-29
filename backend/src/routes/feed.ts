@@ -4,7 +4,6 @@ import { z } from "zod";
 import { type AuthVariables } from "../auth.js";
 import { listFeedCalls } from "../services/intelligence/engine.js";
 import { getFeedChartPreview } from "../services/feed-chart-preview.js";
-import { triggerOrganicSettlementWakeup } from "./posts.js";
 import { PostTypeSchema } from "../types.js";
 
 export const feedRouter = new Hono<{ Variables: AuthVariables }>();
@@ -26,6 +25,12 @@ const FeedChartPreviewQuerySchema = z.object({
   chainType: z.string().trim().min(1).optional(),
 });
 
+const FeedChartPreviewBatchSchema = z.object({
+  tokens: z.array(FeedChartPreviewQuerySchema.extend({
+    key: z.string().trim().min(1).max(180).optional(),
+  })).min(1).max(12),
+});
+
 feedRouter.get("/chart-preview", zValidator("query", FeedChartPreviewQuerySchema), async (c) => {
   const query = c.req.valid("query");
   const preview = await getFeedChartPreview({
@@ -35,6 +40,27 @@ feedRouter.get("/chart-preview", zValidator("query", FeedChartPreviewQuerySchema
   });
   c.header("Cache-Control", preview.state === "live" ? "public, max-age=30" : "private, no-store");
   return c.json({ data: preview });
+});
+
+feedRouter.post("/chart-previews", zValidator("json", FeedChartPreviewBatchSchema), async (c) => {
+  const { tokens } = c.req.valid("json");
+  const results: Record<string, Awaited<ReturnType<typeof getFeedChartPreview>>> = {};
+  const queue = [...tokens];
+  const workers = Array.from({ length: Math.min(3, queue.length) }, async () => {
+    while (queue.length > 0) {
+      const token = queue.shift();
+      if (!token) return;
+      const key = token.key ?? `${token.chainType ?? "any"}:${token.pairAddress ?? token.tokenAddress}`.toLowerCase();
+      results[key] = await getFeedChartPreview({
+        tokenAddress: token.tokenAddress,
+        pairAddress: token.pairAddress ?? null,
+        chainType: token.chainType ?? null,
+      });
+    }
+  });
+  await Promise.all(workers);
+  c.header("Cache-Control", "private, max-age=15, stale-while-revalidate=45");
+  return c.json({ data: { results } });
 });
 
 feedRouter.get("/:kind/debug-ranking", zValidator("query", FeedDebugQuerySchema), async (c) => {
@@ -134,13 +160,6 @@ feedRouter.get("/:kind", zValidator("query", FeedQuerySchema), async (c) => {
     kind !== "following" &&
     !query.cursor &&
     !query.search?.trim();
-
-  if (!query.cursor) {
-    const reason = query.search?.trim()
-      ? `feed-router:${kind}:search`
-      : `feed-router:${kind}`;
-    triggerOrganicSettlementWakeup(reason);
-  }
 
   const result = await listFeedCalls({
     kind,

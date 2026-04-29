@@ -625,9 +625,11 @@
     @apply fixed inset-y-0 left-0 z-40 w-[14.5rem] flex-col overflow-hidden border-r border-white/[0.07];
     top: 0;
     bottom: 0;
+    display: flex;
     height: 100dvh;
     max-height: 100dvh;
     min-height: 0;
+    contain: layout paint;
     background:
       radial-gradient(circle at top left, rgba(169, 255, 52, 0.09), transparent 24%),
       radial-gradient(circle at bottom left, rgba(45, 212, 191, 0.08), transparent 30%),
@@ -640,7 +642,7 @@
   .v2-sidebar-scroll {
     @apply flex w-full flex-col overflow-y-auto overflow-x-hidden px-4 py-4;
     flex: 1 1 auto;
-    height: 100%;
+    height: 100dvh;
     max-height: 100dvh;
     min-height: 0;
     padding-bottom: max(2rem, env(safe-area-inset-bottom));

@@ -77,14 +77,29 @@ type SharedTokenLiveStream = {
 
 const MAX_RECENT_TRADES = 32;
 const MAX_LIVE_SAMPLES = 720;
-const FALLBACK_TRADES_POLL_MS = 2_500;
-const FALLBACK_PRICE_POLL_MS = 1_500;
+const FALLBACK_TRADES_POLL_MS = 20_000;
+const FALLBACK_PRICE_POLL_MS = 15_000;
 const STREAM_ERROR_GRACE_MS = 2_500;
 const STREAM_IDLE_CLOSE_MS = 15_000;
 const LIVE_PRICE_SNAPSHOT_FRESHNESS_MS = 5_000;
 const LIVE_TRADE_SNAPSHOT_FRESHNESS_MS = 10_000;
 
 const sharedStreams = new Map<string, SharedTokenLiveStream>();
+const tradeRequestBackoffUntil = new Map<string, number>();
+
+function buildTradesRequestKey(stream: SharedTokenLiveStream): string {
+  return [stream.params.chainType, stream.params.tokenAddress ?? "", stream.params.pairAddress ?? ""]
+    .join(":")
+    .toLowerCase();
+}
+
+function canRequestTrades(stream: SharedTokenLiveStream): boolean {
+  return (tradeRequestBackoffUntil.get(buildTradesRequestKey(stream)) ?? 0) <= Date.now();
+}
+
+function recordTradesRequestFailure(stream: SharedTokenLiveStream): void {
+  tradeRequestBackoffUntil.set(buildTradesRequestKey(stream), Date.now() + 60_000);
+}
 
 function buildStreamKey(params: Omit<TokenLiveStreamParams, "enabled">): string {
   return [params.chainType, params.tokenAddress ?? "", params.pairAddress ?? ""].join(":").toLowerCase();
@@ -196,6 +211,7 @@ function applyFallbackMode(stream: SharedTokenLiveStream, reason: string | null)
 }
 
 async function primeTrades(stream: SharedTokenLiveStream): Promise<void> {
+  if (!canRequestTrades(stream)) return;
   const query = new URLSearchParams({
     tokenAddress: stream.params.tokenAddress!,
     chainType: stream.params.chainType,
@@ -247,6 +263,7 @@ async function primeTrades(stream: SharedTokenLiveStream): Promise<void> {
       };
     });
   } catch {
+    recordTradesRequestFailure(stream);
     // Ignore priming failures; the live transport/fallback will continue.
   }
 }
@@ -285,6 +302,7 @@ async function refreshFallbackPrice(stream: SharedTokenLiveStream): Promise<void
 }
 
 async function refreshFallbackTrades(stream: SharedTokenLiveStream): Promise<void> {
+  if (!canRequestTrades(stream)) return;
   try {
     const query = new URLSearchParams({
       tokenAddress: stream.params.tokenAddress!,
@@ -309,6 +327,7 @@ async function refreshFallbackTrades(stream: SharedTokenLiveStream): Promise<voi
       };
     });
   } catch {
+    recordTradesRequestFailure(stream);
     // Ignore fallback trade polling errors.
   }
 }

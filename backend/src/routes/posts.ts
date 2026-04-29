@@ -2456,10 +2456,11 @@ const JUPITER_SWAP_URLS = [
 ];
 const JUPITER_QUOTE_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 1_500 : 600;
 const JUPITER_QUOTE_ERROR_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 450 : 200;
-const CHART_CANDLES_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 8_000 : 2_000;
+const CHART_CANDLES_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 45_000 : 30_000;
 const CHART_CANDLES_STALE_FALLBACK_MS = process.env.NODE_ENV === "production" ? 5 * 60_000 : 60_000;
 const CHART_CANDLES_FETCH_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 4_200 : 6_000;
-const CHART_TRADES_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 600 : 400;
+const CHART_TRADES_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 30_000 : 15_000;
+const CHART_TRADES_STALE_FALLBACK_MS = process.env.NODE_ENV === "production" ? 3 * 60_000 : 60_000;
 const TRADE_PANEL_CONTEXT_CACHE_TTL_MS = process.env.NODE_ENV === "production" ? 8_000 : 2_500;
 const CHART_LIVE_STREAM_MAX_DURATION_MS = process.env.NODE_ENV === "production" ? 240_000 : 90_000;
 const CHART_LIVE_STREAM_KEEPALIVE_MS = 15_000;
@@ -2520,8 +2521,9 @@ const chartCandlesCache = new Map<
   }
 >();
 const chartCandlesInFlight = new Map<string, Promise<ChartCandlesFetchResult>>();
-const chartTradesCache = new Map<string, { trades: Awaited<ReturnType<typeof fetchBirdeyeRecentTrades>>; expiresAtMs: number }>();
+const chartTradesCache = new Map<string, { trades: Awaited<ReturnType<typeof fetchBirdeyeRecentTrades>>; expiresAtMs: number; staleUntilMs: number }>();
 const chartTradesInFlight = new Map<string, Promise<Awaited<ReturnType<typeof fetchBirdeyeRecentTrades>>>>();
+const chartTradesBackoffUntil = new Map<string, number>();
 const tradePanelContextCache = new Map<string, { data: Awaited<ReturnType<typeof getHeliusTradePanelContext>>; expiresAtMs: number }>();
 const tradePanelContextInFlight = new Map<string, Promise<Awaited<ReturnType<typeof getHeliusTradePanelContext>>>>();
 const chartPoolAddressCache = new Map<string, { poolAddress: string | null; expiresAtMs: number }>();
@@ -8680,6 +8682,11 @@ function buildChartTradesCacheKey(payload: ChartTradesQuery): string {
   ].join(":");
 }
 
+function isProviderRateLimitError(error: unknown): boolean {
+  const message = String(error instanceof Error ? error.message : error).toLowerCase();
+  return message.includes("429") || message.includes("rate limit") || message.includes("too many requests");
+}
+
 export async function loadChartTrades(payload: ChartTradesQuery) {
   if (!hasBirdeyeTradeFeedConfig()) {
     return [];
@@ -8705,8 +8712,17 @@ export async function loadChartTrades(payload: ChartTradesQuery) {
   if (cached && cached.expiresAtMs > now) {
     return cached.trades;
   }
-  if (cached) {
+  const staleTrades = cached && cached.staleUntilMs > now ? cached.trades : null;
+  if (cached && cached.staleUntilMs <= now) {
     chartTradesCache.delete(cacheKey);
+  }
+
+  const backoffUntil = chartTradesBackoffUntil.get(cacheKey) ?? 0;
+  if (backoffUntil > now) {
+    return staleTrades ?? [];
+  }
+  if (backoffUntil > 0) {
+    chartTradesBackoffUntil.delete(cacheKey);
   }
 
   const inFlight = chartTradesInFlight.get(cacheKey);
@@ -8725,10 +8741,19 @@ export async function loadChartTrades(payload: ChartTradesQuery) {
   });
 
   chartTradesInFlight.set(cacheKey, request);
-  const trades = await request;
+  let trades: Awaited<ReturnType<typeof fetchBirdeyeRecentTrades>>;
+  try {
+    trades = await request;
+  } catch (error) {
+    chartTradesBackoffUntil.set(cacheKey, Date.now() + (isProviderRateLimitError(error) ? 60_000 : 20_000));
+    if (staleTrades) return staleTrades;
+    throw error;
+  }
+  chartTradesBackoffUntil.delete(cacheKey);
   chartTradesCache.set(cacheKey, {
     trades,
     expiresAtMs: Date.now() + CHART_TRADES_CACHE_TTL_MS,
+    staleUntilMs: Date.now() + CHART_TRADES_STALE_FALLBACK_MS,
   });
   return trades;
 }

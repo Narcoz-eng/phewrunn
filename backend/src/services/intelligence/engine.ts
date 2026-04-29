@@ -25,7 +25,6 @@ import {
 import { refreshTraderMetrics } from "./trader-metrics.js";
 import { fanoutTokenSignalAlerts } from "./alerts.js";
 import { getCachedMarketCapSnapshot, type MarketCapResult } from "../marketcap.js";
-import { getFeedChartPreview } from "../feed-chart-preview.js";
 import { enqueueInternalJob, hasQStashPublishConfig, type EnqueueInternalJobInput } from "../../lib/job-queue.js";
 import { isRedisConfigured, cacheGetJson, cacheSetJson } from "../../lib/redis.js";
 import type { PostType } from "../../types.js";
@@ -40,8 +39,8 @@ const HOT_ALPHA_THRESHOLD = 75;
 const EARLY_RUNNER_THRESHOLD = 72;
 const HIGH_CONVICTION_THRESHOLD = 78;
 const FEED_PRIORITY_POST_COUNT = 15;
-const RANKED_FEED_MIN_CANDIDATE_COUNT = 180;
-const RANKED_FEED_MAX_CANDIDATE_COUNT = 320;
+const RANKED_FEED_MIN_CANDIDATE_COUNT = 80;
+const RANKED_FEED_MAX_CANDIDATE_COUNT = 160;
 const FEED_PRIORITY_REFRESH_TIMEOUT_MS = process.env.NODE_ENV === "production" ? 850 : 1_300;
 const FEED_RESULT_CACHE_TTL_MS = 15_000;
 const PERSONALIZED_FEED_RESULT_CACHE_TTL_MS = 8_000;
@@ -727,6 +726,7 @@ type SocialState = {
 };
 
 const feedListCache = new Map<string, CacheEntry<FeedListResult>>();
+const feedListLastGoodCache = new Map<string, CacheEntry<FeedListResult>>();
 const feedListInFlight = new Map<string, Promise<FeedListResult>>();
 const followingSnapshotCache = new Map<
   string,
@@ -827,6 +827,7 @@ const marketContextInFlight = new Map<string, Promise<MarketContextSnapshot>>();
 
 // Register LRU size limits — writeCacheValue enforces these on every write.
 cacheMaxEntriesRegistry.set(feedListCache, FEED_LIST_CACHE_MAX_ENTRIES);
+cacheMaxEntriesRegistry.set(feedListLastGoodCache, FEED_LIST_CACHE_MAX_ENTRIES);
 cacheMaxEntriesRegistry.set(followingSnapshotCache, FOLLOWING_SNAPSHOT_CACHE_MAX_ENTRIES);
 cacheMaxEntriesRegistry.set(tokenLookupCache, TOKEN_LOOKUP_CACHE_MAX_ENTRIES);
 cacheMaxEntriesRegistry.set(tokenOverviewCache, TOKEN_OVERVIEW_CACHE_MAX_ENTRIES);
@@ -862,6 +863,25 @@ type MarketContextSnapshot = {
 
 function buildTokenLookupCacheKey(address: string): string {
   return `token:lookup:${sanitizeCacheKeyPart(address.trim().toLowerCase())}`;
+}
+
+function buildFeedLastGoodCacheKey(args: FeedArgs, limit: number): string {
+  const viewerKey = args.viewerId ?? "anonymous";
+  const searchKey = sanitizeCacheKeyPart(args.search);
+  const postTypeKey = args.postType ?? "all-types";
+  return `feed:last-good:${args.kind}:${viewerKey}:${searchKey}:${postTypeKey}:${limit}`;
+}
+
+function findFallbackLastGoodFeed(args: FeedArgs, limit: number): FeedListResult | null {
+  const exactPrefix = `feed:last-good:${args.kind}:`;
+  const looseLimitSuffix = `:${limit}`;
+  const entries = Array.from(feedListLastGoodCache.entries()).reverse();
+  for (const [key, entry] of entries) {
+    if (!key.startsWith(exactPrefix) || !key.endsWith(looseLimitSuffix)) continue;
+    if (entry.value.items.length === 0) continue;
+    return cloneCachedValue(entry.value);
+  }
+  return null;
 }
 
 function writeTokenLookupCacheValue(address: string, value: TokenRecord | null): void {
@@ -1968,7 +1988,6 @@ async function listRecentWhaleFeedItems(args: FeedArgs, followedTokenIds: string
 async function enrichSelectedFeedPayloads(items: EnrichedCall[]): Promise<EnrichedCall[]> {
   if (items.length === 0) return items;
 
-  const chartCandidates: EnrichedCall[] = [];
   const raidTokenIds = Array.from(new Set(items
     .filter((item) => item.postType === "raid" && item.tokenId)
     .map((item) => item.tokenId!)
@@ -1977,34 +1996,12 @@ async function enrichSelectedFeedPayloads(items: EnrichedCall[]): Promise<Enrich
     .filter((item) => item.postType === "news" && item.tokenId)
     .map((item) => item.tokenId!)
   ));
-  const marketCandidates: EnrichedCall[] = [];
-  for (const item of items) {
-    if ((item.payload.call?.needsChart || item.payload.chart?.needsChart) && (item.token?.address || item.contractAddress)) {
-      chartCandidates.push(item);
-    }
-    if (item.payload.call && (item.token?.address || item.contractAddress)) {
-      marketCandidates.push(item);
-    }
-  }
   const whaleTokenIds = Array.from(new Set(items
     .filter((item) => (item.postType === "whale" || item.postType === "alpha" || item.postType === "chart") && item.tokenId)
     .map((item) => item.tokenId!)
   ));
 
-  const [chartResults, raids, newsEvents, whaleEvents, marketResults] = await Promise.all([
-    withSoftTimeout(
-      Promise.allSettled(
-        chartCandidates.map(async (item) => {
-          const preview = await getFeedChartPreview({
-            tokenAddress: item.token?.address ?? item.contractAddress,
-            pairAddress: item.token?.pairAddress ?? null,
-            chainType: item.token?.chainType ?? item.chainType,
-          });
-          return [item.id, preview] as const;
-        })
-      ),
-      2_600
-    ),
+  const [raids, newsEvents, whaleEvents] = await Promise.all([
     raidTokenIds.length
       ? prisma.tokenRaidCampaign.findMany({
           where: { tokenId: { in: raidTokenIds }, status: { in: ["active", "upcoming"] } },
@@ -2044,26 +2041,7 @@ async function enrichSelectedFeedPayloads(items: EnrichedCall[]): Promise<Enrich
           include: { token: { select: TOKEN_SELECT } },
         }).catch(() => [])
       : Promise.resolve([]),
-    withSoftTimeout(
-      Promise.allSettled(
-        marketCandidates.map(async (item) => {
-          const result = await getCachedMarketCapSnapshot(
-            item.token?.address ?? item.contractAddress ?? "",
-            item.token?.chainType ?? item.chainType
-          );
-          return [item.id, result] as const;
-        })
-      ),
-      2_800
-    ),
   ]);
-
-  const chartByPostId = new Map<string, FeedChartPreview>();
-  for (const result of chartResults ?? []) {
-    if (result.status === "fulfilled") {
-      chartByPostId.set(result.value[0], result.value[1]);
-    }
-  }
 
   const raidByTokenId = new Map<string, (typeof raids)[number]>();
   for (const raid of raids) {
@@ -2075,11 +2053,6 @@ async function enrichSelectedFeedPayloads(items: EnrichedCall[]): Promise<Enrich
     if (!newsByTokenId.has(event.tokenId)) newsByTokenId.set(event.tokenId, event);
   }
 
-  const marketByPostId = new Map<string, MarketCapResult>();
-  for (const result of marketResults ?? []) {
-    if (result.status === "fulfilled") marketByPostId.set(result.value[0], result.value[1]);
-  }
-
   const whaleByTokenId = new Map<string, (typeof whaleEvents)[number]>();
   for (const event of whaleEvents) {
     if (!whaleByTokenId.has(event.tokenId)) whaleByTokenId.set(event.tokenId, event);
@@ -2087,10 +2060,6 @@ async function enrichSelectedFeedPayloads(items: EnrichedCall[]): Promise<Enrich
 
   return items.map((item) => {
     let payload = item.payload;
-    const chartPreview = chartByPostId.get(item.id);
-    if (chartPreview) {
-      payload = applyChartPreviewToPayload(payload, chartPreview);
-    }
 
     if (item.postType === "raid" && item.tokenId) {
       const raid = raidByTokenId.get(item.tokenId);
@@ -2126,11 +2095,6 @@ async function enrichSelectedFeedPayloads(items: EnrichedCall[]): Promise<Enrich
         publishedAt: event?.timestamp.toISOString() ?? item.payload.news.publishedAt,
         relatedToken: item.tokenContext,
       });
-    }
-
-    const marketResult = marketByPostId.get(item.id);
-    if (marketResult && item.payload.call) {
-      payload = applyMarketToPayload(payload, buildCallMarketValues(item, marketResult));
     }
 
     const whaleEvent = item.tokenId ? whaleByTokenId.get(item.tokenId) : null;
@@ -5129,6 +5093,7 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
   const cursorKey = sanitizeCacheKeyPart(args.cursor);
   const postTypeKey = args.postType ?? "all-types";
   const cacheKey = `feed:${args.kind}:${viewerKey}:${searchKey}:${cursorKey}:${postTypeKey}:${limit}`;
+  const lastGoodCacheKey = buildFeedLastGoodCacheKey(args, limit);
   const ttlMs =
     args.kind === "following" || args.viewerId
       ? PERSONALIZED_FEED_RESULT_CACHE_TTL_MS
@@ -5138,6 +5103,8 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
     return freshCached;
   }
   const staleCached = peekCacheValue(feedListCache, cacheKey);
+  const lastGoodCached = peekCacheValue(feedListLastGoodCache, lastGoodCacheKey);
+  const fallbackLastGoodCached = lastGoodCached ?? findFallbackLastGoodFeed(args, limit);
   if (await isPrismaPoolPressureActive()) {
     if (staleCached) {
       console.warn("[intelligence/feed] serving stale feed cache during prisma pool pressure", {
@@ -5146,8 +5113,15 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
       });
       return staleCached;
     }
+    if (fallbackLastGoodCached) {
+      console.warn("[intelligence/feed] serving last-good feed cache during prisma pool pressure", {
+        kind: args.kind,
+        viewerId: args.viewerId,
+      });
+      return { ...fallbackLastGoodCached, degraded: true };
+    }
 
-    console.warn("[intelligence/feed] pool pressure active; serving degraded empty feed", {
+    console.warn("[intelligence/feed] pool pressure active; serving compact degraded feed fallback", {
       kind: args.kind,
       viewerId: args.viewerId,
     });
@@ -5324,8 +5298,16 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
         });
         return staleCached;
       }
+      if (fallbackLastGoodCached) {
+        console.warn("[intelligence/feed] serving last-good feed cache after soft timeout", {
+          kind: args.kind,
+          viewerId: args.viewerId,
+          timeoutMs: FEED_LIST_SOFT_TIMEOUT_MS,
+        });
+        return { ...fallbackLastGoodCached, degraded: true };
+      }
 
-      console.warn("[intelligence/feed] feed soft-timed out; serving degraded empty state", {
+      console.warn("[intelligence/feed] feed soft-timed out; serving compact degraded feed fallback", {
         kind: args.kind,
         viewerId: args.viewerId,
         timeoutMs: FEED_LIST_SOFT_TIMEOUT_MS,
@@ -5354,8 +5336,16 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
         });
         return staleCached;
       }
+      if (fallbackLastGoodCached) {
+        console.warn("[intelligence/feed] serving last-good feed cache after transient prisma failure", {
+          kind: args.kind,
+          viewerId: args.viewerId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return { ...fallbackLastGoodCached, degraded: true };
+      }
 
-      console.warn("[intelligence/feed] feed unavailable during transient prisma pressure; serving empty state", {
+      console.warn("[intelligence/feed] feed unavailable during transient prisma pressure; serving compact degraded feed fallback", {
         kind: args.kind,
         viewerId: args.viewerId,
         message: error instanceof Error ? error.message : String(error),
@@ -5372,7 +5362,13 @@ export async function listFeedCalls(args: FeedArgs): Promise<FeedListResult> {
       };
     }
   })()
-    .then((value) => writeCacheValue(feedListCache, cacheKey, value, ttlMs, FEED_LIST_CACHE_MAX_ENTRIES))
+    .then((value) => {
+      const cachedValue = writeCacheValue(feedListCache, cacheKey, value, ttlMs, FEED_LIST_CACHE_MAX_ENTRIES);
+      if (!value.degraded && value.items.length > 0 && !args.cursor) {
+        writeCacheValue(feedListLastGoodCache, lastGoodCacheKey, value, 30 * 60_000, FEED_LIST_CACHE_MAX_ENTRIES);
+      }
+      return cachedValue;
+    })
     .finally(() => {
       feedListInFlight.delete(cacheKey);
     });

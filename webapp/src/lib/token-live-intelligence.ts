@@ -61,9 +61,11 @@ const tokenLiveCache = new Map<
   {
     data: TokenLiveIntelligencePayload;
     expiresAtMs: number;
+    staleUntilMs: number;
   }
 >();
 const tokenLiveInFlight = new Map<string, Promise<TokenLiveIntelligencePayload>>();
+const tokenLiveBackoffUntil = new Map<string, number>();
 
 function normalizeTokenAddress(address: string): string {
   return address.trim().toLowerCase();
@@ -82,6 +84,12 @@ function readCachedTokenLivePayload(cacheKey: string): TokenLiveIntelligencePayl
     tokenLiveCache.delete(cacheKey);
     return null;
   }
+  return cached.data;
+}
+
+function readStaleTokenLivePayload(cacheKey: string): TokenLiveIntelligencePayload | null {
+  const cached = tokenLiveCache.get(cacheKey);
+  if (!cached || cached.staleUntilMs <= Date.now()) return null;
   return cached.data;
 }
 
@@ -150,6 +158,10 @@ export async function getTokenLiveIntelligence(
   if (cached) {
     return cached;
   }
+  const stale = readStaleTokenLivePayload(cacheKey);
+  if ((tokenLiveBackoffUntil.get(cacheKey) ?? 0) > Date.now() && stale) {
+    return stale;
+  }
 
   const inFlight = tokenLiveInFlight.get(cacheKey);
   if (inFlight) {
@@ -166,6 +178,11 @@ export async function getTokenLiveIntelligence(
 
     if (!response.ok) {
       const payload = await response.text().catch(() => "");
+      if (response.status === 429 || response.status >= 500) {
+        tokenLiveBackoffUntil.set(cacheKey, Date.now() + (response.status === 429 ? 60_000 : 20_000));
+        const stalePayload = readStaleTokenLivePayload(cacheKey);
+        if (stalePayload) return stalePayload;
+      }
       throw new Error(payload || `Live token request failed (${response.status})`);
     }
 
@@ -179,11 +196,7 @@ export async function getTokenLiveIntelligence(
       throw new Error("Live token payload missing");
     }
 
-    tokenLiveCache.set(cacheKey, {
-      data: payload.data,
-      expiresAtMs:
-        Date.now() +
-        (() => {
+    const resolvedTtlMs = (() => {
           const defaultTtlMs = isPendingLiveDistributionPayload(payload.data)
             ? TOKEN_LIVE_PENDING_CACHE_TTL_MS
             : TOKEN_LIVE_RESOLVED_CACHE_TTL_MS;
@@ -192,14 +205,23 @@ export async function getTokenLiveIntelligence(
             Number.isFinite(options.cacheTtlMs) &&
             options.cacheTtlMs > 0
           ) {
-            return Math.min(defaultTtlMs, Math.round(options.cacheTtlMs));
+            return Math.max(defaultTtlMs, Math.round(options.cacheTtlMs));
           }
           return defaultTtlMs;
-        })(),
+        })();
+    tokenLiveBackoffUntil.delete(cacheKey);
+    tokenLiveCache.set(cacheKey, {
+      data: payload.data,
+      expiresAtMs: Date.now() + resolvedTtlMs,
+      staleUntilMs: Date.now() + Math.max(5 * 60_000, resolvedTtlMs),
     });
 
     return payload.data;
-  })().finally(() => {
+  })().catch((error) => {
+    const stalePayload = readStaleTokenLivePayload(cacheKey);
+    if (stalePayload) return stalePayload;
+    throw error;
+  }).finally(() => {
     tokenLiveInFlight.delete(cacheKey);
   });
 
